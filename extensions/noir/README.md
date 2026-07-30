@@ -3,5 +3,8 @@
 Portable Hara bindings for Noir compilation, proving, and verification. The
 package depends on `greenways/ledger.sha` for stable artifact identities.
 
-Publication uses the typed `:node-hta` recipe; official builds resolve the
-committed lockfile during preparation and run the build without network access.
+Publication uses the typed `:node-hta` recipe. Hara's pinned web toolchain
+bundles `@hara-lang/hta` and `@hara-lang/noir` into self-contained Node and
+browser workers, so this component owns no handwritten JavaScript transport or
+Noir runtime glue. Official builds resolve the committed recipe inputs during
+preparation and run the build without network access.
