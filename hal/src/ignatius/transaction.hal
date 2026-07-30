@@ -1,0 +1,64 @@
+(ns gw.ledger.transaction
+  (:require [gw.ledger.codec :as codec]))
+
+(defn root-or-dash [root]
+  (if (nil? root) "-" root))
+
+(defn operation-payload
+  "Frames the exact PostgreSQL HCV1 operation payload before hashing."
+  [kind value-root symbol-root depth index function-root parameter-root body-root child-roots]
+  (str "O:1:" kind ":"
+       (root-or-dash value-root) ":"
+       (root-or-dash symbol-root) ":"
+       (root-or-dash depth) ":"
+       (root-or-dash index) ":"
+       (root-or-dash function-root) ":"
+       (root-or-dash parameter-root) ":"
+       (root-or-dash body-root) ":"
+       "S:" (count child-roots) ":"
+       (reduce (fn [out root] (str out root)) "" child-roots)))
+
+(defn operation-cell
+  "Constructs and hashes one operation root through explicit host capabilities."
+  [utf8-byte-count utf8-hex sha256 kind value-root symbol-root depth index
+   function-root parameter-root body-root child-roots]
+  (codec/canonical-text-cell
+   utf8-byte-count utf8-hex sha256 17
+   (operation-payload kind value-root symbol-root depth index function-root
+                      parameter-root body-root child-roots)
+   (reduce
+    (fn [refs child-root]
+      (conj refs {:position (count refs)
+                  :role "op-child"
+                  :child-root child-root}))
+    []
+    child-roots)))
+
+(defn signing-payload
+  "Frames the exact domain-separated bytes signed by an account controller."
+  [network origin sequence operation-root form-root cost-limit runtime-root]
+  (str "R:transaction-signing:1:8:"
+       network ":" origin ":" sequence ":"
+       operation-root ":" (root-or-dash form-root) ":"
+       cost-limit ":" runtime-root))
+
+(defn transaction-payload
+  "Frames the signed immutable transaction cell payload."
+  [network origin sequence operation-root form-root cost-limit runtime-root signature]
+  (str "R:transaction:1:9:"
+       network ":" origin ":" sequence ":"
+       operation-root (root-or-dash form-root) ":"
+       cost-limit ":" runtime-root signature))
+
+(defn pending-transaction
+  "Creates the portable part of an offline signed-transaction envelope."
+  [id network sequence operation-root form-root cost-limit runtime-root]
+  {:id id
+   :kind :transaction
+   :network network
+   :sequence sequence
+   :operation-root operation-root
+   :form-root form-root
+   :cost-limit cost-limit
+   :runtime-root runtime-root
+   :status :pending})

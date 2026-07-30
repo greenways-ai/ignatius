@@ -1,0 +1,55 @@
+(ns gw.ledger.runtime)
+
+(defn charge [context amount]
+  (let [used (+ (get context :cost-used) amount)]
+    (if (> used (get context :cost-limit))
+      {:status :error :error {:code :cost-limit} :cost-used used}
+      {:status :ok
+       :context (assoc context :cost-used used)})))
+
+(defn execute
+  "Executes the portable bounded v1 operation descriptor. Durable state,
+   hashing, signatures, and clocks remain explicit host capabilities."
+  [operation context]
+  (let [kind (get operation :op)]
+    (if (= kind :constant)
+      (let [charged (charge context 1)]
+        (if (= (get charged :status) :error)
+          charged
+          {:status :ok
+           :value (get operation :value)
+           :context (get charged :context)
+           :cost-used (get (get charged :context) :cost-used)}))
+      (if (= kind :local)
+        (let [charged (charge context 1)
+              index (get operation :index)]
+          (if (= (get charged :status) :error)
+            charged
+            {:status :ok
+             :value (get (get context :locals) index)
+             :context (get charged :context)
+             :cost-used (get (get charged :context) :cost-used)}))
+        (if (= kind :invoke)
+          (let [charged (charge context 2)]
+            (if (= (get charged :status) :error)
+              charged
+              (let [left (execute (get (get operation :arguments) 0) (get charged :context))
+                    right (execute (get (get operation :arguments) 1) (get left :context))
+                    primitive (get operation :primitive)
+                    value (if (= primitive :integer/add)
+                            (+ (get left :value) (get right :value))
+                            (* (get left :value) (get right :value)))]
+                {:status :ok
+                 :value value
+                 :context (get right :context)
+                 :cost-used (get (get right :context) :cost-used)})))
+          (if (= kind :let)
+            (let [binding (execute (get operation :binding) context)
+                  nested (assoc (get binding :context)
+                                :locals
+                                (conj [] (get binding :value)))]
+              (execute (get operation :body) nested))
+            {:status :error
+             :error {:code :unsupported-op}
+             :context context
+             :cost-used (get context :cost-used)}))))))

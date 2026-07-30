@@ -1,0 +1,76 @@
+(ns gw.ledger.codec)
+
+(def codec-version 1)
+(def hash-algorithm :sha-256)
+
+(defn canonical-envelope
+  "Returns Hara Canonical Value Encoding v1 bytes as portable text. The host
+   hashes the UTF-8 encoding with SHA-256."
+  [type-tag payload-byte-count payload-hex]
+  (str "HCV1:" type-tag ":" payload-byte-count ":" payload-hex))
+
+(defn canonical-cell
+  "Constructs one canonical cell through an injected SHA-256 capability.
+   The capability accepts the UTF-8 HCV1 envelope and returns lowercase hex."
+  [sha256 type-tag payload-byte-count payload-hex refs]
+  {:root (sha256 (canonical-envelope type-tag payload-byte-count payload-hex))
+   :codec-version codec-version
+   :type-tag type-tag
+   :payload-hex payload-hex
+   :refs refs})
+
+(defn canonical-text-cell
+  "Constructs a cell through explicit UTF-8 byte-count, hex, and SHA-256 capabilities."
+  [utf8-byte-count utf8-hex sha256 type-tag payload refs]
+  (let [payload-hex (utf8-hex payload)]
+    (canonical-cell sha256 type-tag (utf8-byte-count payload) payload-hex refs)))
+
+(defn sequence-payload
+  "Frames ordered child roots for list, vector, and syntax values."
+  [roots]
+  (str "S:" (count roots) ":"
+       (reduce (fn [out root] (str out root)) "" roots)))
+
+(defn syntax-cell
+  "Constructs an explicit syntax wrapper from semantic and metadata roots."
+  [utf8-byte-count utf8-hex sha256 value-root metadata-root]
+  (canonical-text-cell
+   utf8-byte-count utf8-hex sha256 13
+   (sequence-payload [value-root metadata-root])
+   [{:position 0 :role "value" :child-root value-root}
+    {:position 1 :role "metadata" :child-root metadata-root}]))
+
+(defn map-payload
+  "Frames canonical-order key/value root pairs."
+  [root-pairs]
+  (str "M:" (/ (count root-pairs) 2) ":"
+       (reduce (fn [out root] (str out root)) "" root-pairs)))
+
+(defn operation-payload
+  "Frames an immutable record payload without interpreting its contents."
+  [text]
+  text)
+
+(defn pack-ref
+  [ref]
+  (str "R:"
+       (get ref :position) ":"
+       (get ref :role-hex) ":"
+       (get ref :child-root) ":"))
+
+(defn pack-cell
+  [cell]
+  (let [refs (get cell :refs)]
+    (str "C:"
+         (get cell :root) ":"
+         codec-version ":"
+         (get cell :type-tag) ":"
+         (get cell :payload-hex) ":"
+         (count refs) ":"
+         (reduce (fn [out ref] (str out (pack-ref ref))) "" refs))))
+
+(defn hcp1-pack
+  "Builds deterministic HCP1 transport text from already verified cells."
+  [cells]
+  (str "HCP1:" (count cells) ":"
+       (reduce (fn [out cell] (str out (pack-cell cell))) "" cells)))
