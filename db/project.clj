@@ -14,40 +14,6 @@
    "contracts" ["run" "-m" "ledger.build-contract"]
    }
   :dependencies [[org.clojure/clojure "1.11.1"]
-                 [xyz.zcaudate/code.test           "4.1.5"]
-                 [xyz.zcaudate/code.manage         "4.1.5"]
-                 [xyz.zcaudate/code.tool.java      "4.1.5"]
-                 [xyz.zcaudate/code.tool.maven     "4.1.5"]
-                 [xyz.zcaudate/code.doc            "4.1.5"]
-                 
-                 [xyz.zcaudate/js.react            "4.1.5"]
-                 
-                 [xyz.zcaudate/jvm                 "4.1.5"]
-                 [xyz.zcaudate/kmi.redis           "4.1.5"]
-                 [xyz.zcaudate/kmi.queue           "4.1.5"]
-                 [xyz.zcaudate/lib.docker          "4.1.5"]
-                 [xyz.zcaudate/lib.minio           "4.1.5"]
-                 [xyz.zcaudate/lib.redis           "4.1.5"]
-                 [xyz.zcaudate/lib.postgres        "4.1.5"]
-                 
-                 [xyz.zcaudate/math.stats          "4.1.5"]
-                 [xyz.zcaudate/net.http            "4.1.5"]
-                 
-                 [xyz.zcaudate/tahto                "4.1.5"]
-                 [xyz.zcaudate/postgres            "4.1.5"]
-                 [xyz.zcaudate/solidity            "4.1.5"]
-
-                 [xyz.zcaudate/script.css          "4.1.5"]
-                 [xyz.zcaudate/script.sql          "4.1.5"]
-                 [xyz.zcaudate/std.block           "4.1.5"]
-                 [xyz.zcaudate/std.fs              "4.1.5"]
-                 [xyz.zcaudate/std.json            "4.1.5"]
-                 [xyz.zcaudate/std.lib             "4.1.5"]
-                 [xyz.zcaudate/std.log             "4.1.5"]
-                 [xyz.zcaudate/std.make            "4.1.5"]
-                 [xyz.zcaudate/std.text            "4.1.5"]
-                 [xyz.zcaudate/xtalk.db            "4.1.5"]
-                 [xyz.zcaudate/xtalk.runtime       "4.1.5"]
                  [org.xerial/sqlite-jdbc   "3.36.0.3"]
                  [org.clojure/java.jdbc    "0.7.12"]
                  
@@ -55,6 +21,11 @@
                  [org.clojure/data.json    "2.4.0"]
                  [http-kit                 "2.8.0"]
                  [clj-kondo/clj-kondo      "2024.09.27"]
+                 [com.googlecode.java-diff-utils/diffutils "1.3.0"]
+                 [com.fasterxml.jackson.core/jackson-core "2.16.1"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.16.1"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.16.1"]
+                 [org.jsoup/jsoup "1.17.2"]
                  
                  ;; mcp server
                  ;; [cheshire "5.13.0"]
@@ -83,8 +54,22 @@
                                       (catch Throwable t (.printStackTrace t)))]}}  
   :resource-paths    ["resources"
                       "src"
-                      "test"]
-  :source-paths      ["src" "src-mcp"]
+                      "test"
+                      "checkouts/foundation/resources"
+                      "checkouts/foundation/src-build"
+                      "checkouts/foundation/src-extra"
+                      "checkouts/foundation/src-doc"
+                      "checkouts/foundation/test-data"
+                      "checkouts/foundation/test-code"]
+  :source-paths      ["src"
+                      "src-mcp"
+                      "checkouts/foundation/src"
+                      "checkouts/foundation/src-lang"
+                      "checkouts/foundation/src-extra"
+                      "checkouts/foundation/src-extra/mcp-clj"]
+  :java-source-paths ["checkouts/foundation/src-java/hara/lib/concurrent"
+                      "checkouts/foundation/src-java/hara/lib/foundation"
+                      "checkouts/foundation/src-java/hara/lib/json"]
   :test-paths        ["test"]                                            
   :repl-options {:host "0.0.0.0" :port 10234}
   :jvm-opts
