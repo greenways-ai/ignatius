@@ -1,0 +1,22 @@
+{:deps
+ {org.clojure/clojure {:mvn/version "1.11.1"}
+  org.clojure/core.async {:mvn/version "1.6.681"}
+  nrepl/nrepl {:mvn/version "1.1.0"}
+  midje/midje {:mvn/version "1.10.9"}}
+
+ :aliases
+ {:nrepl
+  {:extra-deps {nrepl/nrepl {:mvn/version "1.1.0"}}
+   :main-opts ["-m" "nrepl.cmdline" "--port" "10234"]}
+
+  :mcp
+  {:deps {org.slf4j/slf4j-nop {:mvn/version "2.0.16"}
+          com.bhauman/clojure-mcp {:git/url "https://github.com/bhauman/clojure-mcp.git"
+                                   :git/tag "v0.1.4-alpha"
+                                   :git/sha "080b29b"}}
+   :exec-fn clojure-mcp.main/start-mcp-server
+   :exec-args {:port 10234}}
+
+  :clj-kondo
+  {:extra-deps {clj-kondo/clj-kondo {:mvn/version "2024.09.27"}}
+   :main-opts ["-m" "clj-kondo.main"]}}}

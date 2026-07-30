@@ -1,0 +1,177 @@
+(ns gwdb.ledger.context
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.state :as state]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.state :as state]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg ExecutionContext
+  "Rebuildable projection of a complete immutable execution-context record."
+  {:added "0.2"}
+  [:context-root     {:type :bytea :primary true}
+   :state-root       {:type :bytea :required true}
+   :origin           {:type :bytea :required true}
+   :address          {:type :bytea :required true}
+   :caller           {:type :bytea}
+   :transaction-root {:type :bytea}
+   :block-height     {:type :long :required true}
+   :timestamp        {:type :long :required true}
+   :locals-root      {:type :bytea :required true}
+   :cost-used        {:type :long :required true}
+   :cost-limit       {:type :long :required true}
+   :depth            {:type :integer :required true}])
+
+(defn.pg ^{:- [:text]}
+  context-root-hex
+  {:added "0.2"}
+  [:bytea i-root]
+  (return (pg/case [i-root :is-null] "-"
+                   :else (pg/encode i-root "hex"))))
+
+(defn.pg ^{:- [:bytea]}
+  context-payload
+  "HCV1 fixed context record: all dynamic execution inputs are explicit."
+  {:added "0.2"}
+  [:bytea i-state-root :bytea i-origin :bytea i-address :bytea i-caller
+   :bytea i-transaction-root :bigint i-block-height :bigint i-timestamp
+   :bytea i-locals-root :bigint i-cost-used :bigint i-cost-limit :integer i-depth]
+  (return
+   (pg/decode
+    (|| "R:context:1:12:"
+        (-/context-root-hex i-state-root)
+        (-/context-root-hex i-origin)
+        (-/context-root-hex i-address)
+        (-/context-root-hex i-caller)
+        (-/context-root-hex i-transaction-root)
+        i-block-height ":" i-timestamp ":"
+        (-/context-root-hex i-locals-root)
+        (:text i-cost-used) ":" (:text i-cost-limit) ":" (:text i-depth))
+    "escape")))
+
+(defn.pg ^{:- [:bytea]}
+  context-create
+  "Commits an immutable context value and derives a disposable selector row."
+  {:added "0.2"}
+  [:bytea i-state-root :bytea i-origin :bytea i-address :bytea i-caller
+   :bytea i-transaction-root :bigint i-block-height :bigint i-timestamp
+   :bytea i-locals-root :bigint i-cost-used :bigint i-cost-limit :integer i-depth]
+  (let [o-origin (cell/cell-by-hash i-origin)
+        o-address (cell/cell-by-hash i-address)
+        o-locals (cell/cell-by-hash i-locals-root)
+        _ (pg/assert (state/state-root-valid i-state-root)
+                     [:ledger/invalid-context-state])
+        _ (pg/assert [o-origin :is-not-null] [:ledger/missing-context-origin])
+        _ (pg/assert [o-address :is-not-null] [:ledger/missing-context-address])
+        _ (pg/assert [o-locals :is-not-null] [:ledger/missing-context-locals])
+        _ (pg/assert (== (:smallint (:->> o-locals "type_tag")) 10)
+                     [:ledger/context-locals-not-vector])
+        _ (pg/assert (and (>= i-block-height 0) (>= i-timestamp 0)
+                          (>= i-cost-used 0) (>= i-cost-limit i-cost-used)
+                          (>= i-depth 0))
+                     [:ledger/invalid-context-bounds])
+        (:bytea v-payload) (-/context-payload
+                             i-state-root i-origin i-address i-caller
+                             i-transaction-root i-block-height i-timestamp
+                             i-locals-root i-cost-used i-cost-limit i-depth)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 14 v-payload)
+                                        1 14 v-payload)
+        o-state-ref (cell/cell-ref-put v-root 0 "state" i-state-root)
+        o-origin-ref (cell/cell-ref-put v-root 1 "origin" i-origin)
+        o-address-ref (cell/cell-ref-put v-root 2 "address" i-address)
+        o-locals-ref (cell/cell-ref-put v-root 3 "locals" i-locals-root)
+        o-row (pg/t:upsert -/ExecutionContext
+                            {:context-root v-root :state-root i-state-root
+                             :origin i-origin :address i-address :caller i-caller
+                             :transaction-root i-transaction-root
+                             :block-height i-block-height :timestamp i-timestamp
+                             :locals-root i-locals-root :cost-used i-cost-used
+                             :cost-limit i-cost-limit :depth i-depth})]
+    (return v-root)))
+
+(defn.pg context-get
+  "Returns a context projection; identity is always its immutable root."
+  {:added "0.2"}
+  [:bytea i-context-root]
+  (let [o-row (pg/t:get -/ExecutionContext {:where {:context-root i-context-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]}
+  context-can-charge
+  {:added "0.2"}
+  [:bytea i-context-root :bigint i-cost]
+  (let [o-row (-/context-get i-context-root)]
+    (return (and [o-row :is-not-null]
+                 (>= i-cost 0)
+                 (<= (+ (:bigint (:->> o-row "cost_used")) i-cost)
+                     (:bigint (:->> o-row "cost_limit")))))))
+
+(defn.pg ^{:- [:bytea]}
+  context-charge
+  "Returns the next immutable context root after a deterministic charge."
+  {:added "0.2"}
+  [:bytea i-context-root :bigint i-cost]
+  (let [o-row (-/context-get i-context-root)
+        _ (pg/assert [o-row :is-not-null] [:ledger/missing-context])
+        _ (pg/assert (-/context-can-charge i-context-root i-cost)
+                     [:ledger/cost-limit])]
+    (return (-/context-create
+             (:bytea (:->> o-row "state_root"))
+             (:bytea (:->> o-row "origin"))
+             (:bytea (:->> o-row "address"))
+             (:bytea (:->> o-row "caller"))
+             (:bytea (:->> o-row "transaction_root"))
+             (:bigint (:->> o-row "block_height"))
+             (:bigint (:->> o-row "timestamp"))
+             (:bytea (:->> o-row "locals_root"))
+             (+ (:bigint (:->> o-row "cost_used")) i-cost)
+             (:bigint (:->> o-row "cost_limit"))
+             (:integer (:->> o-row "depth"))))))
+
+(defn.pg ^{:- [:bytea]}
+  context-with-state
+  "Returns the same explicit execution inputs at a new immutable state root."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-state-root]
+  (let [o-row (-/context-get i-context-root)
+        _ (pg/assert [o-row :is-not-null] [:ledger/missing-context])]
+    (return (-/context-create
+             i-state-root
+             (:bytea (:->> o-row "origin"))
+             (:bytea (:->> o-row "address"))
+             (:bytea (:->> o-row "caller"))
+             (:bytea (:->> o-row "transaction_root"))
+             (:bigint (:->> o-row "block_height"))
+             (:bigint (:->> o-row "timestamp"))
+             (:bytea (:->> o-row "locals_root"))
+             (:bigint (:->> o-row "cost_used"))
+             (:bigint (:->> o-row "cost_limit"))
+             (:integer (:->> o-row "depth"))))))
+
+(defn.pg ^{:- [:bytea]}
+  context-with-locals
+  "Returns a context with an explicit immutable lexical frame vector."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-locals-root :integer i-depth]
+  (let [o-row (-/context-get i-context-root)]
+    (return (-/context-create
+             (:bytea (:->> o-row "state_root"))
+             (:bytea (:->> o-row "origin"))
+             (:bytea (:->> o-row "address"))
+             (:bytea (:->> o-row "caller"))
+             (:bytea (:->> o-row "transaction_root"))
+             (:bigint (:->> o-row "block_height"))
+             (:bigint (:->> o-row "timestamp"))
+             i-locals-root
+             (:bigint (:->> o-row "cost_used"))
+             (:bigint (:->> o-row "cost_limit"))
+             i-depth))))

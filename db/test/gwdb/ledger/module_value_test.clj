@@ -1,0 +1,67 @@
+(ns gwdb.ledger.module-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.module :as module]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.module :as module]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.module/module-export :added "0.2"}
+(fact "module exports resolve from immutable environment and export-set roots"
+  (!.pg
+   [:select
+    (module/module-valid
+     (module/module-publish
+      "std.math" "1.0.0"
+      (value/put-map
+       (pg/jsonb-build-array
+        (pg/encode (value/put-symbol "answer") "hex")
+        (pg/encode (value/put-integer "42") "hex")))
+      (value/put-set
+       (pg/jsonb-build-array
+        (pg/encode (value/put-symbol "answer") "hex")))
+      (value/put-map (pg/jsonb-build-array)) nil nil
+      (value/put-map (pg/jsonb-build-array))
+      (value/put-symbol "publisher") nil))]
+   [:select
+    (==
+     (module/module-export
+      (module/module-publish
+       "std.math" "1.0.0"
+       (value/put-map
+        (pg/jsonb-build-array
+         (pg/encode (value/put-symbol "answer") "hex")
+         (pg/encode (value/put-integer "42") "hex")))
+       (value/put-set
+        (pg/jsonb-build-array
+         (pg/encode (value/put-symbol "answer") "hex")))
+       (value/put-map (pg/jsonb-build-array)) nil nil
+       (value/put-map (pg/jsonb-build-array))
+       (value/put-symbol "publisher") nil)
+      (value/put-symbol "answer"))
+     (value/put-integer "42"))])
+  => '(true true))

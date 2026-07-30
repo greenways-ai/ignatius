@@ -1,0 +1,45 @@
+(ns gwdb.ledger.iterator-test
+  (:use code.test)
+  (:require [gwdb.ledger.iterator :refer :all]))
+
+^{:refer gwdb.ledger.iterator/IteratorPlan :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/Iterator :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/plan-type-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-root-hex :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/plan-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/plan-put :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/plan-get :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/plan-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-attach :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-get :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-step-active :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.iterator/iterator-step :added "0.1"}
+(fact "TODO")

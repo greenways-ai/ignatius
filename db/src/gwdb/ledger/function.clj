@@ -1,0 +1,108 @@
+(ns gwdb.ledger.function
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg Function
+  "Rebuildable descriptor of a canonical persistent compiled function."
+  {:added "0.2"}
+  [:function-root    {:type :bytea :primary true}
+   :function-version {:type :smallint :required true}
+   :parameters-root  {:type :bytea :required true}
+   :body-root        {:type :bytea :required true}
+   :closure-root     {:type :bytea :required true}
+   :metadata-root    {:type :bytea :required true}])
+
+(defn.pg ^{:- [:bytea]}
+  function-payload
+  "Builds the fixed HCV1 function descriptor payload from committed roots."
+  {:added "0.2"}
+  [:bytea i-parameters-root :bytea i-body-root
+   :bytea i-closure-root :bytea i-metadata-root]
+  (return
+   (pg/decode
+    (|| "R:function:1:4:"
+        (pg/encode i-parameters-root "hex")
+        (pg/encode i-body-root "hex")
+        (pg/encode i-closure-root "hex")
+        (pg/encode i-metadata-root "hex"))
+    "escape")))
+
+(defn.pg ^{:- [:bytea]} function-put
+  "Commits a function body and lexical closure without reparsing source code."
+  {:added "0.2"}
+  [:bytea i-parameters-root :bytea i-body-root
+   :bytea i-closure-root :bytea i-metadata-root]
+  (let [o-parameters (cell/cell-by-hash i-parameters-root)
+        o-body (cell/cell-by-hash i-body-root)
+        o-closure (cell/cell-by-hash i-closure-root)
+        o-metadata (cell/cell-by-hash i-metadata-root)
+        _ (pg/assert (and [o-parameters :is-not-null]
+                          (== (:smallint (:->> o-parameters "type_tag")) 10))
+                     [:ledger/function-parameters-not-vector])
+        _ (pg/assert (and [o-body :is-not-null]
+                          (== (:smallint (:->> o-body "type_tag")) 17))
+                     [:ledger/function-body-not-operation])
+        _ (pg/assert (and [o-closure :is-not-null]
+                          (== (:smallint (:->> o-closure "type_tag")) 10))
+                     [:ledger/function-closure-not-vector])
+        _ (pg/assert (and [o-metadata :is-not-null]
+                          (== (:smallint (:->> o-metadata "type_tag")) 11))
+                     [:ledger/function-metadata-not-map])
+        (:bytea v-payload) (-/function-payload
+                             i-parameters-root i-body-root
+                             i-closure-root i-metadata-root)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 18 v-payload)
+                                        1 18 v-payload)
+        o-parameters-ref (cell/cell-ref-put v-root 0 "parameters" i-parameters-root)
+        o-body-ref (cell/cell-ref-put v-root 1 "body" i-body-root)
+        o-closure-ref (cell/cell-ref-put v-root 2 "closure" i-closure-root)
+        o-metadata-ref (cell/cell-ref-put v-root 3 "metadata" i-metadata-root)
+        o-upsert (pg/t:upsert -/Function
+                               {:function-root v-root
+                                :function-version 1
+                                :parameters-root i-parameters-root
+                                :body-root i-body-root
+                                :closure-root i-closure-root
+                                :metadata-root i-metadata-root})]
+    (return v-root)))
+
+(defn.pg function-get
+  "Returns the rebuildable descriptor by canonical function root."
+  {:added "0.2"}
+  [:bytea i-function-root]
+  (let [o-row (pg/t:get -/Function {:where {:function-root i-function-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]}
+  function-valid
+  "Verifies the type-18 cell against all descriptor fields and references."
+  {:added "0.2"}
+  [:bytea i-function-root]
+  (let [o-cell (cell/cell-by-hash i-function-root)
+        o-function (-/function-get i-function-root)
+        _ (when (or [o-cell :is-null] [o-function :is-null])
+            (return false))
+        (:bytea v-payload)
+        (-/function-payload
+         (:bytea (:->> o-function "parameters_root"))
+         (:bytea (:->> o-function "body_root"))
+         (:bytea (:->> o-function "closure_root"))
+         (:bytea (:->> o-function "metadata_root")))]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 18)
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-function-root 18 v-payload)
+                 (== (cell/cell-ref-count i-function-root "parameters") 1)
+                 (== (cell/cell-ref-count i-function-root "body") 1)
+                 (== (cell/cell-ref-count i-function-root "closure") 1)
+                 (== (cell/cell-ref-count i-function-root "metadata") 1)))))

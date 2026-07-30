@@ -1,0 +1,61 @@
+# ============================================
+# Clojure / Leiningen
+# ============================================
+
+# Compiled files
+*.class
+*.jar
+*.dylib
+.clj-kondo/.cache
+
+# Leiningen
+.lein*
+/.lein-*
+/.nrepl-port
+pom.xml
+pom.xml.asc
+profiles.clj
+
+# Build directories
+/target
+/classes
+/checkouts
+
+# Generated sources
+/src-generated
+/src-reference
+
+# Test directories
+/test-scratch
+/test-bench
+
+# Logs
+*.log
+*.out
+
+# Checksum files
+*.asc
+*.bin
+*.md5
+
+# Hara cache
+.hara
+.tahto
+
+# Calva / REPL
+.calva
+.calva/output-window/output.calva-repl
+form-init*
+
+# Editor temp files
+*#
+.#*
+*.~undo-tree~
+
+# Misc
+*.interp
+/hsperfdata_root
+/lein-*
+.hgignore
+.hg/
+.lsp/
