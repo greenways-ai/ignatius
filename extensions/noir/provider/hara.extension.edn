@@ -1,0 +1,15 @@
+{:namespace "greenways.ledger.noir.provider"
+ :identity "greenways/ledger.noir"
+ :version "0.1.0"
+ :provider :hta
+ :abi :hta.v1
+ :targets
+ {:node {:module "node/worker.mjs" :runtime :process}
+  :browser {:module "browser/worker.mjs" :runtime :web-worker}}
+ :assets ["package.json"
+          "assets/noir-provider.mjs"]
+ :exports
+ {"compile" {:args [:value] :returns :value :async true}
+  "prove" {:args [:value :map] :returns :value :async true}
+  "verify" {:args [:value :value] :returns :boolean :async true}}
+ :capabilities []}

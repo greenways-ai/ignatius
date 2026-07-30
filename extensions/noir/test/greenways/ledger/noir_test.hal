@@ -1,0 +1,11 @@
+(ns greenways.ledger.noir-test
+  (:require [std.lib.test :as test]
+            [greenways.ledger.noir :as noir]))
+
+(def results
+  [(test/check
+    "Noir artifacts have stable SHA identities"
+    (deref (noir/artifact-root (bytes 1 2 3)))
+    (deref (noir/artifact-root (bytes 1 2 3))))])
+
+(test/print-results results)

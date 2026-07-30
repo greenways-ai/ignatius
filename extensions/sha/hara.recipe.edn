@@ -1,0 +1,19 @@
+{:recipe/format 1
+ :recipe/adapter :rust-wasm
+ :recipe/toolchain {:rust "1.78.0"
+                    :target "wasm32-unknown-unknown"
+                    :builder "ghcr.io/hara-lang/build-rust-wasm@sha256:5d714f6c4ed41c61e41f9c35e16a3fe3ddaa19651e0f7d59fe185a7f202f06d8"}
+ :recipe/inputs {:manifest "rust/Cargo.toml"
+                 :lockfile "rust/Cargo.lock"
+                 :workspace-dependency {:coordinate "hara-lang/hara"
+                                        :source "https://github.com/hara-lang/hara.git"
+                                        :revision :publication-commit}
+                 :locked true}
+ :recipe/outputs [{:from "rust/target/wasm32-unknown-unknown/release/greenways_ledger_sha.wasm"
+                   :to "greenways/ledger/sha/provider/sha256.wasm"}
+                  {:from "extension/hara.extension.edn"
+                   :to "greenways/ledger/sha/provider/hara.extension.edn"}]
+ :recipe/limits {:cpu-seconds 300
+                 :memory-mib 1024
+                 :output-mib 16
+                 :network :prepare-only}}
