@@ -16,3 +16,6 @@ RUN apt-get update \
  && make -C /tmp/pgsodium install \
  && ldconfig \
  && rm -rf /tmp/libsodium-1.0.22 /tmp/pgsodium /var/lib/apt/lists/*
+
+COPY docker/postgres/pgsodium_getkey /usr/share/postgresql/15/extension/pgsodium_getkey
+RUN chmod 0755 /usr/share/postgresql/15/extension/pgsodium_getkey
