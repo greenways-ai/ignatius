@@ -1,4 +1,4 @@
-FROM postgres:15
+FROM postgres:15.14-bookworm
 
 ARG PGSODIUM_REF=v3.1.11
 
