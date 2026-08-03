@@ -10,5 +10,5 @@
  :project/archive-root "target/package"
  :project/recipe "hara.recipe.edn"
  :project/package {:entry-points ["gw.ledger.sha"]
-                   :license "EPL-2.0"}
+                   :license "Apache-2.0"}
  :project/dependencies {}}

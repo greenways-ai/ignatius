@@ -10,6 +10,6 @@
  :project/archive-root "target/package"
  :project/recipe "hara.recipe.edn"
  :project/package {:entry-points ["gw.ledger.noir"]
-                   :license "EPL-2.0"}
+                   :license "Apache-2.0"}
  :project/dependencies
  {"gw/ledger.sha" {:version "^0.1.0"}}}
