@@ -7670,6 +7670,179 @@ CREATE OR REPLACE FUNCTION "gw_ledger".developer_head(
 $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- gwdb.ledger.document-protocol/DocumentPolicy [14]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentPolicy" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentPolicy" (
+  "policy_root" BYTEA PRIMARY KEY,
+  "document_id" TEXT NOT NULL,
+  "previous_policy_root" BYTEA,
+  "profile_id" TEXT NOT NULL,
+  "environment_id" TEXT NOT NULL,
+  "policy" JSONB NOT NULL,
+  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
+);
+
+-- gwdb.ledger.document-protocol/DocumentDelegation [25]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentDelegation" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentDelegation" (
+  "delegation_root" BYTEA PRIMARY KEY,
+  "identity_id" TEXT NOT NULL,
+  "subject_key" BYTEA NOT NULL,
+  "document_id" TEXT,
+  "environment_id" TEXT,
+  "purposes" JSONB NOT NULL,
+  "valid_from" BIGINT NOT NULL,
+  "valid_through" BIGINT NOT NULL,
+  "revoked_at" BIGINT
+);
+
+-- gwdb.ledger.document-protocol/PersonalDocumentLog [38]
+DROP TABLE IF EXISTS "gw_ledger"."PersonalDocumentLog" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."PersonalDocumentLog" (
+  "log_id" TEXT PRIMARY KEY,
+  "document_id" TEXT NOT NULL,
+  "contributor_id" TEXT NOT NULL,
+  "head_root" BYTEA,
+  "next_sequence" BIGINT NOT NULL,
+  "imported_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
+);
+
+-- gwdb.ledger.document-protocol/DocumentChangeBatch [48]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentChangeBatch" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentChangeBatch" (
+  "batch_root" BYTEA PRIMARY KEY,
+  "log_id" TEXT NOT NULL,
+  "sequence" BIGINT NOT NULL,
+  "previous_entry_root" BYTEA,
+  "base_revision_root" BYTEA NOT NULL,
+  "base_ast_root" BYTEA NOT NULL,
+  "expected_result_root" BYTEA NOT NULL,
+  "profile_root" BYTEA NOT NULL,
+  "author_key" BYTEA NOT NULL,
+  "delegation_root" BYTEA NOT NULL,
+  "operation_roots" JSONB NOT NULL,
+  "signature" BYTEA NOT NULL
+);
+
+-- gwdb.ledger.document-protocol/DocumentBatchOperation [64]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentBatchOperation" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentBatchOperation" (
+  "batch_root" BYTEA,
+  "position" INTEGER,
+  "original_root" BYTEA NOT NULL,
+  "transformed_root" BYTEA,
+  "result_root" BYTEA,
+  "status" TEXT NOT NULL,
+  "conflict" TEXT,
+  PRIMARY KEY (batch_root,position)
+);
+
+-- gwdb.ledger.document-protocol/DocumentImportReceipt [75]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentImportReceipt" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentImportReceipt" (
+  "receipt_id" TEXT PRIMARY KEY,
+  "receipt_root" BYTEA NOT NULL,
+  "document_id" TEXT NOT NULL,
+  "environment_id" TEXT NOT NULL,
+  "contributor_id" TEXT NOT NULL,
+  "log_id" TEXT NOT NULL,
+  "batch_root" BYTEA NOT NULL,
+  "environment_sequence" BIGINT NOT NULL,
+  "status" TEXT NOT NULL,
+  "accepted_revision_root" BYTEA,
+  "result_ast_root" BYTEA,
+  "submission_commitment" BYTEA NOT NULL,
+  "result_commitment" BYTEA,
+  "environment_key" BYTEA NOT NULL,
+  "signature" BYTEA NOT NULL,
+  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
+);
+
+-- gwdb.ledger.document-protocol/DocumentApproval [95]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentApproval" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentApproval" (
+  "approval_root" BYTEA PRIMARY KEY,
+  "document_id" TEXT NOT NULL,
+  "stage_id" TEXT NOT NULL,
+  "policy_root" BYTEA NOT NULL,
+  "revision_root" BYTEA NOT NULL,
+  "ast_root" BYTEA NOT NULL,
+  "identity_id" TEXT NOT NULL,
+  "role" TEXT NOT NULL,
+  "decision" TEXT NOT NULL,
+  "delegation_root" BYTEA NOT NULL,
+  "signature" BYTEA NOT NULL
+);
+
+-- gwdb.ledger.document-protocol/DocumentDelivery [110]
+DROP TABLE IF EXISTS "gw_ledger"."DocumentDelivery" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentDelivery" (
+  "delivery_root" BYTEA PRIMARY KEY,
+  "document_id" TEXT NOT NULL,
+  "policy_root" BYTEA NOT NULL,
+  "revision_root" BYTEA NOT NULL,
+  "ast_root" BYTEA NOT NULL,
+  "cutoff_sequence" BIGINT NOT NULL,
+  "coverage_root" BYTEA NOT NULL,
+  "exporter_root" BYTEA NOT NULL,
+  "artifacts" JSONB NOT NULL,
+  "disclosure_mode" TEXT NOT NULL,
+  "deliverer_key" BYTEA NOT NULL,
+  "signature" BYTEA NOT NULL,
+  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
+);
+
+-- gwdb.ledger.document-protocol/document-purpose-valid [127]
+CREATE OR REPLACE FUNCTION "gw_ledger".document_purpose_valid(
+  i_purpose TEXT
+) RETURNS BOOLEAN AS $$
+
+  SELECT (i_purpose = 'document.edit') OR (i_purpose = 'document.approve') OR (i_purpose = 'document.deliver') OR (i_purpose = 'hestia.personal.append') OR (i_purpose = 'hestia.environment.import');
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.document-protocol/document-batch-count-valid [137]
+CREATE OR REPLACE FUNCTION "gw_ledger".document_batch_count_valid(
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+
+  SELECT (i_count >= 1) AND (i_count <= 64);
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.document-protocol/document-terminal-disposition [143]
+CREATE OR REPLACE FUNCTION "gw_ledger".document_terminal_disposition(
+  i_status TEXT
+) RETURNS BOOLEAN AS $$
+
+  SELECT (i_status = 'accepted') OR (i_status = 'resolved') OR (i_status = 'rejected') OR (i_status = 'abandoned');
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.document-protocol/document-protocol-signing-payload [152]
+CREATE OR REPLACE FUNCTION "gw_ledger".document_protocol_signing_payload(
+  i_record_type TEXT,
+  i_body_root BYTEA
+) RETURNS BYTEA AS $$
+
+  SELECT decode('475744503100','hex') || convert_to(i_record_type,'UTF8') || decode('00','hex') || i_body_root;
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.document-protocol/document-blinded-commitment [162]
+CREATE OR REPLACE FUNCTION "gw_ledger".document_blinded_commitment(
+  i_root BYTEA,
+  i_salt BYTEA
+) RETURNS BYTEA AS $$
+
+  SELECT "gw_ledger".sha256(
+    decode('47574450313a626c696e643a','hex') || i_salt || i_root
+  );
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pgsodium";
 
 -- gwdb.ledger.document/Document [24] 

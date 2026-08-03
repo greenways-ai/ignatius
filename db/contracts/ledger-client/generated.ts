@@ -93,6 +93,109 @@ export interface OfflineTransactionSubmission {
   primitiveManifest: Array<{ root: LedgerRoot; id: string; arity: number }>;
 }
 
+export type DocumentOperation =
+  | { kind: "text.splice"; target: string; offset: number; deleteCount: number; text: string }
+  | { kind: "node.insert"; parent: string; before?: string; after?: string; nodeRoot: LedgerRoot }
+  | { kind: "node.delete"; target: string; expectedRoot: LedgerRoot }
+  | { kind: "node.move"; target: string; parent: string; before?: string; after?: string }
+  | { kind: "node.replace"; target: string; expectedRoot: LedgerRoot; nodeRoot: LedgerRoot }
+  | { kind: "node.set-attrs"; target: string; expectedAttrsRoot: LedgerRoot; attrsRoot: LedgerRoot }
+  | { kind: "mark.add" | "mark.remove"; target: string; from: number; to: number; markRoot: LedgerRoot };
+
+export interface DocumentChangeBatch {
+  protocol: "greenways.document/1";
+  id: string;
+  logId: string;
+  sequence: string;
+  previousEntryRoot?: LedgerRoot;
+  baseRevisionRoot: LedgerRoot;
+  baseAstRoot: LedgerRoot;
+  expectedResultRoot: LedgerRoot;
+  profileRoot: LedgerRoot;
+  delegationRoot: LedgerRoot;
+  operationRoots: LedgerRoot[];
+  signature: string;
+}
+
+export interface DocumentSyncCheckpoint {
+  documentId: string;
+  environmentId: string;
+  revisionRoot: LedgerRoot;
+  astRoot: LedgerRoot;
+  policyRoot: LedgerRoot;
+  environmentSequence: string;
+  packHex?: string;
+}
+
+export interface DocumentImportPreparation {
+  challenge: string;
+  checkpoint: DocumentSyncCheckpoint;
+  authorized: boolean;
+  maxOperations: 64;
+  maxCells: 128;
+  maxPackHexCharacters: 1000000;
+}
+
+export interface DocumentImportSubmission {
+  challenge: string;
+  documentId: string;
+  contributorIdentity: string;
+  logId: string;
+  entries: DocumentChangeBatch[];
+  personalHestiaReceipts: string[];
+  packHex: string;
+  cellCount: number;
+}
+
+export interface PublicDocumentReceipt {
+  receiptId: string;
+  environmentId: string;
+  documentId: string;
+  contributorIdentity: string;
+  batchCount: number;
+  operationCount: number;
+  byteCount: number;
+  receivedAt: string;
+  outcome: "accepted" | "conflict" | "rejected" | "blocked";
+  environmentSequence: string;
+  submissionCommitment: string;
+  resultCommitment?: string;
+  environmentKey: string;
+  signature: string;
+}
+
+export interface DocumentApprovalSubmission {
+  stageId: string;
+  policyRoot: LedgerRoot;
+  revisionRoot: LedgerRoot;
+  astRoot: LedgerRoot;
+  decision: "approve" | "reject" | "withdraw";
+  delegationRoot: LedgerRoot;
+  signature: string;
+}
+
+export interface DocumentDeliverySubmission {
+  policyRoot: LedgerRoot;
+  revisionRoot: LedgerRoot;
+  astRoot: LedgerRoot;
+  cutoffSequence: string;
+  coverageRoot: LedgerRoot;
+  exporterRoot: LedgerRoot;
+  disclosureMode: "public-full" | "authorized-full" | "commitment-only";
+  artifacts: Array<{ id: string; mediaType: string; bytes: number; sha256: string }>;
+  delegationRoot: LedgerRoot;
+  signature: string;
+}
+
+export interface HestiaDocumentProtocolApi {
+  syncDocument(documentId: string, fromRevision?: LedgerRoot): Promise<DocumentSyncCheckpoint>;
+  prepareDocumentImport(documentId: string, metadata: object): Promise<DocumentImportPreparation>;
+  importDocumentLog(documentId: string, submission: DocumentImportSubmission): Promise<PublicDocumentReceipt[]>;
+  documentReceipt(receiptId: string): Promise<PublicDocumentReceipt>;
+  approveDocument(documentId: string, approval: DocumentApprovalSubmission): Promise<{ approvalRoot: LedgerRoot }>;
+  deliverDocument(documentId: string, delivery: DocumentDeliverySubmission): Promise<{ deliveryRoot: LedgerRoot }>;
+}
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;

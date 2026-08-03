@@ -24,6 +24,7 @@
             [gwdb.ledger.snapshot]
             [gwdb.ledger.integrity]
             [gwdb.ledger.document]
+            [gwdb.ledger.document-protocol]
             [gwdb.ledger.admission]
             [gwdb.ledger.developer]))
 
@@ -53,6 +54,7 @@
              [gwdb.ledger.snapshot]
              [gwdb.ledger.integrity]
              [gwdb.ledger.document]
+             [gwdb.ledger.document-protocol]
              [gwdb.ledger.admission]
              [gwdb.ledger.developer]]
    :config {:dbname "gw-ledger-test"}
