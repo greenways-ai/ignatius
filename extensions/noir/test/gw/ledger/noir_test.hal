@@ -1,6 +1,6 @@
-(ns greenways.ledger.noir-test
+(ns gw.ledger.noir-test
   (:require [std.lib.test :as test]
-            [greenways.ledger.noir :as noir]))
+            [gw.ledger.noir :as noir]))
 
 (def results
   [(test/check

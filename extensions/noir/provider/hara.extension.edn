@@ -1,5 +1,5 @@
-{:namespace "greenways.ledger.noir.provider"
- :identity "greenways/ledger.noir"
+{:namespace "gw.ledger.noir.provider"
+ :identity "gw/ledger.noir"
  :version "0.1.0"
  :provider :hta
  :abi :hta.v1

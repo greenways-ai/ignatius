@@ -1,6 +1,6 @@
-(ns greenways.ledger.sha-test
+(ns gw.ledger.sha-test
   (:require [std.lib.test :as test]
-            [greenways.ledger.sha :as sha]))
+            [gw.ledger.sha :as sha]))
 
 (def results
   [(test/check
