@@ -1,6 +1,6 @@
-(ns greenways.ledger.noir
-  (:require [greenways.ledger.noir.provider :as provider]
-            [greenways.ledger.sha :as sha]))
+(ns gw.ledger.noir
+  (:require [gw.ledger.noir.provider :as provider]
+            [gw.ledger.sha :as sha]))
 
 (defn compile [source]
   (provider/compile source))

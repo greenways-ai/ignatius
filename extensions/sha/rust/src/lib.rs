@@ -43,9 +43,9 @@ fn request(bytes: &[u8]) -> Result<Vec<u8>, String> {
                 Value::Vector(arguments) if arguments.len() == 1 => match &arguments[0] {
                     Value::Bytes(bytes) => Ok(bytes.clone()),
                     Value::ByteBuffer(bytes) => Ok(bytes.borrow().clone()),
-                    _ => Err("greenways.ledger.sha/digest expects bytes".into()),
+                    _ => Err("gw.ledger.sha/digest expects bytes".into()),
                 },
-                _ => Err("greenways.ledger.sha/digest expects one argument".into()),
+                _ => Err("gw.ledger.sha/digest expects one argument".into()),
             }
         }
         _ => Err("hta/start expects [\"digest\" [bytes]]".into()),

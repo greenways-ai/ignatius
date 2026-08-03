@@ -1,9 +1,9 @@
-# greenways/ledger.sha
+# gw/ledger.sha
 
 Portable Hara SHA-256 API backed by an HTA v1 WebAssembly provider.
 
 ```clojure
-(ns app (:require [greenways.ledger.sha :as sha]))
+(ns app (:require [gw.ledger.sha :as sha]))
 (deref (sha/digest (bytes 97 98 99)))
 ```
 
