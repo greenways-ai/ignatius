@@ -19,7 +19,7 @@
   "Hashes canonical bytes with the v1 prototype algorithm."
   {:added "0.1"}
   [:bytea input]
-  (pg/digest input "sha256"))
+  (public.digest input "sha256"))
 
 (defn.pg ^{:- [:boolean]
            :%% :sql
@@ -48,8 +48,8 @@
   "Hashes the v1 codec marker, type tag, and canonical payload bytes."
   {:added "0.1"}
   [:integer type-tag :bytea payload]
-  (pg/digest (-/canonical-encode type-tag payload)
-             "sha256"))
+  (public.digest (-/canonical-encode type-tag payload)
+                 "sha256"))
 
 (defn.pg ^{:- [:boolean]
            :%% :sql
