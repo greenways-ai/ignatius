@@ -1,15 +1,5 @@
-#[path = "../../../../.local/hara.lang/rust/src/core.rs"]
-mod core;
-#[path = "../../../../.local/hara.lang/rust/src/hta.rs"]
-mod hta;
-#[path = "../../../../.local/hara.lang/rust/src/kernel.rs"]
-mod kernel;
-#[path = "../../../../.local/hara.lang/rust/src/lang.rs"]
-mod lang;
-#[path = "../../../../.local/hara.lang/rust/src/task.rs"]
-mod task;
-
-use core::Value;
+use hara_wasm::core::Value;
+use hara_wasm::hta;
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -43,9 +33,9 @@ fn request(bytes: &[u8]) -> Result<Vec<u8>, String> {
                 Value::Vector(arguments) if arguments.len() == 1 => match &arguments[0] {
                     Value::Bytes(bytes) => Ok(bytes.clone()),
                     Value::ByteBuffer(bytes) => Ok(bytes.borrow().clone()),
-                    _ => Err("gw.ledger.sha/digest expects bytes".into()),
+                    _ => Err("ignatius.extension.sha/digest expects bytes".into()),
                 },
-                _ => Err("gw.ledger.sha/digest expects one argument".into()),
+                _ => Err("ignatius.extension.sha/digest expects one argument".into()),
             }
         }
         _ => Err("hta/start expects [\"digest\" [bytes]]".into()),

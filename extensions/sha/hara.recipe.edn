@@ -7,12 +7,12 @@
                  :lockfile "rust/Cargo.lock"
                  :workspace-dependency {:coordinate "hara-lang/hara"
                                         :source "https://github.com/hara-lang/hara.git"
-                                        :revision :publication-commit}
+                                        :revision "99a0b106158dec0902ebe08349c8f8b113d97ea9"}
                  :locked true}
- :recipe/outputs [{:from "rust/target/wasm32-unknown-unknown/release/greenways_ledger_sha.wasm"
-                   :to "greenways/ledger/sha/provider/sha256.wasm"}
+ :recipe/outputs [{:from "rust/target/wasm32-unknown-unknown/release/ignatius_sha.wasm"
+                   :to "ignatius/sha/provider/sha256.wasm"}
                   {:from "extension/hara.extension.edn"
-                   :to "greenways/ledger/sha/provider/hara.extension.edn"}]
+                   :to "ignatius/sha/provider/hara.extension.edn"}]
  :recipe/limits {:cpu-seconds 300
                  :memory-mib 1024
                  :output-mib 16

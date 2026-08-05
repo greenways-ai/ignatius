@@ -1,5 +1,5 @@
 [package]
-name = "greenways-ledger-sha"
+name = "ignatius-sha"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
@@ -9,6 +9,7 @@ rust-version = "1.78"
 crate-type = ["cdylib"]
 
 [dependencies]
+hara-wasm = { path = "../../../.local/hara.lang/rust" }
 sha2 = "0.10"
 
 [workspace]
