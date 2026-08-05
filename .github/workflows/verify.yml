@@ -26,6 +26,10 @@ jobs:
             echo "Portable HAL must use Ignatius namespaces" >&2
             exit 1
           fi
+          if grep -R -n -E 'gw/ledger|greenways-ledger' hal extensions; then
+            echo "Portable packages must publish Ignatius identities" >&2
+            exit 1
+          fi
 
       - name: Install build tools
         run: |
