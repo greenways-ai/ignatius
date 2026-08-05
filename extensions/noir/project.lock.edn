@@ -1,0 +1,6 @@
+{:lock/format 1
+ :packages
+ {"official:gw/ledger.sha"
+  {:version "0.1.0"
+   :source :official
+   :archive-sha256 :unpublished}}}

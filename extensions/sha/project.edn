@@ -1,0 +1,14 @@
+{:hara/type :project
+ :hara/version "1.0.0"
+ :project/id gw/ledger.sha
+ :project/version "0.1.0"
+ :project/source-paths ["src"]
+ :project/test-paths ["test"]
+ :project/extension-paths ["target/package"]
+ :project/capabilities #{}
+ :project/artifact-paths ["target/package"]
+ :project/archive-root "target/package"
+ :project/recipe "hara.recipe.edn"
+ :project/package {:entry-points ["gw.ledger.sha"]
+                   :license "Apache-2.0"}
+ :project/dependencies {}}

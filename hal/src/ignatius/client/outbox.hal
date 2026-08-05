@@ -1,0 +1,50 @@
+(ns ignatius.client.outbox)
+
+(defn root-or-dash
+  "Returns the wire placeholder used by the PostgreSQL document protocol."
+  [root]
+  (if (nil? root) "-" root))
+
+(defn operation-payload
+  "Builds the canonical document-operation payload text before SHA-256."
+  [kind target-id parent-id after-id payload-root]
+  (str "R:document-operation:1:"
+       kind ":"
+       (root-or-dash target-id) ":"
+       (root-or-dash parent-id) ":"
+       (root-or-dash after-id) ":"
+       (root-or-dash payload-root)))
+
+(defn create-signing-payload
+  "Builds the exact UTF-8 document-create bytes signed by an owner."
+  [document-id owner-key syntax-root]
+  (str "R:document-create:1:"
+       document-id ":" owner-key ":" syntax-root))
+
+(defn edit-signing-payload
+  "Builds the exact UTF-8 document-edit bytes signed by an owner."
+  [document-id base-revision operation-root owner-key]
+  (str "R:document-edit:1:"
+       document-id ":" base-revision ":" operation-root ":" owner-key))
+
+(defn pending-entry
+  "Creates a serialisable offline outbox entry. Host adapters add signatures,
+   cell packs, timestamps, and transport-specific identifiers."
+  [id kind document-id base-revision root]
+  {:id id
+   :kind kind
+   :document-id document-id
+   :base-revision base-revision
+   :root root
+   :status :pending
+   :error nil})
+
+(defn mark-entry
+  "Applies one deterministic outbox status transition."
+  [entry status error]
+  (assoc (assoc entry :status status) :error error))
+
+(defn enqueue
+  "Appends one entry without mutating the previous outbox."
+  [outbox entry]
+  (conj outbox entry))

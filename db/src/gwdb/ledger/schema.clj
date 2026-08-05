@@ -1,0 +1,11 @@
+(ns gwdb.ledger.schema
+  (:require [tahto.core :as l]))
+
+;; Emits the schema seed before objects that live in gw_ledger are created.
+(l/script :postgres
+  {:config {:dbname "gw-ledger-test"}
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(defonce +run+ [])

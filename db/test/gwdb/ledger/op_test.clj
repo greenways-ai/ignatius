@@ -1,0 +1,63 @@
+(ns gwdb.ledger.op-test
+  (:use code.test)
+  (:require [gwdb.ledger.op :refer :all]))
+
+^{:refer gwdb.ledger.op/Op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/OpChild :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-kind-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-root-hex :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-children-put :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/put-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/constant :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/local :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/lookup :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/invoke :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/do-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/cond-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/def-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/let-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/lambda-op :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-get :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-child-root :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-child-roots :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.op/op-valid :added "0.1"}
+(fact "TODO")

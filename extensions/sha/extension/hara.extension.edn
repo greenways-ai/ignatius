@@ -1,0 +1,9 @@
+{:namespace "gw.ledger.sha.provider"
+ :identity "gw/ledger.sha"
+ :version "0.1.0"
+ :provider :wasm
+ :module "sha256.wasm"
+ :abi :hta.v1
+ :exports
+ {"digest" {:args [:bytes] :returns :bytes :async true}}
+ :capabilities []}

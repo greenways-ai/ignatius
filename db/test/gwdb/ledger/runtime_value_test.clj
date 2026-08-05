@@ -1,0 +1,435 @@
+(ns gwdb.ledger.runtime-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.function :as function]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.runtime :as runtime]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.function :as function]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.runtime :as runtime]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-constant :added "0.2"}
+(fact "constant execution returns its semantic value and a charged new context"
+  (!.pg
+   [:select
+    (:->> (runtime/execute
+           (context/context-create
+            (state/state-genesis)
+            (value/put-symbol "origin")
+            (value/put-symbol "address")
+            nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+           (op/constant (value/put-integer "7")))
+           "status")]
+   [:select
+    (:->> (runtime/execute
+           (context/context-create
+            (state/state-genesis)
+            (value/put-symbol "origin")
+            (value/put-symbol "address")
+            nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+           (op/constant (value/put-integer "7")))
+           "cost_used")])
+  => '("ok" 1))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-do :added "0.2"}
+(fact "do threads deterministic cost through authoritative child order"
+  (!.pg
+   [:select
+    (:->> (runtime/execute
+           (context/context-create
+            (state/state-genesis)
+            (value/put-symbol "origin")
+            (value/put-symbol "address")
+            nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+           (op/do-op
+            (pg/jsonb-build-array
+             (pg/encode (op/constant (value/put-integer "1")) "hex")
+             (pg/encode (op/constant (value/put-integer "2")) "hex"))))
+           "cost_used")])
+  => 2)
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-definition :added "0.2"}
+(fact "def writes the state-root account environment that lookup subsequently reads"
+  (!.pg
+   [:select
+    (:->> (runtime/execute
+           (:bytea
+            (:->> (runtime/execute
+                    (context/context-create
+                     (state/state-assoc-account
+                      (state/state-genesis)
+                      (value/put-symbol "address")
+                      (account/account-value-create (value/put-nil))
+                      0)
+                     (value/put-symbol "origin")
+                     (value/put-symbol "address")
+                     nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                    (op/def-op
+                     (value/put-symbol "my-code")
+                     (op/constant (value/put-integer "7"))))
+                   "context_root"))
+           (op/lookup (value/put-symbol "my-code")))
+           "status")]
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (:bytea
+               (:->> (runtime/execute
+                       (context/context-create
+                        (state/state-assoc-account
+                         (state/state-genesis)
+                         (value/put-symbol "address")
+                         (account/account-value-create (value/put-nil))
+                         0)
+                        (value/put-symbol "origin")
+                        (value/put-symbol "address")
+                        nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                       (op/def-op
+                        (value/put-symbol "my-code")
+                        (op/constant (value/put-integer "7"))))
+                      "context_root"))
+              (op/lookup (value/put-symbol "my-code")))
+             "value_root"))
+     (value/put-integer "7"))])
+  => '("ok" true))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-let :added "0.2"}
+(fact "let stores a lexical binding as a canonical vector and local reads it"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/let-op
+               (value/put-symbol "x")
+               (op/constant (value/put-integer "10"))
+               (op/local 0 0)))
+             "value_root"))
+     (value/put-integer "10"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/let-op
+             (value/put-symbol "x")
+             (op/constant (value/put-integer "10"))
+             (op/local 0 0)))
+           "cost_used")])
+  => '(true 3))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-integer-add :added "0.2"}
+(fact "invoke dispatches the canonical integer/add primitive in argument order"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/invoke
+               (primitive/primitive-put "integer/add" 2)
+               (pg/jsonb-build-array
+                (pg/encode (op/constant (value/put-integer "1")) "hex")
+                (pg/encode (op/constant (value/put-integer "2")) "hex"))))
+             "value_root"))
+     (value/put-integer "3"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/invoke
+             (primitive/primitive-put "integer/add" 2)
+             (pg/jsonb-build-array
+              (pg/encode (op/constant (value/put-integer "1")) "hex")
+              (pg/encode (op/constant (value/put-integer "2")) "hex"))))
+           "cost_used")])
+  => '(true 4))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-cond :added "0.2"}
+(fact "cond evaluates only the selected canonical branch"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/cond-op
+               (pg/jsonb-build-array
+                (pg/encode (op/constant (value/put-boolean false)) "hex")
+                (pg/encode (op/constant (value/put-integer "1")) "hex")
+                (pg/encode (op/constant (value/put-boolean true)) "hex")
+                (pg/encode (op/constant (value/put-integer "2")) "hex"))))
+             "value_root"))
+     (value/put-integer "2"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/cond-op
+             (pg/jsonb-build-array
+              (pg/encode (op/constant (value/put-boolean false)) "hex")
+              (pg/encode (op/constant (value/put-integer "1")) "hex")
+              (pg/encode (op/constant (value/put-boolean true)) "hex")
+              (pg/encode (op/constant (value/put-integer "2")) "hex"))))
+           "cost_used")])
+  => '(true 3))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-lambda :added "0.2"}
+(fact "lambda creates a canonical reusable function value with its closure"
+  (!.pg
+   [:select
+    (op/op-valid
+     (op/lambda-op
+      (value/put-vector (pg/jsonb-build-array))
+      (op/constant (value/put-integer "42"))))]
+   [:select
+    (function/function-valid
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/lambda-op
+               (value/put-vector (pg/jsonb-build-array))
+               (op/constant (value/put-integer "42"))))
+             "value_root")))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/lambda-op
+             (value/put-vector (pg/jsonb-build-array))
+             (op/constant (value/put-integer "42"))))
+           "cost_used")])
+  => '(true true 2))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-function-invoke :added "0.2"}
+(fact "an immutable zero-argument function executes its stored body repeatedly"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/invoke
+               (:bytea
+                (:->> (runtime/execute
+                        (context/context-create
+                         (state/state-genesis)
+                         (value/put-symbol "origin")
+                         (value/put-symbol "address")
+                         nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                        (op/lambda-op
+                         (value/put-vector (pg/jsonb-build-array))
+                         (op/constant (value/put-integer "42"))))
+                      "value_root"))
+               (pg/jsonb-build-array)))
+             "value_root"))
+     (value/put-integer "42"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/invoke
+             (:bytea
+              (:->> (runtime/execute
+                      (context/context-create
+                       (state/state-genesis)
+                       (value/put-symbol "origin")
+                       (value/put-symbol "address")
+                       nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                      (op/lambda-op
+                       (value/put-vector (pg/jsonb-build-array))
+                       (op/constant (value/put-integer "42"))))
+                    "value_root"))
+             (pg/jsonb-build-array)))
+           "cost_used")])
+  => '(true 3))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-function-local :added "0.2"}
+(fact "a one-argument stored function binds its argument as a canonical local"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+              (op/invoke
+               (:bytea
+                (:->> (runtime/execute
+                        (context/context-create
+                         (state/state-genesis)
+                         (value/put-symbol "origin")
+                         (value/put-symbol "address")
+                         nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                        (op/lambda-op
+                         (value/put-vector
+                          (pg/jsonb-build-array
+                           (pg/encode (value/put-symbol "x") "hex")))
+                         (op/local 0 0)))
+                      "value_root"))
+               (pg/jsonb-build-array
+                (pg/encode (op/constant (value/put-integer "12")) "hex"))))
+             "value_root"))
+     (value/put-integer "12"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+            (op/invoke
+             (:bytea
+              (:->> (runtime/execute
+                      (context/context-create
+                       (state/state-genesis)
+                       (value/put-symbol "origin")
+                       (value/put-symbol "address")
+                       nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                      (op/lambda-op
+                       (value/put-vector
+                        (pg/jsonb-build-array
+                         (pg/encode (value/put-symbol "x") "hex")))
+                       (op/local 0 0)))
+                    "value_root"))
+             (pg/jsonb-build-array
+              (pg/encode (op/constant (value/put-integer "12")) "hex"))))
+           "cost_used")])
+  => '(true 4))
+
+^{:refer gwdb.ledger.runtime/execute :id runtime-square :added "0.2"}
+(fact "a stored square function reuses its compiled multiply body"
+  (!.pg
+   [:select
+    (==
+     (:bytea
+      (:->> (runtime/execute
+              (context/context-create
+               (state/state-genesis)
+               (value/put-symbol "origin")
+               (value/put-symbol "address")
+               nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 20 0)
+              (op/invoke
+               (:bytea
+                (:->> (runtime/execute
+                        (context/context-create
+                         (state/state-genesis)
+                         (value/put-symbol "origin")
+                         (value/put-symbol "address")
+                         nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 20 0)
+                        (op/lambda-op
+                         (value/put-vector
+                          (pg/jsonb-build-array
+                           (pg/encode (value/put-symbol "x") "hex")))
+                         (op/invoke
+                          (primitive/primitive-put "integer/multiply" 2)
+                          (pg/jsonb-build-array
+                           (pg/encode (op/local 0 0) "hex")
+                           (pg/encode (op/local 0 0) "hex")))))
+                      "value_root"))
+               (pg/jsonb-build-array
+                (pg/encode (op/constant (value/put-integer "12")) "hex"))))
+             "value_root"))
+     (value/put-integer "144"))]
+   [:select
+    (:->> (runtime/execute
+            (context/context-create
+             (state/state-genesis)
+             (value/put-symbol "origin")
+             (value/put-symbol "address")
+             nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 20 0)
+            (op/invoke
+             (:bytea
+              (:->> (runtime/execute
+                      (context/context-create
+                       (state/state-genesis)
+                       (value/put-symbol "origin")
+                       (value/put-symbol "address")
+                       nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 20 0)
+                      (op/lambda-op
+                       (value/put-vector
+                        (pg/jsonb-build-array
+                         (pg/encode (value/put-symbol "x") "hex")))
+                       (op/invoke
+                        (primitive/primitive-put "integer/multiply" 2)
+                        (pg/jsonb-build-array
+                         (pg/encode (op/local 0 0) "hex")
+                         (pg/encode (op/local 0 0) "hex")))))
+                    "value_root"))
+             (pg/jsonb-build-array
+              (pg/encode (op/constant (value/put-integer "12")) "hex"))))
+           "cost_used")])
+  => '(true 7))

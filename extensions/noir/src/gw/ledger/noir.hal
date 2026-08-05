@@ -1,0 +1,17 @@
+(ns gw.ledger.noir
+  (:require [gw.ledger.noir.provider :as provider]
+            [gw.ledger.sha :as sha]))
+
+(defn compile [source]
+  (provider/compile source))
+
+(defn prove [program inputs]
+  (provider/prove program inputs))
+
+(defn verify [program proof]
+  (provider/verify program proof))
+
+(defn artifact-root
+  "Returns the SHA-256 identity of canonical artifact bytes."
+  [artifact-bytes]
+  (sha/digest artifact-bytes))

@@ -1,0 +1,101 @@
+(ns gwdb.ledger.account-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.account/account-value-create :added "0.1"}
+(fact "an account value owns immutable sequence, environment, metadata and controller roots"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (account/account-value-sequence-root
+      (account/account-value-create (value/put-nil))))]
+   [:select
+    (cell/cell-type-tag
+     (account/account-value-environment-root
+      (account/account-value-create (value/put-nil))))]
+   [:select
+    (cell/cell-type-tag
+     (account/account-value-metadata-root
+      (account/account-value-create (value/put-nil))))])
+  => '(2 11 11))
+
+^{:refer gwdb.ledger.account/account-value-define-empty :added "0.1"}
+(fact "defining my-code stores an inert Hara list in the account environment"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (cell/cell-ref-child
+      (account/account-value-environment-root
+       (account/account-value-define-empty
+        (account/account-value-create (value/put-nil))
+        (value/put-symbol "my-code")
+        (value/put-list
+         (pg/jsonb-build-array
+          (pg/encode (value/put-symbol "+") "hex")
+          (pg/encode (value/put-integer "1") "hex")
+          (pg/encode (value/put-integer "2") "hex")
+          (pg/encode (value/put-integer "4") "hex"))))
+       )
+      0 "value"))]
+   [:select
+    (cell/cell-ref-count
+     (account/account-value-environment-root
+      (account/account-value-define-empty
+       (account/account-value-create (value/put-nil))
+       (value/put-symbol "my-code")
+       (value/put-list
+        (pg/jsonb-build-array
+         (pg/encode (value/put-symbol "+") "hex")
+         (pg/encode (value/put-integer "1") "hex")
+         (pg/encode (value/put-integer "2") "hex")
+         (pg/encode (value/put-integer "4") "hex")))))
+     "key")])
+  => '(9 1))
+
+^{:refer gwdb.ledger.account/account-value-define
+  :id repeated-account-definitions
+  :added "0.1"}
+(fact "repeated definitions produce a larger immutable environment map"
+  (!.pg
+   [:select
+    (cell/cell-ref-count
+     (account/account-value-environment-root
+      (account/account-value-define
+       (account/account-value-define
+        (account/account-value-create (value/put-nil))
+        (value/put-symbol "first")
+        (value/put-integer "1"))
+       (value/put-symbol "second")
+       (value/put-integer "2")))
+     "key")])
+  => 2)
