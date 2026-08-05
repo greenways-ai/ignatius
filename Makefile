@@ -19,4 +19,4 @@ hal-test:
 	hara test hal
 
 extension-sha-test:
-	cargo test --manifest-path extensions/sha/rust/Cargo.toml
+	cargo test --locked --manifest-path extensions/sha/rust/Cargo.toml
