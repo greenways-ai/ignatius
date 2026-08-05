@@ -7,12 +7,12 @@
                  :lockfile "provider/package-lock.json"
                  :workspace-dependency {:coordinate "hara-lang/hara"
                                         :source "https://github.com/hara-lang/hara.git"
-                                        :revision :publication-commit
+                                        :revision "99a0b106158dec0902ebe08349c8f8b113d97ea9"
                                         :build-root "rust/web"}
                  :locked true
                  :target :noir-hta}
- :recipe/outputs [{:from "provider/target/package/greenways/ledger/noir/provider"
-                   :to "greenways/ledger/noir/provider"}]
+ :recipe/outputs [{:from "provider/target/package/ignatius/noir/provider"
+                   :to "ignatius/noir/provider"}]
  :recipe/limits {:cpu-seconds 900
                  :memory-mib 4096
                  :output-mib 256
