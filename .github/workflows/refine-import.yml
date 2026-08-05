@@ -36,15 +36,30 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
+          def remove_lines(path: Path, tokens: set[str]) -> None:
+              lines = path.read_text().splitlines()
+              path.write_text("\n".join(
+                  line for line in lines if not any(token in line for token in tokens)
+              ) + "\n")
+
           base = Path("db/src/gwdb/ledger/base.clj")
-          excluded = {
+          remove_lines(base, {
               "[gwdb.ledger.ot]",
               "[gwdb.ledger.document]",
               "[gwdb.ledger.document-protocol]",
-          }
-          lines = base.read_text().splitlines()
-          lines = [line for line in lines if not any(token in line for token in excluded)]
-          base.write_text("\n".join(lines) + "\n")
+          })
+
+          admission = Path("db/src/gwdb/ledger/admission.clj")
+          text = admission.read_text()
+          text = "\n".join(
+              line for line in text.splitlines()
+              if "[gwdb.ledger.document :as document]" not in line
+          ) + "\n"
+          start_marker = "(defn.pg ^{:- [:bytea] :%% :sql :props [:immutable :parallel-safe]}\n  admission-document-create-payload"
+          end_marker = "(defn.pg ^{:- [:bytea]}\n  admission-address-root"
+          start = text.index(start_marker)
+          end = text.index(end_marker)
+          admission.write_text(text[:start] + text[end:])
 
           project = Path("db/project.clj")
           text = project.read_text()
