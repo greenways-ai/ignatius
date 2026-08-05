@@ -1,6 +1,6 @@
-(ns gw.ledger.noir-test
+(ns ignatius.extension.noir-test
   (:require [std.lib.test :as test]
-            [gw.ledger.noir :as noir]))
+            [ignatius.extension.noir :as noir]))
 
 (def results
   [(test/check

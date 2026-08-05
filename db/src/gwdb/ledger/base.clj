@@ -9,7 +9,6 @@
             [gwdb.ledger.codec-value]
             [gwdb.ledger.value]
             [gwdb.ledger.syntax]
-            [gwdb.ledger.ot]
             [gwdb.ledger.state]
             [gwdb.ledger.account]
             [gwdb.ledger.op]
@@ -23,8 +22,6 @@
             [gwdb.ledger.block]
             [gwdb.ledger.snapshot]
             [gwdb.ledger.integrity]
-            [gwdb.ledger.document]
-            [gwdb.ledger.document-protocol]
             [gwdb.ledger.admission]
             [gwdb.ledger.developer]))
 
@@ -39,7 +36,6 @@
              [gwdb.ledger.codec-value]
              [gwdb.ledger.value]
              [gwdb.ledger.syntax]
-             [gwdb.ledger.ot]
              [gwdb.ledger.state]
              [gwdb.ledger.account]
              [gwdb.ledger.op]
@@ -53,8 +49,6 @@
              [gwdb.ledger.block]
              [gwdb.ledger.snapshot]
              [gwdb.ledger.integrity]
-             [gwdb.ledger.document]
-             [gwdb.ledger.document-protocol]
              [gwdb.ledger.admission]
              [gwdb.ledger.developer]]
    :config {:dbname "gw-ledger-test"}

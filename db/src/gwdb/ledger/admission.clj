@@ -4,7 +4,6 @@
             [gwdb.ledger.account :as account]
             [gwdb.ledger.block :as block]
             [gwdb.ledger.crypto :as crypto]
-            [gwdb.ledger.document :as document]
             [gwdb.ledger.op :as op]
             [gwdb.ledger.state :as state]
             [gwdb.ledger.transaction :as transaction]
@@ -18,7 +17,6 @@
              [gwdb.ledger.account :as account]
              [gwdb.ledger.block :as block]
              [gwdb.ledger.crypto :as crypto]
-             [gwdb.ledger.document :as document]
              [gwdb.ledger.op :as op]
              [gwdb.ledger.state :as state]
              [gwdb.ledger.transaction :as transaction]
@@ -37,78 +35,6 @@
   (pg/decode
    (|| "R:account-registration:1:" i-network ":" (pg/encode i-public-key "hex"))
    "escape"))
-
-(defn.pg ^{:- [:bytea] :%% :sql :props [:immutable :parallel-safe]}
-  admission-document-create-payload
-  {:added "0.5"}
-  [:text i-document-id :bytea i-owner-key :bytea i-syntax-root]
-  (pg/decode (|| "R:document-create:1:" i-document-id ":"
-                  (pg/encode i-owner-key "hex") ":" (pg/encode i-syntax-root "hex"))
-             "escape"))
-
-(defn.pg ^{:- [:bytea] :%% :sql :props [:immutable :parallel-safe]}
-  admission-document-edit-payload
-  {:added "0.5"}
-  [:text i-document-id :bytea i-base-revision :bytea i-operation-root :bytea i-owner-key]
-  (pg/decode (|| "R:document-edit:1:" i-document-id ":"
-                  (pg/encode i-base-revision "hex") ":" (pg/encode i-operation-root "hex") ":"
-                  (pg/encode i-owner-key "hex"))
-             "escape"))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-text-create-signing-request
-  {:added "0.5"}
-  [:text i-document-id :bytea i-owner-key :text i-text]
-  (let [(:bytea v-syntax) (document/document-text-syntax i-document-id i-text)
-        (:bytea v-payload) (-/admission-document-create-payload i-document-id i-owner-key v-syntax)]
-    (return (pg/jsonb-build-object "syntax_root" (pg/encode v-syntax "hex")
-                                   "signing_payload" (pg/encode v-payload "hex")))))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-text-replace-signing-request
-  {:added "0.5"}
-  [:text i-document-id :bytea i-base-revision :bytea i-owner-key :text i-node-id :text i-text]
-  (let [(:bytea v-syntax) (document/document-text-syntax i-node-id i-text)
-        (:bytea v-operation) (document/document-operation-put "replace" i-node-id nil nil v-syntax)
-        (:bytea v-payload) (-/admission-document-edit-payload i-document-id i-base-revision v-operation i-owner-key)]
-    (return (pg/jsonb-build-object "operation_root" (pg/encode v-operation "hex")
-                                   "signing_payload" (pg/encode v-payload "hex")))))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-create-signing-request
-  {:added "0.5"}
-  [:text i-document-id :bytea i-owner-key :bytea i-syntax-root]
-  (let [(:bytea v-payload) (-/admission-document-create-payload i-document-id i-owner-key i-syntax-root)]
-    (return (pg/jsonb-build-object "signing_payload" (pg/encode v-payload "hex")))))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-edit-signing-request
-  {:added "0.5"}
-  [:text i-document-id :bytea i-base-revision :bytea i-owner-key :bytea i-operation-root]
-  (let [(:bytea v-payload) (-/admission-document-edit-payload i-document-id i-base-revision i-operation-root i-owner-key)]
-    (return (pg/jsonb-build-object "signing_payload" (pg/encode v-payload "hex")))))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-create
-  {:added "0.5"}
-  [:text i-document-id :bytea i-owner-key :bytea i-syntax-root :bytea i-signature]
-  (let [(:bytea v-payload) (-/admission-document-create-payload i-document-id i-owner-key i-syntax-root)
-        _ (pg/assert (crypto/signature-verify i-signature v-payload i-owner-key)
-                     [:ledger/invalid-document-create-signature])
-        (:bytea v-revision) (document/document-create i-document-id i-owner-key i-syntax-root)]
-    (return (pg/jsonb-build-object "revision_root" (pg/encode v-revision "hex")
-                                   "document" (document/document-head i-document-id)))))
-
-(defn.pg ^{:- [:jsonb]}
-  admission-document-edit
-  {:added "0.5"}
-  [:text i-document-id :bytea i-base-revision :bytea i-owner-key :bytea i-operation-root :bytea i-signature]
-  (let [(:bytea v-payload) (-/admission-document-edit-payload i-document-id i-base-revision i-operation-root i-owner-key)
-        _ (pg/assert (crypto/signature-verify i-signature v-payload i-owner-key)
-                     [:ledger/invalid-document-edit-signature])
-        (:bytea v-revision) (document/document-apply-operation i-document-id i-base-revision i-owner-key i-operation-root)]
-    (return (pg/jsonb-build-object "revision_root" (pg/encode v-revision "hex")
-                                   "document" (document/document-head i-document-id)))))
 
 (defn.pg ^{:- [:bytea]}
   admission-address-root

@@ -11,7 +11,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".sha256(
   input BYTEA
 ) RETURNS BYTEA AS $$
 
-  SELECT digest(input,'sha256');
+  SELECT public.digest(input,'sha256');
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
@@ -43,7 +43,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".canonical_hash(
   payload BYTEA
 ) RETURNS BYTEA AS $$
 
-  SELECT digest("gw_ledger".canonical_encode(type_tag,payload),'sha256');
+  SELECT public.digest("gw_ledger".canonical_encode(type_tag,payload),'sha256');
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
@@ -1493,633 +1493,6 @@ CREATE OR REPLACE FUNCTION "gw_ledger".put_reference(
 BEGIN
   RETURN "gw_ledger".cell_put("gw_ledger".canonical_hash(15,i_payload),1,15,i_payload);
 END;
-$$ LANGUAGE 'plpgsql';
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.syntax/Syntax [18] 
-DROP TABLE IF EXISTS "gw_ledger"."Syntax" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."Syntax" (
-  "syntax_root" BYTEA PRIMARY KEY,
-  "value_root" BYTEA NOT NULL,
-  "metadata_root" BYTEA NOT NULL
-);
-
--- gwdb.ledger.syntax/put-syntax [25] 
-CREATE OR REPLACE FUNCTION "gw_ledger".put_syntax(
-  i_value_root BYTEA,
-  i_metadata_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_metadata JSONB;
-    o_metadata_ref JSONB;
-    o_root BYTEA;
-    o_upsert JSONB;
-    o_value JSONB;
-    o_value_ref JSONB;
-    v_payload BYTEA;
-  BEGIN
-    o_value := "gw_ledger".cell_by_hash(i_value_root);
-    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
-    IF NOT (o_value IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_syntax_value','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-syntax-value'
-      ;
-    END IF;
-    IF NOT (o_metadata IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/missing_syntax_metadata',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/missing-syntax-metadata'
-      ;
-    END IF;
-    IF NOT ((o_metadata ->> 'type_tag')::SMALLINT = 11) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/syntax_metadata_not_map',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/syntax-metadata-not-map'
-      ;
-    END IF;
-    v_payload := "gw_ledger".syntax_payload(i_value_root,i_metadata_root);
-    o_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(13,v_payload),1,13,v_payload);
-    o_value_ref := "gw_ledger".cell_ref_put(o_root,0,'value',i_value_root);
-    o_metadata_ref := "gw_ledger".cell_ref_put(o_root,1,'metadata',i_metadata_root);
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."Syntax" ("syntax_root","value_root","metadata_root") VALUES (
-        (o_root)::BYTEA,
-        (i_value_root)::BYTEA,
-        (i_metadata_root)::BYTEA
-      ) ON CONFLICT ("syntax_root") DO UPDATE SET ("syntax_root","value_root","metadata_root") = row(
-        EXCLUDED."syntax_root",
-        EXCLUDED."value_root",
-        EXCLUDED."metadata_root"
-      ) RETURNING "syntax_root","value_root","metadata_root")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
-    RETURN o_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/syntax-value-root [50] 
-CREATE OR REPLACE FUNCTION "gw_ledger".syntax_value_root(
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
-      WHERE "syntax_root" = i_syntax_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN (o_row ->> 'value_root')::BYTEA;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/syntax-metadata-root [58] 
-CREATE OR REPLACE FUNCTION "gw_ledger".syntax_metadata_root(
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
-      WHERE "syntax_root" = i_syntax_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN (o_row ->> 'metadata_root')::BYTEA;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/semantic-root [66] 
-CREATE OR REPLACE FUNCTION "gw_ledger".semantic_root(
-  i_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_cell JSONB;
-  BEGIN
-    o_cell := "gw_ledger".cell_by_hash(i_root);
-    IF o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 13) THEN
-      RETURN "gw_ledger".syntax_value_root(i_root);
-    ELSE
-      RETURN i_root;
-    END IF;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.ot/node-id-valid [21] 
-CREATE OR REPLACE FUNCTION "gw_ledger".node_id_valid(
-  i_node_id TEXT
-) RETURNS BOOLEAN AS $$
-
-  SELECT regexp_match(
-    i_node_id,
-    '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-  ) IS NOT NULL;
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.ot/node-id [31] 
-CREATE OR REPLACE FUNCTION "gw_ledger".node_id(
-  i_syntax_root BYTEA
-) RETURNS TEXT AS $$
-
-  DECLARE
-    o_id JSONB;
-    v_id_root BYTEA;
-    v_node_id TEXT;
-  BEGIN
-    v_id_root := "gw_ledger".map_get(
-      "gw_ledger".syntax_metadata_root(i_syntax_root),
-      "gw_ledger".put_keyword('node/id')
-    );
-    o_id := "gw_ledger".cell_by_hash(v_id_root);
-    IF NOT (o_id IS NOT NULL AND ((o_id ->> 'type_tag')::SMALLINT = 5)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_ast_node_id','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-ast-node-id'
-      ;
-    END IF;
-    v_node_id := convert_from((o_id ->> 'payload')::BYTEA,'UTF8');
-    IF NOT ("gw_ledger".node_id_valid(v_node_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_node_id','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-node-id'
-      ;
-    END IF;
-    RETURN v_node_id;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/syntax-root-valid [47] 
-CREATE OR REPLACE FUNCTION "gw_ledger".syntax_root_valid(
-  i_root BYTEA
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_cell JSONB;
-  BEGIN
-    o_cell := "gw_ledger".cell_by_hash(i_root);
-    RETURN o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 13);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/node-sequence-tag [55] 
-CREATE OR REPLACE FUNCTION "gw_ledger".node_sequence_tag(
-  i_syntax_root BYTEA
-) RETURNS INTEGER AS $$
-
-  DECLARE
-    v_tag INTEGER;
-    v_value_root BYTEA;
-  BEGIN
-    v_value_root := "gw_ledger".syntax_value_root(i_syntax_root);
-    v_tag := "gw_ledger".cell_type_tag(v_value_root);
-    RETURN v_tag;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/node-child-count [63] 
-CREATE OR REPLACE FUNCTION "gw_ledger".node_child_count(
-  i_syntax_root BYTEA
-) RETURNS INTEGER AS $$
-
-  DECLARE
-    v_tag INTEGER;
-  BEGIN
-    v_tag := "gw_ledger".node_sequence_tag(i_syntax_root);
-    IF (v_tag = 9) OR (v_tag = 10) THEN
-      RETURN "gw_ledger".cell_ref_count("gw_ledger".syntax_value_root(i_syntax_root),'element');
-    ELSE
-      RETURN 0;
-    END IF;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/node-child-root [72] 
-CREATE OR REPLACE FUNCTION "gw_ledger".node_child_root(
-  i_syntax_root BYTEA,
-  i_position INTEGER
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN "gw_ledger".cell_ref_child(
-    "gw_ledger".syntax_value_root(i_syntax_root),
-    i_position,
-    'element'
-  );
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/find-node-at [79] 
-CREATE OR REPLACE FUNCTION "gw_ledger".find_node_at(
-  i_syntax_root BYTEA,
-  i_node_id TEXT,
-  i_position INTEGER,
-  i_count INTEGER
-) RETURNS BYTEA AS $$
-BEGIN
-  IF "gw_ledger".node_id(i_syntax_root) = i_node_id THEN
-    RETURN i_syntax_root;
-  ELSIF i_position >= i_count THEN
-    RETURN null;
-  ELSE
-    DECLARE
-    v_child BYTEA;
-      v_found BYTEA;
-  BEGIN
-    v_child := "gw_ledger".node_child_root(i_syntax_root,i_position);
-      IF NOT ("gw_ledger".syntax_root_valid(v_child)) THEN
-        RAISE EXCEPTION USING
-          DETAIL = (jsonb_build_object('status','error','tag','ledger/ast_child_not_syntax','data',null))::TEXT,
-          MESSAGE = 'ledger/ast-child-not-syntax'
-        ;
-      END IF;
-      v_found := "gw_ledger".find_node_at(v_child,i_node_id,0,"gw_ledger".node_child_count(v_child));
-      IF v_found is not null  THEN
-        RETURN v_found;
-      ELSE
-        RETURN "gw_ledger".find_node_at(i_syntax_root,i_node_id,i_position + 1,i_count);
-      END IF;
-  END;
-  END IF;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/find-node [97] 
-CREATE OR REPLACE FUNCTION "gw_ledger".find_node(
-  i_syntax_root BYTEA,
-  i_node_id TEXT
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN "gw_ledger".find_node_at(
-    i_syntax_root,
-    i_node_id,
-    0,
-    "gw_ledger".node_child_count(i_syntax_root)
-  );
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/replace-node-at [104] 
-CREATE OR REPLACE FUNCTION "gw_ledger".replace_node_at(
-  i_syntax_root BYTEA,
-  i_target_id TEXT,
-  i_replacement_root BYTEA,
-  i_position INTEGER,
-  i_count INTEGER,
-  i_out JSONB
-) RETURNS BYTEA AS $$
-BEGIN
-  IF i_position = -1 THEN
-    IF "gw_ledger".node_id(i_syntax_root) = i_target_id THEN
-      IF NOT ("gw_ledger".node_id(i_replacement_root) = i_target_id) THEN
-        RAISE EXCEPTION USING
-          DETAIL = (jsonb_build_object(
-                'status',
-                'error',
-                'tag',
-                'ledger/ast_replacement_id_mismatch',
-                'data',
-                null
-              ))::TEXT,
-          MESSAGE = 'ledger/ast-replacement-id-mismatch'
-        ;
-      END IF;
-      RETURN i_replacement_root;
-    ELSE
-      DECLARE
-    v_count INTEGER;
-  BEGIN
-    v_count := "gw_ledger".node_child_count(i_syntax_root);
-        IF v_count = 0 THEN
-          RETURN i_syntax_root;
-        ELSE
-          RETURN "gw_ledger".replace_node_at(
-            i_syntax_root,
-            i_target_id,
-            i_replacement_root,
-            0,
-            v_count,
-            jsonb_build_array()
-          );
-        END IF;
-  END;
-    END IF;
-  ELSIF i_position >= i_count THEN
-    DECLARE
-    v_tag INTEGER;
-      v_value BYTEA;
-  BEGIN
-    v_tag := "gw_ledger".node_sequence_tag(i_syntax_root);
-      v_value := CASE WHEN v_tag = 9 THEN "gw_ledger".put_list(i_out)
-      ELSE "gw_ledger".put_vector(i_out)
-      END;
-      RETURN "gw_ledger".put_syntax(v_value,"gw_ledger".syntax_metadata_root(i_syntax_root));
-  END;
-  ELSE
-    DECLARE
-    v_child BYTEA;
-      v_next_child BYTEA;
-      v_next_out JSONB;
-  BEGIN
-    v_child := "gw_ledger".node_child_root(i_syntax_root,i_position);
-      v_next_child := "gw_ledger".replace_node_at(v_child,i_target_id,i_replacement_root,-1,0,jsonb_build_array());
-      v_next_out := (i_out || jsonb_build_array(encode(v_next_child,'hex')));
-      RETURN "gw_ledger".replace_node_at(
-        i_syntax_root,
-        i_target_id,
-        i_replacement_root,
-        i_position + 1,
-        i_count,
-        v_next_out
-      );
-  END;
-  END IF;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/rebuild-sequence-node [134] 
-CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_sequence_node(
-  i_syntax_root BYTEA,
-  i_child_roots JSONB
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_tag INTEGER;
-    v_value_root BYTEA;
-  BEGIN
-    v_tag := "gw_ledger".node_sequence_tag(i_syntax_root);
-    IF NOT ((v_tag = 9) OR (v_tag = 10)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/ast_node_not_sequence',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/ast-node-not-sequence'
-      ;
-    END IF;
-    v_value_root := CASE WHEN v_tag = 9 THEN "gw_ledger".put_list(i_child_roots)
-    ELSE "gw_ledger".put_vector(i_child_roots)
-    END;
-    RETURN "gw_ledger".put_syntax(v_value_root,"gw_ledger".syntax_metadata_root(i_syntax_root));
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/replace-node [147] 
-CREATE OR REPLACE FUNCTION "gw_ledger".replace_node(
-  i_syntax_root BYTEA,
-  i_target_id TEXT,
-  i_replacement_root BYTEA
-) RETURNS BYTEA AS $$
-
-  BEGIN
-    IF NOT ("gw_ledger".syntax_root_valid(i_syntax_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_root','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-root'
-      ;
-    END IF;
-    IF NOT ("gw_ledger".syntax_root_valid(i_replacement_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_ast_replacement',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-replacement'
-      ;
-    END IF;
-    RETURN "gw_ledger".replace_node_at(
-      i_syntax_root,
-      i_target_id,
-      i_replacement_root,
-      -1,
-      0,
-      jsonb_build_array()
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/delete-node-at [158] 
-CREATE OR REPLACE FUNCTION "gw_ledger".delete_node_at(
-  i_syntax_root BYTEA,
-  i_target_id TEXT,
-  i_position INTEGER,
-  i_count INTEGER,
-  i_out JSONB
-) RETURNS BYTEA AS $$
-BEGIN
-  IF i_position = -1 THEN
-    DECLARE
-    v_count INTEGER;
-  BEGIN
-    v_count := "gw_ledger".node_child_count(i_syntax_root);
-      IF v_count = 0 THEN
-        RETURN i_syntax_root;
-      ELSE
-        RETURN "gw_ledger".delete_node_at(i_syntax_root,i_target_id,0,v_count,jsonb_build_array());
-      END IF;
-  END;
-  ELSIF i_position >= i_count THEN
-    DECLARE
-    v_tag INTEGER;
-      v_value BYTEA;
-  BEGIN
-    v_tag := "gw_ledger".node_sequence_tag(i_syntax_root);
-      v_value := CASE WHEN v_tag = 9 THEN "gw_ledger".put_list(i_out)
-      ELSE "gw_ledger".put_vector(i_out)
-      END;
-      RETURN "gw_ledger".put_syntax(v_value,"gw_ledger".syntax_metadata_root(i_syntax_root));
-  END;
-  ELSE
-    DECLARE
-    v_child BYTEA;
-      v_delete BOOLEAN;
-      v_next_child BYTEA;
-      v_next_out JSONB;
-  BEGIN
-    v_child := "gw_ledger".node_child_root(i_syntax_root,i_position);
-      v_delete := ("gw_ledger".node_id(v_child) = i_target_id);
-      v_next_child := CASE WHEN v_delete THEN null
-      ELSE "gw_ledger".delete_node_at(v_child,i_target_id,-1,0,jsonb_build_array())
-      END;
-      v_next_out := CASE WHEN v_delete THEN i_out
-      ELSE i_out || jsonb_build_array(encode(v_next_child,'hex'))
-      END;
-      RETURN "gw_ledger".delete_node_at(i_syntax_root,i_target_id,i_position + 1,i_count,v_next_out);
-  END;
-  END IF;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/delete-node [184] 
-CREATE OR REPLACE FUNCTION "gw_ledger".delete_node(
-  i_syntax_root BYTEA,
-  i_target_id TEXT
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN "gw_ledger".delete_node_at(i_syntax_root,i_target_id,-1,0,jsonb_build_array());
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/insert-child-roots [192] 
-CREATE OR REPLACE FUNCTION "gw_ledger".insert_child_roots(
-  i_parent_root BYTEA,
-  i_after_id TEXT,
-  i_new_child_root BYTEA,
-  i_position INTEGER,
-  i_count INTEGER,
-  i_out JSONB,
-  i_inserted BOOLEAN
-) RETURNS JSONB AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN CASE WHEN i_inserted THEN i_out
-  ELSE i_out || jsonb_build_array(encode(i_new_child_root,'hex'))
-  END;
-  ELSE
-    DECLARE
-    v_child BYTEA;
-      v_match BOOLEAN;
-      v_next_out JSONB;
-      v_with_child JSONB;
-  BEGIN
-    v_child := "gw_ledger".node_child_root(i_parent_root,i_position);
-      v_with_child := (i_out || jsonb_build_array(encode(v_child,'hex')));
-      v_match := (i_after_id IS NOT NULL AND ("gw_ledger".node_id(v_child) = i_after_id));
-      v_next_out := CASE WHEN NOT i_inserted AND v_match THEN v_with_child || jsonb_build_array(encode(i_new_child_root,'hex'))
-      ELSE v_with_child
-      END;
-      RETURN "gw_ledger".insert_child_roots(
-        i_parent_root,
-        i_after_id,
-        i_new_child_root,
-        i_position + 1,
-        i_count,
-        v_next_out,
-        i_inserted OR v_match
-      );
-  END;
-  END IF;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/insert-child-at-parent [213] 
-CREATE OR REPLACE FUNCTION "gw_ledger".insert_child_at_parent(
-  i_parent_root BYTEA,
-  i_after_id TEXT,
-  i_new_child_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_count INTEGER;
-    v_roots JSONB;
-    v_tag INTEGER;
-  BEGIN
-    v_tag := "gw_ledger".node_sequence_tag(i_parent_root);
-    IF NOT ((v_tag = 9) OR (v_tag = 10)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/ast_parent_not_sequence',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/ast-parent-not-sequence'
-      ;
-    END IF;
-    v_count := "gw_ledger".node_child_count(i_parent_root);
-    v_roots := CASE WHEN i_after_id IS NULL THEN jsonb_build_array(encode(i_new_child_root,'hex')) || "gw_ledger".insert_child_roots(
-      i_parent_root,
-      i_after_id,
-      i_new_child_root,
-      0,
-      v_count,
-      jsonb_build_array(),
-      true
-    )
-    ELSE "gw_ledger".insert_child_roots(
-      i_parent_root,
-      i_after_id,
-      i_new_child_root,
-      0,
-      v_count,
-      jsonb_build_array(),
-      false
-    )
-    END;
-    RETURN "gw_ledger".rebuild_sequence_node(i_parent_root,v_roots);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.ot/insert-child [232] 
-CREATE OR REPLACE FUNCTION "gw_ledger".insert_child(
-  i_syntax_root BYTEA,
-  i_parent_id TEXT,
-  i_after_id TEXT,
-  i_new_child_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_parent_next BYTEA;
-    v_parent_root BYTEA;
-  BEGIN
-    IF NOT ("gw_ledger".syntax_root_valid(i_new_child_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_insert','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-insert'
-      ;
-    END IF;
-    v_parent_root := "gw_ledger".find_node(i_syntax_root,i_parent_id);
-    IF NOT (v_parent_root IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_ast_parent','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-ast-parent'
-      ;
-    END IF;
-    v_parent_next := "gw_ledger".insert_child_at_parent(v_parent_root,i_after_id,i_new_child_root);
-    RETURN "gw_ledger".replace_node(i_syntax_root,i_parent_id,v_parent_next);
-  END;
-
 $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -6773,6 +6146,139 @@ $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- gwdb.ledger.syntax/Syntax [18] 
+DROP TABLE IF EXISTS "gw_ledger"."Syntax" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."Syntax" (
+  "syntax_root" BYTEA PRIMARY KEY,
+  "value_root" BYTEA NOT NULL,
+  "metadata_root" BYTEA NOT NULL
+);
+
+-- gwdb.ledger.syntax/put-syntax [25] 
+CREATE OR REPLACE FUNCTION "gw_ledger".put_syntax(
+  i_value_root BYTEA,
+  i_metadata_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_metadata JSONB;
+    o_metadata_ref JSONB;
+    o_root BYTEA;
+    o_upsert JSONB;
+    o_value JSONB;
+    o_value_ref JSONB;
+    v_payload BYTEA;
+  BEGIN
+    o_value := "gw_ledger".cell_by_hash(i_value_root);
+    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
+    IF NOT (o_value IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_syntax_value','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-syntax-value'
+      ;
+    END IF;
+    IF NOT (o_metadata IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/missing_syntax_metadata',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/missing-syntax-metadata'
+      ;
+    END IF;
+    IF NOT ((o_metadata ->> 'type_tag')::SMALLINT = 11) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/syntax_metadata_not_map',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/syntax-metadata-not-map'
+      ;
+    END IF;
+    v_payload := "gw_ledger".syntax_payload(i_value_root,i_metadata_root);
+    o_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(13,v_payload),1,13,v_payload);
+    o_value_ref := "gw_ledger".cell_ref_put(o_root,0,'value',i_value_root);
+    o_metadata_ref := "gw_ledger".cell_ref_put(o_root,1,'metadata',i_metadata_root);
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."Syntax" ("syntax_root","value_root","metadata_root") VALUES (
+        (o_root)::BYTEA,
+        (i_value_root)::BYTEA,
+        (i_metadata_root)::BYTEA
+      ) ON CONFLICT ("syntax_root") DO UPDATE SET ("syntax_root","value_root","metadata_root") = row(
+        EXCLUDED."syntax_root",
+        EXCLUDED."value_root",
+        EXCLUDED."metadata_root"
+      ) RETURNING "syntax_root","value_root","metadata_root")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
+    RETURN o_root;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/syntax-value-root [50] 
+CREATE OR REPLACE FUNCTION "gw_ledger".syntax_value_root(
+  i_syntax_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
+      WHERE "syntax_root" = i_syntax_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN (o_row ->> 'value_root')::BYTEA;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/syntax-metadata-root [58] 
+CREATE OR REPLACE FUNCTION "gw_ledger".syntax_metadata_root(
+  i_syntax_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
+      WHERE "syntax_root" = i_syntax_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN (o_row ->> 'metadata_root')::BYTEA;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/semantic-root [66] 
+CREATE OR REPLACE FUNCTION "gw_ledger".semantic_root(
+  i_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_root);
+    IF o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 13) THEN
+      RETURN "gw_ledger".syntax_value_root(i_root);
+    ELSE
+      RETURN i_root;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- gwdb.ledger.module/Module [18] 
 DROP TABLE IF EXISTS "gw_ledger"."Module" CASCADE;
 CREATE TABLE IF NOT EXISTS "gw_ledger"."Module" (
@@ -7670,947 +7176,9 @@ CREATE OR REPLACE FUNCTION "gw_ledger".developer_head(
 $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.document-protocol/DocumentPolicy [14]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentPolicy" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentPolicy" (
-  "policy_root" BYTEA PRIMARY KEY,
-  "document_id" TEXT NOT NULL,
-  "previous_policy_root" BYTEA,
-  "profile_id" TEXT NOT NULL,
-  "environment_id" TEXT NOT NULL,
-  "policy" JSONB NOT NULL,
-  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
-);
-
--- gwdb.ledger.document-protocol/DocumentDelegation [25]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentDelegation" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentDelegation" (
-  "delegation_root" BYTEA PRIMARY KEY,
-  "identity_id" TEXT NOT NULL,
-  "subject_key" BYTEA NOT NULL,
-  "document_id" TEXT,
-  "environment_id" TEXT,
-  "purposes" JSONB NOT NULL,
-  "valid_from" BIGINT NOT NULL,
-  "valid_through" BIGINT NOT NULL,
-  "revoked_at" BIGINT
-);
-
--- gwdb.ledger.document-protocol/PersonalDocumentLog [38]
-DROP TABLE IF EXISTS "gw_ledger"."PersonalDocumentLog" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."PersonalDocumentLog" (
-  "log_id" TEXT PRIMARY KEY,
-  "document_id" TEXT NOT NULL,
-  "contributor_id" TEXT NOT NULL,
-  "head_root" BYTEA,
-  "next_sequence" BIGINT NOT NULL,
-  "imported_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
-);
-
--- gwdb.ledger.document-protocol/DocumentChangeBatch [48]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentChangeBatch" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentChangeBatch" (
-  "batch_root" BYTEA PRIMARY KEY,
-  "log_id" TEXT NOT NULL,
-  "sequence" BIGINT NOT NULL,
-  "previous_entry_root" BYTEA,
-  "base_revision_root" BYTEA NOT NULL,
-  "base_ast_root" BYTEA NOT NULL,
-  "expected_result_root" BYTEA NOT NULL,
-  "profile_root" BYTEA NOT NULL,
-  "author_key" BYTEA NOT NULL,
-  "delegation_root" BYTEA NOT NULL,
-  "operation_roots" JSONB NOT NULL,
-  "signature" BYTEA NOT NULL
-);
-
--- gwdb.ledger.document-protocol/DocumentBatchOperation [64]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentBatchOperation" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentBatchOperation" (
-  "batch_root" BYTEA,
-  "position" INTEGER,
-  "original_root" BYTEA NOT NULL,
-  "transformed_root" BYTEA,
-  "result_root" BYTEA,
-  "status" TEXT NOT NULL,
-  "conflict" TEXT,
-  PRIMARY KEY (batch_root,position)
-);
-
--- gwdb.ledger.document-protocol/DocumentImportReceipt [75]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentImportReceipt" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentImportReceipt" (
-  "receipt_id" TEXT PRIMARY KEY,
-  "receipt_root" BYTEA NOT NULL,
-  "document_id" TEXT NOT NULL,
-  "environment_id" TEXT NOT NULL,
-  "contributor_id" TEXT NOT NULL,
-  "log_id" TEXT NOT NULL,
-  "batch_root" BYTEA NOT NULL,
-  "environment_sequence" BIGINT NOT NULL,
-  "status" TEXT NOT NULL,
-  "accepted_revision_root" BYTEA,
-  "result_ast_root" BYTEA,
-  "submission_commitment" BYTEA NOT NULL,
-  "result_commitment" BYTEA,
-  "environment_key" BYTEA NOT NULL,
-  "signature" BYTEA NOT NULL,
-  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
-);
-
--- gwdb.ledger.document-protocol/DocumentApproval [95]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentApproval" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentApproval" (
-  "approval_root" BYTEA PRIMARY KEY,
-  "document_id" TEXT NOT NULL,
-  "stage_id" TEXT NOT NULL,
-  "policy_root" BYTEA NOT NULL,
-  "revision_root" BYTEA NOT NULL,
-  "ast_root" BYTEA NOT NULL,
-  "identity_id" TEXT NOT NULL,
-  "role" TEXT NOT NULL,
-  "decision" TEXT NOT NULL,
-  "delegation_root" BYTEA NOT NULL,
-  "signature" BYTEA NOT NULL
-);
-
--- gwdb.ledger.document-protocol/DocumentDelivery [110]
-DROP TABLE IF EXISTS "gw_ledger"."DocumentDelivery" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentDelivery" (
-  "delivery_root" BYTEA PRIMARY KEY,
-  "document_id" TEXT NOT NULL,
-  "policy_root" BYTEA NOT NULL,
-  "revision_root" BYTEA NOT NULL,
-  "ast_root" BYTEA NOT NULL,
-  "cutoff_sequence" BIGINT NOT NULL,
-  "coverage_root" BYTEA NOT NULL,
-  "exporter_root" BYTEA NOT NULL,
-  "artifacts" JSONB NOT NULL,
-  "disclosure_mode" TEXT NOT NULL,
-  "deliverer_key" BYTEA NOT NULL,
-  "signature" BYTEA NOT NULL,
-  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
-);
-
--- gwdb.ledger.document-protocol/document-purpose-valid [127]
-CREATE OR REPLACE FUNCTION "gw_ledger".document_purpose_valid(
-  i_purpose TEXT
-) RETURNS BOOLEAN AS $$
-
-  SELECT (i_purpose = 'document.edit') OR (i_purpose = 'document.approve') OR (i_purpose = 'document.deliver') OR (i_purpose = 'hestia.personal.append') OR (i_purpose = 'hestia.environment.import');
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.document-protocol/document-batch-count-valid [137]
-CREATE OR REPLACE FUNCTION "gw_ledger".document_batch_count_valid(
-  i_count INTEGER
-) RETURNS BOOLEAN AS $$
-
-  SELECT (i_count >= 1) AND (i_count <= 64);
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.document-protocol/document-terminal-disposition [143]
-CREATE OR REPLACE FUNCTION "gw_ledger".document_terminal_disposition(
-  i_status TEXT
-) RETURNS BOOLEAN AS $$
-
-  SELECT (i_status = 'accepted') OR (i_status = 'resolved') OR (i_status = 'rejected') OR (i_status = 'abandoned');
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.document-protocol/document-protocol-signing-payload [152]
-CREATE OR REPLACE FUNCTION "gw_ledger".document_protocol_signing_payload(
-  i_record_type TEXT,
-  i_body_root BYTEA
-) RETURNS BYTEA AS $$
-
-  SELECT decode('475744503100','hex') || convert_to(i_record_type,'UTF8') || decode('00','hex') || i_body_root;
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.document-protocol/document-blinded-commitment [162]
-CREATE OR REPLACE FUNCTION "gw_ledger".document_blinded_commitment(
-  i_root BYTEA,
-  i_salt BYTEA
-) RETURNS BYTEA AS $$
-
-  SELECT "gw_ledger".sha256(
-    decode('47574450313a626c696e643a','hex') || i_salt || i_root
-  );
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pgsodium";
 
--- gwdb.ledger.document/Document [24] 
-DROP TABLE IF EXISTS "gw_ledger"."Document" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."Document" (
-  "document_id" TEXT PRIMARY KEY,
-  "owner_key" BYTEA NOT NULL,
-  "head_revision" BYTEA NOT NULL,
-  "head_syntax" BYTEA NOT NULL,
-  "next_order" BIGINT NOT NULL,
-  "created_at" BIGINT NOT NULL DEFAULT (1000000 * extract(epoch FROM now()))::BIGINT
-);
-
--- gwdb.ledger.document/DocumentOperation [34] 
-DROP TABLE IF EXISTS "gw_ledger"."DocumentOperation" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentOperation" (
-  "operation_root" BYTEA PRIMARY KEY,
-  "operation_kind" TEXT NOT NULL,
-  "target_id" TEXT,
-  "parent_id" TEXT,
-  "after_id" TEXT,
-  "payload_root" BYTEA
-);
-
--- gwdb.ledger.document/DocumentRevision [44] 
-DROP TABLE IF EXISTS "gw_ledger"."DocumentRevision" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."DocumentRevision" (
-  "revision_root" BYTEA PRIMARY KEY,
-  "document_id" TEXT NOT NULL,
-  "parent_revision" BYTEA,
-  "base_revision" BYTEA,
-  "accepted_order" BIGINT NOT NULL,
-  "author_key" BYTEA NOT NULL,
-  "operation_root" BYTEA NOT NULL,
-  "syntax_root" BYTEA NOT NULL,
-  "status" TEXT NOT NULL
-);
-
--- gwdb.ledger.document/document-operation-kind-valid [57] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_operation_kind_valid(
-  i_kind TEXT
-) RETURNS BOOLEAN AS $$
-
-  SELECT (i_kind = 'create') OR (i_kind = 'replace') OR (i_kind = 'insert') OR (i_kind = 'delete') OR (i_kind = 'move');
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.document/document-root-hex [64] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_root_hex(
-  i_root BYTEA
-) RETURNS TEXT AS $$
-BEGIN
-  RETURN CASE WHEN i_root IS NULL THEN '-'
-  ELSE encode(i_root,'hex')
-  END;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-operation-payload [70] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_operation_payload(
-  i_kind TEXT,
-  i_target_id TEXT,
-  i_parent_id TEXT,
-  i_after_id TEXT,
-  i_payload_root BYTEA
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN decode(
-    'R:document-operation:1:' || i_kind || ':' || coalesce(i_target_id,'-') || ':' || coalesce(i_parent_id,'-') || ':' || coalesce(i_after_id,'-') || ':' || "gw_ledger".document_root_hex(i_payload_root),
-    'escape'
-  );
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-operation-put [82] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_operation_put(
-  i_kind TEXT,
-  i_target_id TEXT,
-  i_parent_id TEXT,
-  i_after_id TEXT,
-  i_payload_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_payload_ref JSONB;
-    o_row JSONB;
-    v_payload BYTEA;
-    v_root BYTEA;
-  BEGIN
-    IF NOT ("gw_ledger".document_operation_kind_valid(i_kind)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/unknown_document_operation',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/unknown-document-operation'
-      ;
-    END IF;
-    IF NOT (i_target_id IS NULL OR "gw_ledger".node_id_valid(i_target_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_target','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-target'
-      ;
-    END IF;
-    IF NOT (i_parent_id IS NULL OR "gw_ledger".node_id_valid(i_parent_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_parent','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-parent'
-      ;
-    END IF;
-    IF NOT (i_after_id IS NULL OR "gw_ledger".node_id_valid(i_after_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_anchor','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-anchor'
-      ;
-    END IF;
-    IF NOT (i_payload_root IS NULL OR "gw_ledger".syntax_root_valid(i_payload_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_ast_operation_payload',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-operation-payload'
-      ;
-    END IF;
-    v_payload := "gw_ledger".document_operation_payload(i_kind,i_target_id,i_parent_id,i_after_id,i_payload_root);
-    v_root := "gw_ledger".put_record(v_payload);
-    o_payload_ref := CASE WHEN i_payload_root IS NULL THEN null
-    ELSE "gw_ledger".cell_ref_put(v_root,0,'payload',i_payload_root)
-    END;
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."DocumentOperation" (
-        "operation_root",
-        "operation_kind",
-        "target_id",
-        "parent_id",
-        "after_id",
-        "payload_root"
-      ) VALUES (
-        (v_root)::BYTEA,
-        (i_kind)::TEXT,
-        (i_target_id)::TEXT,
-        (i_parent_id)::TEXT,
-        (i_after_id)::TEXT,
-        (i_payload_root)::BYTEA
-      ) ON CONFLICT ("operation_root") DO UPDATE SET ("operation_root",
-        "operation_kind",
-        "target_id",
-        "parent_id",
-        "after_id",
-        "payload_root") = row(
-        EXCLUDED."operation_root",
-        EXCLUDED."operation_kind",
-        EXCLUDED."target_id",
-        EXCLUDED."parent_id",
-        EXCLUDED."after_id",
-        EXCLUDED."payload_root"
-      ) RETURNING
-        "operation_root",
-        "operation_kind",
-        "target_id",
-        "parent_id",
-        "after_id",
-        "payload_root")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN v_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-operation-get [106] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_operation_get(
-  i_operation_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_operation JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "operation_root",
-        "operation_kind",
-        "target_id",
-        "parent_id",
-        "after_id",
-        "payload_root"
-      FROM "gw_ledger"."DocumentOperation"
-      WHERE "operation_root" = i_operation_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_operation;
-    RETURN o_operation;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-syntax-import [113] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_syntax_import(
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_syntax_root BYTEA;
-  BEGIN
-    v_syntax_root := "gw_ledger".put_syntax(
-      "gw_ledger".cell_ref_child(i_syntax_root,0,'value'),
-      "gw_ledger".cell_ref_child(i_syntax_root,1,'metadata')
-    );
-    IF NOT (v_syntax_root = i_syntax_root) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/document_syntax_root_mismatch',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/document-syntax-root-mismatch'
-      ;
-    END IF;
-    RETURN v_syntax_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-operation-import-replace [126] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_operation_import_replace(
-  i_operation_root BYTEA,
-  i_target_id TEXT,
-  i_payload_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_operation_root BYTEA;
-    v_syntax_root BYTEA;
-  BEGIN
-    v_syntax_root := "gw_ledger".document_syntax_import(i_payload_root);
-    v_operation_root := "gw_ledger".document_operation_put('replace',i_target_id,null,null,i_payload_root);
-    IF NOT (v_operation_root = i_operation_root) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/document_operation_root_mismatch',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/document-operation-root-mismatch'
-      ;
-    END IF;
-    RETURN v_operation_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-revision-payload [139] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_revision_payload(
-  i_document_id TEXT,
-  i_parent_revision BYTEA,
-  i_base_revision BYTEA,
-  i_order BIGINT,
-  i_author_key BYTEA,
-  i_operation_root BYTEA,
-  i_syntax_root BYTEA,
-  i_status TEXT
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN decode(
-    'R:document-revision:1:' || i_document_id || ':' || "gw_ledger".document_root_hex(i_parent_revision) || "gw_ledger".document_root_hex(i_base_revision) || i_order || ':' || encode(i_author_key,'hex') || ':' || encode(i_operation_root,'hex') || ':' || encode(i_syntax_root,'hex') || ':' || i_status,
-    'escape'
-  );
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-revision-put [154] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_revision_put(
-  i_document_id TEXT,
-  i_parent_revision BYTEA,
-  i_base_revision BYTEA,
-  i_order BIGINT,
-  i_author_key BYTEA,
-  i_operation_root BYTEA,
-  i_syntax_root BYTEA,
-  i_status TEXT
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_base_ref JSONB;
-    o_operation_ref JSONB;
-    o_parent_ref JSONB;
-    o_row JSONB;
-    o_syntax_ref JSONB;
-    v_payload BYTEA;
-    v_root BYTEA;
-  BEGIN
-    v_payload := "gw_ledger".document_revision_payload(
-      i_document_id,
-      i_parent_revision,
-      i_base_revision,
-      i_order,
-      i_author_key,
-      i_operation_root,
-      i_syntax_root,
-      i_status
-    );
-    v_root := "gw_ledger".put_record(v_payload);
-    o_parent_ref := CASE WHEN i_parent_revision IS NULL THEN null
-    ELSE "gw_ledger".cell_ref_put(v_root,0,'parent',i_parent_revision)
-    END;
-    o_base_ref := CASE WHEN i_base_revision IS NULL THEN null
-    ELSE "gw_ledger".cell_ref_put(v_root,1,'base',i_base_revision)
-    END;
-    o_operation_ref := "gw_ledger".cell_ref_put(v_root,2,'operation',i_operation_root);
-    o_syntax_ref := "gw_ledger".cell_ref_put(v_root,3,'syntax',i_syntax_root);
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."DocumentRevision" (
-        "revision_root",
-        "document_id",
-        "parent_revision",
-        "base_revision",
-        "accepted_order",
-        "author_key",
-        "operation_root",
-        "syntax_root",
-        "status"
-      ) VALUES (
-        (v_root)::BYTEA,
-        (i_document_id)::TEXT,
-        (i_parent_revision)::BYTEA,
-        (i_base_revision)::BYTEA,
-        (i_order)::BIGINT,
-        (i_author_key)::BYTEA,
-        (i_operation_root)::BYTEA,
-        (i_syntax_root)::BYTEA,
-        (i_status)::TEXT
-      ) ON CONFLICT ("revision_root") DO UPDATE SET ("revision_root",
-        "document_id",
-        "parent_revision",
-        "base_revision",
-        "accepted_order",
-        "author_key",
-        "operation_root",
-        "syntax_root",
-        "status") = row(
-        EXCLUDED."revision_root",
-        EXCLUDED."document_id",
-        EXCLUDED."parent_revision",
-        EXCLUDED."base_revision",
-        EXCLUDED."accepted_order",
-        EXCLUDED."author_key",
-        EXCLUDED."operation_root",
-        EXCLUDED."syntax_root",
-        EXCLUDED."status"
-      ) RETURNING
-        "revision_root",
-        "document_id",
-        "parent_revision",
-        "base_revision",
-        "accepted_order",
-        "author_key",
-        "operation_root",
-        "syntax_root",
-        "status")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN v_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-get [179] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_get(
-  i_document_id TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_document JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "document_id",
-        "owner_key",
-        "head_revision",
-        "head_syntax",
-        "next_order",
-        "created_at"
-      FROM "gw_ledger"."Document"
-      WHERE "document_id" = i_document_id
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_document;
-    RETURN o_document;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-lock [185] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_lock(
-  i_document_id TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_document JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "document_id",
-        "owner_key",
-        "head_revision",
-        "head_syntax",
-        "next_order",
-        "created_at"
-      FROM "gw_ledger"."Document"
-      WHERE "document_id" = i_document_id
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_document;
-    RETURN o_document;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-revision-get [192] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_revision_get(
-  i_revision_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_revision JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "revision_root",
-        "document_id",
-        "parent_revision",
-        "base_revision",
-        "accepted_order",
-        "author_key",
-        "operation_root",
-        "syntax_root",
-        "status"
-      FROM "gw_ledger"."DocumentRevision"
-      WHERE "revision_root" = i_revision_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_revision;
-    RETURN o_revision;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-text-syntax [199] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_text_syntax(
-  i_node_id TEXT,
-  i_text TEXT
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    v_meta BYTEA;
-  BEGIN
-    IF NOT ("gw_ledger".node_id_valid(i_node_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_ast_node_id','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-ast-node-id'
-      ;
-    END IF;
-    v_meta := "gw_ledger".put_map(jsonb_build_array(
-      encode("gw_ledger".put_keyword('node/id'),'hex'),
-      encode("gw_ledger".put_string(i_node_id),'hex')
-    ));
-    RETURN "gw_ledger".put_syntax("gw_ledger".put_string(i_text),v_meta);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-create [212] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_create(
-  i_document_id TEXT,
-  i_owner_key BYTEA,
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_existing JSONB;
-    o_row JSONB;
-    v_op BYTEA;
-    v_revision BYTEA;
-  BEGIN
-    IF NOT ("gw_ledger".node_id_valid(i_document_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_document_id','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-document-id'
-      ;
-    END IF;
-    IF NOT ("gw_ledger".public_key_valid(i_owner_key)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_document_owner',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-document-owner'
-      ;
-    END IF;
-    IF NOT ("gw_ledger".syntax_root_valid(i_syntax_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_document_syntax',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-document-syntax'
-      ;
-    END IF;
-    o_existing := "gw_ledger".document_get(i_document_id);
-    IF NOT (o_existing IS NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/document_exists','data',null))::TEXT,
-        MESSAGE = 'ledger/document-exists'
-      ;
-    END IF;
-    v_op := "gw_ledger".document_operation_put('create',null,null,null,i_syntax_root);
-    v_revision := "gw_ledger".document_revision_put(i_document_id,null,null,0,i_owner_key,v_op,i_syntax_root,'ok');
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."Document" (
-        "document_id",
-        "owner_key",
-        "head_revision",
-        "head_syntax",
-        "next_order"
-      ) VALUES (
-        (i_document_id)::TEXT,
-        (i_owner_key)::BYTEA,
-        (v_revision)::BYTEA,
-        (i_syntax_root)::BYTEA,
-        (1)::BIGINT
-      ) RETURNING
-        "document_id",
-        "owner_key",
-        "head_revision",
-        "head_syntax",
-        "next_order",
-        "created_at")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN v_revision;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-apply-operation [230] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_apply_operation(
-  i_document_id TEXT,
-  i_base_revision BYTEA,
-  i_author_key BYTEA,
-  i_operation_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_base JSONB;
-    o_document JSONB;
-    o_operation JSONB;
-    o_update JSONB;
-    v_after TEXT;
-    v_head_syntax BYTEA;
-    v_kind TEXT;
-    v_next_syntax BYTEA;
-    v_noop BOOLEAN;
-    v_parent TEXT;
-    v_parent_root BYTEA;
-    v_payload BYTEA;
-    v_revision BYTEA;
-    v_status TEXT;
-    v_target TEXT;
-    v_target_root BYTEA;
-  BEGIN
-    o_document := "gw_ledger".document_lock(i_document_id);
-    IF NOT (o_document IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_document','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-document'
-      ;
-    END IF;
-    IF NOT ((o_document ->> 'owner_key')::BYTEA = i_author_key) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/document_owner_required',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/document-owner-required'
-      ;
-    END IF;
-    o_base := "gw_ledger".document_revision_get(i_base_revision);
-    IF NOT (o_base IS NOT NULL AND ((o_base ->> 'document_id')::TEXT = i_document_id)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_document_base',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-document-base'
-      ;
-    END IF;
-    o_operation := "gw_ledger".document_operation_get(i_operation_root);
-    IF NOT (o_operation IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/missing_document_operation',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/missing-document-operation'
-      ;
-    END IF;
-    v_head_syntax := (o_document ->> 'head_syntax')::BYTEA;
-    v_kind := (o_operation ->> 'operation_kind')::TEXT;
-    IF NOT (NOT (v_kind = 'create')) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/unsupported_document_operation',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/unsupported-document-operation'
-      ;
-    END IF;
-    v_target := (o_operation ->> 'target_id')::TEXT;
-    v_parent := (o_operation ->> 'parent_id')::TEXT;
-    v_after := (o_operation ->> 'after_id')::TEXT;
-    v_payload := (o_operation ->> 'payload_root')::BYTEA;
-    v_target_root := CASE WHEN v_target IS NULL THEN null
-    ELSE "gw_ledger".find_node(v_head_syntax,v_target)
-    END;
-    v_parent_root := CASE WHEN v_parent IS NULL THEN null
-    ELSE "gw_ledger".find_node(v_head_syntax,v_parent)
-    END;
-    v_noop := ((((v_kind = 'replace') OR (v_kind = 'delete') OR (v_kind = 'move')) AND v_target_root IS NULL) OR (((v_kind = 'insert') OR (v_kind = 'move')) AND v_parent_root IS NULL));
-    IF NOT (v_noop OR NOT (v_kind = 'delete') OR NOT ("gw_ledger".node_id(v_head_syntax) = v_target)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/cannot_delete_document_root',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/cannot-delete-document-root'
-      ;
-    END IF;
-    IF NOT (v_noop OR NOT (v_kind = 'insert') OR "gw_ledger".find_node(v_head_syntax,"gw_ledger".node_id(v_payload)) IS NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/duplicate_ast_node_id',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/duplicate-ast-node-id'
-      ;
-    END IF;
-    IF NOT (v_noop OR NOT (v_kind = 'move') OR "gw_ledger".find_node(v_target_root,v_parent) IS NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/ast_move_cycle','data',null))::TEXT,
-        MESSAGE = 'ledger/ast-move-cycle'
-      ;
-    END IF;
-    v_next_syntax := CASE WHEN v_noop THEN v_head_syntax
-    WHEN v_kind = 'replace' THEN "gw_ledger".replace_node(v_head_syntax,v_target,v_payload)
-    WHEN v_kind = 'delete' THEN "gw_ledger".delete_node(v_head_syntax,v_target)
-    WHEN v_kind = 'insert' THEN "gw_ledger".insert_child(v_head_syntax,v_parent,v_after,v_payload)
-    WHEN v_kind = 'move' THEN "gw_ledger".insert_child(
-      "gw_ledger".delete_node(v_head_syntax,v_target),
-      v_parent,
-      v_after,
-      v_target_root
-    )
-    END;
-    v_status := CASE WHEN v_noop THEN 'noop'
-    ELSE 'ok'
-    END;
-    v_revision := "gw_ledger".document_revision_put(
-      i_document_id,
-      (o_document ->> 'head_revision')::BYTEA,
-      i_base_revision,
-      (o_document ->> 'next_order')::BIGINT,
-      i_author_key,
-      i_operation_root,
-      v_next_syntax,
-      v_status
-    );
-    WITH j_ret AS (  
-      UPDATE "gw_ledger"."Document" SET
-        "head_revision" = (v_revision)::BYTEA,
-        "head_syntax" = (v_next_syntax)::BYTEA,
-        "next_order" = ((o_document ->> 'next_order')::BIGINT + 1)::BIGINT
-      WHERE "document_id" = i_document_id
-      RETURNING
-        "document_id",
-        "owner_key",
-        "head_revision",
-        "head_syntax",
-        "next_order",
-        "created_at")
-    SELECT jsonb_agg(j_ret) FROM j_ret INTO o_update;
-    RETURN v_revision;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.document/document-head [297] 
-CREATE OR REPLACE FUNCTION "gw_ledger".document_head(
-  i_document_id TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_document JSONB;
-  BEGIN
-    o_document := "gw_ledger".document_get(i_document_id);
-    IF NOT (o_document IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_document','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-document'
-      ;
-    END IF;
-    RETURN jsonb_build_object(
-      'document_id',
-      i_document_id,
-      'head_revision',
-      encode((o_document ->> 'head_revision')::BYTEA,'hex'),
-      'syntax_root',
-      encode((o_document ->> 'head_syntax')::BYTEA,'hex'),
-      'next_order',
-      (o_document ->> 'next_order')::BIGINT
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-CREATE EXTENSION IF NOT EXISTS "pgsodium";
-
--- gwdb.ledger.admission/admission-registration-payload [31] 
+-- gwdb.ledger.admission/admission-registration-payload [29] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_registration_payload(
   i_network TEXT,
   i_public_key BYTEA
@@ -8623,194 +7191,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_registration_payload(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.admission/admission-document-create-payload [41] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_create_payload(
-  i_document_id TEXT,
-  i_owner_key BYTEA,
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  SELECT decode(
-    'R:document-create:1:' || i_document_id || ':' || encode(i_owner_key,'hex') || ':' || encode(i_syntax_root,'hex'),
-    'escape'
-  );
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.admission/admission-document-edit-payload [49] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_edit_payload(
-  i_document_id TEXT,
-  i_base_revision BYTEA,
-  i_operation_root BYTEA,
-  i_owner_key BYTEA
-) RETURNS BYTEA AS $$
-
-  SELECT decode(
-    'R:document-edit:1:' || i_document_id || ':' || encode(i_base_revision,'hex') || ':' || encode(i_operation_root,'hex') || ':' || encode(i_owner_key,'hex'),
-    'escape'
-  );
-
-$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
--- gwdb.ledger.admission/admission-document-text-create-signing-request [58] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_text_create_signing_request(
-  i_document_id TEXT,
-  i_owner_key BYTEA,
-  i_text TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_payload BYTEA;
-    v_syntax BYTEA;
-  BEGIN
-    v_syntax := "gw_ledger".document_text_syntax(i_document_id,i_text);
-    v_payload := "gw_ledger".admission_document_create_payload(i_document_id,i_owner_key,v_syntax);
-    RETURN jsonb_build_object(
-      'syntax_root',
-      encode(v_syntax,'hex'),
-      'signing_payload',
-      encode(v_payload,'hex')
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-document-text-replace-signing-request [67] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_text_replace_signing_request(
-  i_document_id TEXT,
-  i_base_revision BYTEA,
-  i_owner_key BYTEA,
-  i_node_id TEXT,
-  i_text TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_operation BYTEA;
-    v_payload BYTEA;
-    v_syntax BYTEA;
-  BEGIN
-    v_syntax := "gw_ledger".document_text_syntax(i_node_id,i_text);
-    v_operation := "gw_ledger".document_operation_put('replace',i_node_id,null,null,v_syntax);
-    v_payload := "gw_ledger".admission_document_edit_payload(i_document_id,i_base_revision,v_operation,i_owner_key);
-    RETURN jsonb_build_object(
-      'operation_root',
-      encode(v_operation,'hex'),
-      'signing_payload',
-      encode(v_payload,'hex')
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-document-create-signing-request [77] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_create_signing_request(
-  i_document_id TEXT,
-  i_owner_key BYTEA,
-  i_syntax_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_payload BYTEA;
-  BEGIN
-    v_payload := "gw_ledger".admission_document_create_payload(i_document_id,i_owner_key,i_syntax_root);
-    RETURN jsonb_build_object('signing_payload',encode(v_payload,'hex'));
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-document-edit-signing-request [84] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_edit_signing_request(
-  i_document_id TEXT,
-  i_base_revision BYTEA,
-  i_owner_key BYTEA,
-  i_operation_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_payload BYTEA;
-  BEGIN
-    v_payload := "gw_ledger".admission_document_edit_payload(i_document_id,i_base_revision,i_operation_root,i_owner_key);
-    RETURN jsonb_build_object('signing_payload',encode(v_payload,'hex'));
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-document-create [91] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_create(
-  i_document_id TEXT,
-  i_owner_key BYTEA,
-  i_syntax_root BYTEA,
-  i_signature BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_payload BYTEA;
-    v_revision BYTEA;
-  BEGIN
-    v_payload := "gw_ledger".admission_document_create_payload(i_document_id,i_owner_key,i_syntax_root);
-    IF NOT ("gw_ledger".signature_verify(i_signature,v_payload,i_owner_key)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_document_create_signature',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-document-create-signature'
-      ;
-    END IF;
-    v_revision := "gw_ledger".document_create(i_document_id,i_owner_key,i_syntax_root);
-    RETURN jsonb_build_object(
-      'revision_root',
-      encode(v_revision,'hex'),
-      'document',
-      "gw_ledger".document_head(i_document_id)
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-document-edit [102] 
-CREATE OR REPLACE FUNCTION "gw_ledger".admission_document_edit(
-  i_document_id TEXT,
-  i_base_revision BYTEA,
-  i_owner_key BYTEA,
-  i_operation_root BYTEA,
-  i_signature BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    v_payload BYTEA;
-    v_revision BYTEA;
-  BEGIN
-    v_payload := "gw_ledger".admission_document_edit_payload(i_document_id,i_base_revision,i_operation_root,i_owner_key);
-    IF NOT ("gw_ledger".signature_verify(i_signature,v_payload,i_owner_key)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_document_edit_signature',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-document-edit-signature'
-      ;
-    END IF;
-    v_revision := "gw_ledger".document_apply_operation(i_document_id,i_base_revision,i_owner_key,i_operation_root);
-    RETURN jsonb_build_object(
-      'revision_root',
-      encode(v_revision,'hex'),
-      'document',
-      "gw_ledger".document_head(i_document_id)
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.admission/admission-address-root [113] 
+-- gwdb.ledger.admission/admission-address-root [39] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_address_root(
   i_public_key BYTEA
 ) RETURNS BYTEA AS $$
@@ -8834,7 +7215,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_address_root(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-controller-root [123] 
+-- gwdb.ledger.admission/admission-controller-root [49] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_controller_root(
   i_public_key BYTEA
 ) RETURNS BYTEA AS $$
@@ -8858,14 +7239,14 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_controller_root(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-proposer-root [131] 
+-- gwdb.ledger.admission/admission-proposer-root [57] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_proposer_root() RETURNS BYTEA AS $$
 BEGIN
   RETURN "gw_ledger".put_symbol('gwdb.ledger.admission');
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-registration-signing-request [137] 
+-- gwdb.ledger.admission/admission-registration-signing-request [63] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_registration_signing_request(
   i_network TEXT,
   i_public_key BYTEA
@@ -8898,7 +7279,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_registration_signing_request(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-register-account [151] 
+-- gwdb.ledger.admission/admission-register-account [77] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_register_account(
   i_network TEXT,
   i_public_key BYTEA,
@@ -8986,7 +7367,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_register_account(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-integer-signing-request [187] 
+-- gwdb.ledger.admission/admission-integer-signing-request [113] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_integer_signing_request(
   i_network TEXT,
   i_public_key BYTEA,
@@ -9054,7 +7435,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_integer_signing_request(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-submit-integer [215] 
+-- gwdb.ledger.admission/admission-submit-integer [141] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_submit_integer(
   i_network TEXT,
   i_public_key BYTEA,
@@ -9168,7 +7549,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_submit_integer(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.admission/admission-submit-operation [264] 
+-- gwdb.ledger.admission/admission-submit-operation [190] 
 CREATE OR REPLACE FUNCTION "gw_ledger".admission_submit_operation(
   i_network TEXT,
   i_public_key BYTEA,

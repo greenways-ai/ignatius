@@ -1,4 +1,4 @@
-{:namespace "gw.ledger.noir.provider"
+{:namespace "ignatius.extension.noir.provider"
  :identity "gw/ledger.noir"
  :version "0.1.0"
  :provider :hta

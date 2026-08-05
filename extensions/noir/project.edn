@@ -9,7 +9,7 @@
  :project/artifact-paths ["target/package"]
  :project/archive-root "target/package"
  :project/recipe "hara.recipe.edn"
- :project/package {:entry-points ["gw.ledger.noir"]
+ :project/package {:entry-points ["ignatius.extension.noir"]
                    :license "Apache-2.0"}
  :project/dependencies
  {"gw/ledger.sha" {:version "^0.1.0"}}}

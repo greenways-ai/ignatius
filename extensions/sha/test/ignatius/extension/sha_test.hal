@@ -1,6 +1,6 @@
-(ns gw.ledger.sha-test
+(ns ignatius.extension.sha-test
   (:require [std.lib.test :as test]
-            [gw.ledger.sha :as sha]))
+            [ignatius.extension.sha :as sha]))
 
 (def results
   [(test/check

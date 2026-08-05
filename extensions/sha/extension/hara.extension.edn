@@ -1,4 +1,4 @@
-{:namespace "gw.ledger.sha.provider"
+{:namespace "ignatius.extension.sha.provider"
  :identity "gw/ledger.sha"
  :version "0.1.0"
  :provider :wasm

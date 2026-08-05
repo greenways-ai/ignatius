@@ -9,6 +9,6 @@
  :project/artifact-paths ["target/package"]
  :project/archive-root "target/package"
  :project/recipe "hara.recipe.edn"
- :project/package {:entry-points ["gw.ledger.sha"]
+ :project/package {:entry-points ["ignatius.extension.sha"]
                    :license "Apache-2.0"}
  :project/dependencies {}}

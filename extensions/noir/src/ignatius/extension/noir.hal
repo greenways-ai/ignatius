@@ -1,6 +1,6 @@
-(ns gw.ledger.noir
-  (:require [gw.ledger.noir.provider :as provider]
-            [gw.ledger.sha :as sha]))
+(ns ignatius.extension.noir
+  (:require [ignatius.extension.noir.provider :as provider]
+            [ignatius.extension.sha :as sha]))
 
 (defn compile [source]
   (provider/compile source))

@@ -3,10 +3,11 @@
 (cemerick.pomegranate.aether/register-wagon-factory!
  "http" #(org.apache.maven.wagon.providers.http.HttpWagon.))
 
-(defproject greenways/ledger "0.1.0-SNAPSHOT"
-  :description "Core libraries for greenways-ai"
-  :url "http://www.greenways.ai"
-  :license {:name "Proprietory"}
+(defproject greenways/ignatius "0.1.0-SNAPSHOT"
+  :description "PostgreSQL adapter for the Ignatius Hara chain"
+  :url "https://github.com/greenways-ai/ignatius"
+  :license {:name "Apache License 2.0"
+            :url "https://www.apache.org/licenses/LICENSE-2.0"}
   :aliases
   {"test"     ["run" "-m" "code.test"]
    "manage"   ["run" "-m" "code.manage"]
