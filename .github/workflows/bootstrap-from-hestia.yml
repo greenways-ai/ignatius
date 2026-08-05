@@ -1,0 +1,154 @@
+name: Bootstrap Ignatius from Hestia
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-from-hestia.yml
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract chain and portable clients with history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          python3 -m pip install --user git-filter-repo
+          export PATH="$HOME/.local/bin:$PATH"
+
+          work="$RUNNER_TEMP/ignatius-import"
+          git clone https://github.com/greenways-ai/hestia.git "$work"
+          cd "$work"
+
+          source_sha="$(git rev-parse HEAD)"
+
+          git filter-repo --force \
+            --path LICENSE \
+            --path gwdb-ledger/ \
+            --path web-components/gw-ledger-sha/ \
+            --path web-components/gw-ledger-noir/ \
+            --path gwdb-ledger-hal/src/gw/ledger/codec.hal \
+            --path gwdb-ledger-hal/src/gw/ledger/runtime.hal \
+            --path gwdb-ledger-hal/src/gw/ledger/transaction.hal \
+            --path gwdb-ledger-hal/src/gw/ledger/offline.hal \
+            --path gwdb-ledger-hal/test/gw/ledger/offline_test.hal \
+            --path-rename gwdb-ledger/:db/ \
+            --path-rename web-components/gw-ledger-sha/:extensions/sha/ \
+            --path-rename web-components/gw-ledger-noir/:extensions/noir/ \
+            --path-rename gwdb-ledger-hal/src/gw/ledger/codec.hal:hal/src/ignatius/codec.hal \
+            --path-rename gwdb-ledger-hal/src/gw/ledger/runtime.hal:hal/src/ignatius/runtime.hal \
+            --path-rename gwdb-ledger-hal/src/gw/ledger/transaction.hal:hal/src/ignatius/transaction.hal \
+            --path-rename gwdb-ledger-hal/src/gw/ledger/offline.hal:hal/src/ignatius/client/outbox.hal \
+            --path-rename gwdb-ledger-hal/test/gw/ledger/offline_test.hal:hal/test/ignatius/client/outbox_test.hal
+
+          filtered_tip="$(git rev-parse HEAD)"
+
+          target="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPOSITORY}.git"
+          git remote add target "$target"
+          git fetch target main
+          git checkout -b agent/import-hestia target/main
+
+          git config user.name "greenways-ai-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git merge --allow-unrelated-histories --no-ff --no-commit "$filtered_tip"
+
+          # The first Ignatius release owns these generic namespaces. Hestia-specific
+          # room and document modules were deliberately excluded from the import.
+          find hal -type f -name '*.hal' -print0 | xargs -0 sed -i \
+            -e 's/gw\.ledger\.codec/ignatius.codec/g' \
+            -e 's/gw\.ledger\.runtime/ignatius.runtime/g' \
+            -e 's/gw\.ledger\.transaction/ignatius.transaction/g' \
+            -e 's/gw\.ledger\.offline-test/ignatius.client.outbox-test/g' \
+            -e 's/gw\.ledger\.offline/ignatius.client.outbox/g'
+
+          cat > README.md <<EOF
+          # Ignatius
+
+          Ignatius is the reusable Hara-compatible chain and client platform.
+
+          It owns canonical HCV1/HCP1 values and packs, deterministic Hara
+          transactions and state, PostgreSQL chain persistence, portable HAL
+          chain semantics, offline clients, signatures, receipts, snapshots,
+          and chain extensions.
+
+          Hestia builds agent authority, private rooms, documents, continuity,
+          negotiation, and product experiences on top of Ignatius. Those
+          application protocols do not live in this repository.
+
+          ## Layout
+
+          - \`db/\` — PostgreSQL ledger DSL, generated SQL and contracts
+          - \`hal/\` — portable chain runtime, transaction and client semantics
+          - \`extensions/\` — optional chain cryptography and proof extensions
+
+          ## Provenance
+
+          The initial source was filtered with history from
+          \`greenways-ai/hestia\` at \`${source_sha}\`.
+          EOF
+
+          cat > MIGRATION.md <<EOF
+          # Initial extraction
+
+          Ignatius was extracted with filtered Git history from
+          \`greenways-ai/hestia\` at \`${source_sha}\`.
+
+          The filtered history tip is \`${filtered_tip}\`.
+
+          Included:
+
+          - the generic PostgreSQL Hara ledger;
+          - HCV1/HCP1 codec and runtime semantics;
+          - transaction and offline outbox HAL modules;
+          - generic chain contracts and tests; and
+          - SHA and Noir chain extensions.
+
+          Excluded and retained by Hestia:
+
+          - agent profiles, mandates and application authority;
+          - private rooms, invitations and negotiation;
+          - document OT, provenance, approval and delivery;
+          - continuity and recovery ceremonies; and
+          - Hestia services and product experiences.
+          EOF
+
+          mkdir -p hal
+          cat > hal/project.edn <<'EOF'
+          {:hara/type :project
+           :hara/version "1.0.0"
+           :project/id ignatius/chain-client
+           :project/version "0.1.0"
+           :project/source-paths ["src"]
+           :project/test-paths ["test"]
+           :project/extension-paths []
+           :project/capabilities #{:host/sha256 :host/ed25519}
+           :project/main ignatius.runtime}
+          EOF
+
+          cat > Makefile <<'EOF'
+          .PHONY: db-sql db-contracts hal-check hal-test
+
+          db-sql:
+          	cd db && lein sql
+
+          db-contracts:
+          	cd db && lein contracts
+
+          hal-check:
+          	hara check hal
+
+          hal-test:
+          	hara test hal
+          EOF
+
+          git add -A
+          git commit -m "feat: import Ignatius chain and clients"
+          git push target HEAD:refs/heads/agent/import-hestia --force
