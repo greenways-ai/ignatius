@@ -1,0 +1,10 @@
+{:ignatius/version "0.1.0"
+ :ignatius/dependencies
+ {:hara
+  {:repository "https://github.com/hara-lang/hara.git"
+   :revision "99a0b106158dec0902ebe08349c8f8b113d97ea9"
+   :checkout ".local/hara.lang"}
+  :foundation
+  {:repository "https://github.com/zcaudate-xyz/foundation-base.git"
+   :revision "f909a44ad504cc6c9f44248d59ec3148261a48d7"
+   :checkout "db/checkouts/foundation"}}}

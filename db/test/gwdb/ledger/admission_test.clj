@@ -1,0 +1,93 @@
+(ns gwdb.ledger.admission-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.admission :as admission]
+            [gwdb.ledger.developer :as developer]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :vendor :impossibl
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.admission :as admission]
+             [gwdb.ledger.developer :as developer]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.admission/admission-submit-integer :added "0.4"}
+(fact "a browser-compatible Ed25519 signature registers a controller and commits a strict signed transaction"
+  (let [_ (!.pg [:select (developer/developer-genesis "signed-fixture" 0)])
+        _ (!.pg
+           [:select
+            (admission/admission-register-account
+             "signed-fixture"
+             (pg/decode "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" "hex")
+             (pg/decode "bc098c9c5b45cf65f49125257e614029402453b5aa483ccb36fb05ec870a9059dd4e023d49cbc5f8745283978108cc0ede3c0f3ce3f549f82c1e8f6104719607" "hex")
+             1)])
+        signing-payload
+        (!.pg
+         [:select
+          (pg/jsonb-extract-path-text
+           (admission/admission-integer-signing-request
+            "signed-fixture"
+            (pg/decode "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" "hex")
+            "7" 10)
+           "signing_payload")])
+        submitted
+        (!.pg
+         [:select
+          (pg/jsonb-extract-path-text
+           (admission/admission-submit-integer
+            "signed-fixture"
+            (pg/decode "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" "hex")
+            0 "7" 10
+            (pg/decode "0e373fa7b5c27e5aeab89432f0556a0ea1cc064f1ac9e156860be575d72f51a1c6c4a551b931b14eb1a5ab3cf0b254b0c5a9618e877333500b8229462be73701" "hex")
+            2)
+           "status")])
+        height
+        (!.pg
+         [:select
+          (pg/jsonb-extract-path-text (developer/developer-head "signed-fixture") "height")])
+        replayed
+        (try
+          (!.pg
+           [:select
+            (admission/admission-submit-integer
+             "signed-fixture"
+             (pg/decode "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" "hex")
+             0 "7" 10
+             (pg/decode "0e373fa7b5c27e5aeab89432f0556a0ea1cc064f1ac9e156860be575d72f51a1c6c4a551b931b14eb1a5ab3cf0b254b0c5a9618e877333500b8229462be73701" "hex")
+             3)])
+          (catch Throwable _ :rejected))]
+    [signing-payload submitted height replayed])
+  => ["523a7472616e73616374696f6e2d7369676e696e673a313a383a7369676e65642d666978747572653a656234353834633865383732333337653737333936353533643137356331303339623933373562313633626265613866366432393862306261653136636135323a303a356133303363393465316139636230373334343437346239356332356365346534393235656263623433663534623835666533323534636235313864623363633a2d3a31303a32333666376537313365656237666536306437643731333639376337616334646164376465363339393366373466353836386231623063313963373932333961"
+      "ok" 2 :rejected])
+
+^{:refer gwdb.ledger.admission/admission-register-account :added "0.4"}
+(fact "registration rejects a detached signature that does not prove controller-key possession"
+  (!.pg
+   [:select (developer/developer-genesis "signed-invalid" 0)]
+   [:select
+    (admission/admission-register-account
+     "signed-invalid"
+     (pg/decode "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" "hex")
+     (pg/decode "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" "hex")
+     1)])
+  => (any (throws)))

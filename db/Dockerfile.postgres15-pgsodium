@@ -1,0 +1,21 @@
+FROM postgres:15.14-bookworm
+
+ARG PGSODIUM_REF=v3.1.11
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl git postgresql-server-dev-15 \
+ && curl -fsSL https://github.com/jedisct1/libsodium/releases/download/1.0.22-RELEASE/libsodium-1.0.22.tar.gz \
+      | tar -xz -C /tmp \
+ && cd /tmp/libsodium-1.0.22 \
+ && ./configure --prefix=/usr/local \
+ && make -j"$(nproc)" \
+ && make install \
+ && git clone --depth 1 --branch "${PGSODIUM_REF}" https://github.com/michelp/pgsodium.git /tmp/pgsodium \
+ && make -C /tmp/pgsodium \
+ && make -C /tmp/pgsodium install \
+ && ldconfig \
+ && rm -rf /tmp/libsodium-1.0.22 /tmp/pgsodium /var/lib/apt/lists/*
+
+COPY docker/postgres/pgsodium_getkey /usr/share/postgresql/15/extension/pgsodium_getkey
+RUN chmod 0755 /usr/share/postgresql/15/extension/pgsodium_getkey

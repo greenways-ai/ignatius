@@ -1,0 +1,13 @@
+(ns gwdb.ledger.type-test
+  (:use code.test)
+  (:require [gwdb.ledger.type :as type]))
+
+^{:refer gwdb.ledger.type/+type-tags+ :added "0.1"}
+(fact "protocol tags are stable numeric values"
+  (type/+type-tags+ :nil) => 0
+  (type/+type-tags+ :iterator) => 20
+  (count type/+type-tags+) => 21)
+
+^{:refer gwdb.ledger.type/+codec-version+ :added "0.1"}
+(fact "codec version is explicit"
+  type/+codec-version+ => 1)

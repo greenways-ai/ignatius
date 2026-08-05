@@ -1,0 +1,31 @@
+{:indents {;; Test macros
+           fact [[:block 1]]
+           facts [[:block 1]]
+           tabular [[:block 1]]
+
+           ;; Namespace-like macros (keyword as first arg, then map body)
+           ;; Treat like 'ns' - keyword on same line, map indented
+           std.lang/script [[:block 1]]
+           l/script [[:block 1]]
+           script [[:block 1]]
+
+           ;; Type definition macros (similar to defrecord)
+           ;; name, docstring, attr-map, fields, opts
+           deftype.pg [[:block 1]]
+           std.lang/deftype.pg [[:block 1]]
+
+           ;; Enum definition macros
+           defenum.pg [[:block 1]]
+           std.lang/defenum.pg [[:block 1]]
+
+           ;; Partition definition macros
+           defpartition.pg [[:block 1]]
+           std.lang/defpartition.pg [[:block 1]]
+
+           ;; Function definition macros (similar to defn)
+           ;; name, meta, args, body
+           defn.pg [[:block 2]]
+           std.lang/defn.pg [[:block 2]]
+
+           ;; DSL macros
+           my-dsl/foreign-key [[:block 2]]}}

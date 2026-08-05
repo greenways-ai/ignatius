@@ -1,0 +1,66 @@
+(ns gwdb.ledger.primitive
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg Primitive
+  "Rebuildable descriptor for a closed canonical primitive value."
+  {:added "0.2"}
+  [:primitive-root {:type :bytea :primary true}
+   :primitive-id   {:type :text :required true :sql {:unique true}}
+   :arity          {:type :integer :required true}])
+
+(defn.pg ^{:- [:boolean]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  primitive-id-valid
+  "Initial closed callable whitelist; no stored value can select arbitrary SQL."
+  {:added "0.2"}
+  [:text i-primitive-id :integer i-arity]
+  (or (and (== i-primitive-id "integer/add") (== i-arity 2))
+      (and (== i-primitive-id "integer/multiply") (== i-arity 2))))
+
+(defn.pg ^{:- [:bytea]}
+  primitive-payload
+  {:added "0.2"}
+  [:text i-primitive-id :integer i-arity]
+  (return (pg/decode (|| "P:1:" i-primitive-id ":" i-arity) "escape")))
+
+(defn.pg ^{:- [:bytea]} primitive-put
+  "Constructs one canonical, whitelisted primitive descriptor."
+  {:added "0.2"}
+  [:text i-primitive-id :integer i-arity]
+  (let [_ (pg/assert (-/primitive-id-valid i-primitive-id i-arity)
+                     [:ledger/unknown-primitive i-primitive-id])
+        (:bytea v-payload) (-/primitive-payload i-primitive-id i-arity)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 16 v-payload)
+                                        1 16 v-payload)
+        o-upsert (pg/t:upsert -/Primitive
+                               {:primitive-root v-root
+                                :primitive-id i-primitive-id
+                                :arity i-arity})]
+    (return v-root)))
+
+(defn.pg primitive-get
+  "Returns a whitelisted primitive descriptor by stable protocol id."
+  {:added "0.2"}
+  [:text i-primitive-id]
+  (let [o-row (pg/t:get -/Primitive {:where {:primitive-id i-primitive-id}})]
+    (return o-row)))
+
+(defn.pg primitive-get-root
+  "Returns a primitive descriptor by canonical value root."
+  {:added "0.2"}
+  [:bytea i-primitive-root]
+  (let [o-row (pg/t:get -/Primitive {:where {:primitive-root i-primitive-root}})]
+    (return o-row)))

@@ -1,0 +1,48 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  chain-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject Hestia application modules
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'gwdb\.ledger\.(ot|document|document-protocol)' \
+              db/src db/sql db/contracts; then
+            echo "Hestia application modules must not enter Ignatius" >&2
+            exit 1
+          fi
+          if grep -R -n -E '^\(ns gw\.ledger\.' hal extensions; then
+            echo "Portable HAL must use Ignatius namespaces" >&2
+            exit 1
+          fi
+          if grep -R -n -E 'gw/ledger|greenways-ledger' hal extensions; then
+            echo "Portable packages must publish Ignatius identities" >&2
+            exit 1
+          fi
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y leiningen
+
+      - name: Materialize pinned source dependencies
+        run: make setup
+
+      - name: Verify generated SQL and contracts
+        run: |
+          make db-sql db-contracts
+          git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
+
+      - name: Test SHA extension
+        run: make extension-sha-test

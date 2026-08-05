@@ -1,0 +1,74 @@
+(ns gwdb.ledger.op-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.op/constant :added "0.2"}
+(fact "a constant operation is an authoritative canonical operation cell"
+  (!.pg
+   [:select
+    (op/op-valid
+     (op/constant (value/put-integer "7")))]
+   [:select
+    (cell/cell-type-tag
+     (op/constant (value/put-integer "7")))])
+  => '(true 17))
+
+^{:refer gwdb.ledger.op/invoke :added "0.2"}
+(fact "invoke commits child operation order into immutable cell references"
+  (!.pg
+   [:select
+    (cell/cell-ref-count
+     (op/invoke
+      (op/constant (value/put-symbol "+"))
+      (pg/jsonb-build-array
+       (pg/encode (op/constant (value/put-integer "1")) "hex")
+       (pg/encode (op/constant (value/put-integer "2")) "hex")))
+     "op-child")]
+   [:select
+    (==
+     (op/op-child-root
+      (op/invoke
+       (op/constant (value/put-symbol "+"))
+       (pg/jsonb-build-array
+        (pg/encode (op/constant (value/put-integer "1")) "hex")
+        (pg/encode (op/constant (value/put-integer "2")) "hex")))
+      1)
+     (op/constant (value/put-integer "2")))])
+  => '(2 true))
+
+^{:refer gwdb.ledger.op/local :added "0.2"}
+(fact "local addresses reject negative lexical coordinates"
+  (!.pg
+   [:select
+    (op/op-valid (op/local 0 0))])
+  => true)

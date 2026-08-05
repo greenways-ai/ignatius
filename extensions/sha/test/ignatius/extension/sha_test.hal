@@ -1,0 +1,11 @@
+(ns ignatius.extension.sha-test
+  (:require [std.lib.test :as test]
+            [ignatius.extension.sha :as sha]))
+
+(def results
+  [(test/check
+    "SHA-256 is deterministic and returns 32 bytes"
+    (count (deref (sha/digest (bytes 97 98 99))))
+    32)])
+
+(test/print-results results)

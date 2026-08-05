@@ -1,0 +1,7 @@
+(ns ignatius.extension.sha
+  (:require [ignatius.extension.sha.provider :as provider]))
+
+(defn digest
+  "Returns a promise containing the 32-byte SHA-256 digest of bytes."
+  [input]
+  (provider/digest input))

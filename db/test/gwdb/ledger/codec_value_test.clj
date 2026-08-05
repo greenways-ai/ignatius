@@ -1,0 +1,235 @@
+(ns gwdb.ledger.codec-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.codec-value/encode :added "0.1"}
+(fact "root encoding includes the committed type and canonical payload"
+  (!.pg
+   [:select (pg/encode
+             (codec-value/encode (value/put-string "a"))
+             "escape")])
+  => "HCV1:5:1:61")
+
+^{:refer gwdb.ledger.codec-value/compare :added "0.1"}
+(fact "root comparison is canonical-byte ordering rather than hash ordering"
+  (!.pg
+   [:select (codec-value/compare
+             (value/put-string "a")
+             (value/put-string "b"))])
+  => -1)
+
+^{:refer gwdb.ledger.codec-value/sequence-payload :added "0.1"}
+(fact "ordered child payloads preserve array position without hashing JSONB"
+  (!.pg
+   [:select (pg/encode
+             (codec-value/sequence-payload
+              (pg/jsonb-build-array
+               (pg/encode (value/put-string "a") "hex")
+               (pg/encode (value/put-string "b") "hex")))
+             "escape")])
+  => string?)
+
+^{:refer gwdb.ledger.codec/framed-roots-valid :added "0.1"}
+(fact "compound validators reject an unframed payload"
+  (!.pg [:select (codec/payload-valid 11 (pg/decode "6d6170" "hex"))])
+  => false)
+
+^{:refer gwdb.ledger.value/put-boolean :added "0.1"}
+(fact "semantic booleans select the HCV1 00/01 payload without raw bytes"
+  (!.pg
+   [:select (pg/encode (codec-value/encode (value/put-boolean true)) "escape")]
+   [:select (pg/encode (codec-value/encode (value/put-boolean false)) "escape")])
+  => '("HCV1:1:1:01" "HCV1:1:1:00"))
+
+^{:refer gwdb.ledger.value/put-integer :added "0.1"}
+(fact "integer text is canonical decimal and is not restricted to bigint"
+  (!.pg
+   [:select (pg/encode (codec-value/encode (value/put-integer "-42")) "escape")]
+   [:select (pg/encode (codec-value/encode
+                         (value/put-integer "123456789012345678901234567890"))
+                        "escape")])
+  => '("HCV1:2:3:2d3432" "HCV1:2:30:313233343536373839303132333435363738393031323334353637383930"))
+
+^{:refer gwdb.ledger.value/put-string :added "0.1"}
+(fact "text values use explicit UTF-8 conversion before hashing"
+  (!.pg
+   [:select (pg/encode (codec-value/encode (value/put-string "é")) "escape")]
+   [:select (pg/encode (codec-value/encode (value/put-symbol "x")) "escape")]
+   [:select (pg/encode (codec-value/encode (value/put-keyword "x")) "escape")])
+  => '("HCV1:5:2:c3a9" "HCV1:7:1:78" "HCV1:8:1:78"))
+
+^{:refer gwdb.ledger.value/put-list :added "0.1"}
+(fact "list roots commit ordered children into both payload and reference index"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (value/put-list
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-string "b") "hex"))))]
+   [:select
+    (cell/cell-ref-count
+     (value/put-list
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-string "b") "hex")))
+     "element")])
+  => [9 2])
+
+^{:refer gwdb.ledger.value/put-set :added "0.1"}
+(fact "sets use strict canonical child order and record every child"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (value/put-set
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-string "b") "hex"))))]
+   [:select
+    (cell/cell-ref-count
+     (value/put-set
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-string "b") "hex")))
+     "element")])
+  => [12 2])
+
+^{:refer gwdb.ledger.value/put-set
+  :id reject-out-of-order-set
+  :added "0.1"}
+(fact "sets reject child roots that are not in canonical byte order"
+  (!.pg
+   [:select
+    (value/put-set
+     (pg/jsonb-build-array
+      (pg/encode (value/put-string "b") "hex")
+      (pg/encode (value/put-string "a") "hex")))])
+  => (any (throws)))
+
+^{:refer gwdb.ledger.value/put-map :added "0.1"}
+(fact "maps store canonical-order key/value pairs with distinct reference roles"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (value/put-map
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-integer-number 1) "hex")
+       (pg/encode (value/put-string "b") "hex")
+       (pg/encode (value/put-integer-number 2) "hex"))))]
+   [:select
+    (cell/cell-ref-count
+     (value/put-map
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-integer-number 1) "hex")
+       (pg/encode (value/put-string "b") "hex")
+       (pg/encode (value/put-integer-number 2) "hex")))
+     "key")]
+   [:select
+    (cell/cell-ref-count
+     (value/put-map
+      (pg/jsonb-build-array
+       (pg/encode (value/put-string "a") "hex")
+       (pg/encode (value/put-integer-number 1) "hex")
+       (pg/encode (value/put-string "b") "hex")
+       (pg/encode (value/put-integer-number 2) "hex")))
+     "value")])
+  => [11 2 2])
+
+^{:refer gwdb.ledger.value/put-map
+  :id reject-out-of-order-map
+  :added "0.1"}
+(fact "maps reject keys that are not in canonical byte order"
+  (!.pg
+   [:select
+    (value/put-map
+     (pg/jsonb-build-array
+      (pg/encode (value/put-string "b") "hex")
+      (pg/encode (value/put-integer-number 2) "hex")
+      (pg/encode (value/put-string "a") "hex")
+     (pg/encode (value/put-integer-number 1) "hex")))])
+  => (any (throws)))
+
+^{:refer gwdb.ledger.value/map-assoc :added "0.1"}
+(fact "map association rebuilds a canonical map from committed child references"
+  (!.pg
+   [:select
+    (cell/cell-ref-count
+     (value/map-assoc
+      (value/map-assoc
+       (value/put-map (pg/jsonb-build-array))
+       (value/put-symbol "a")
+       (value/put-integer "1"))
+      (value/put-symbol "b")
+      (value/put-integer "2"))
+     "key")]
+   [:select
+    (cell/cell-type-tag
+     (cell/cell-ref-child
+      (value/map-assoc
+       (value/map-assoc
+        (value/put-map (pg/jsonb-build-array))
+        (value/put-symbol "a")
+        (value/put-integer "1"))
+       (value/put-symbol "a")
+       (value/put-string "replaced"))
+      0 "value"))])
+  => '(2 5))
+
+
+^{:refer gwdb.ledger.codec-value/root-hex-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/child-root-at :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/sequence-payload-tail :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/roots-strictly-ordered :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/map-keys-strictly-ordered :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/set-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/map-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.codec-value/syntax-payload :added "0.1"}
+(fact "TODO")

@@ -1,0 +1,117 @@
+(ns gwdb.ledger.transaction-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.transaction :as transaction]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.transaction :as transaction]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.transaction/transaction-valid :added "0.2"}
+(fact "a transaction root commits its envelope and validates against state sequence"
+  (!.pg
+   [:select
+    (transaction/transaction-root-valid
+     (transaction/transaction-put
+      "testnet" (value/put-symbol "address") 0
+      (op/constant (value/put-integer "7")) nil 10
+      (value/put-integer "1") nil))]
+   [:select
+    (transaction/transaction-valid
+     (transaction/transaction-put
+      "testnet" (value/put-symbol "address") 0
+      (op/constant (value/put-integer "7")) nil 10
+      (value/put-integer "1") nil)
+     "testnet"
+     (state/state-assoc-account
+      (state/state-genesis)
+      (value/put-symbol "address")
+      (account/account-value-create (value/put-nil))
+      0))])
+  => '(true true))
+
+^{:refer gwdb.ledger.transaction/transaction-execute :added "0.2"}
+(fact "accepted execution emits a canonical receipt with the evaluated result root"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (transaction/transaction-execute
+      (transaction/transaction-put
+       "testnet" (value/put-symbol "address") 0
+       (op/constant (value/put-integer "7")) nil 10
+       (value/put-integer "1") nil)
+      "testnet"
+      (context/context-create
+       (state/state-assoc-account
+        (state/state-genesis)
+        (value/put-symbol "address")
+        (account/account-value-create (value/put-nil))
+        0)
+       (value/put-symbol "address")
+       (value/put-symbol "address")
+       nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+      (state/state-assoc-account
+       (state/state-genesis)
+       (value/put-symbol "address")
+       (account/account-value-create (value/put-nil))
+       0))) ]
+   [:select
+    (value/integer-bigint
+     (account/account-value-sequence-root
+      (state/state-account-root
+       (:bytea
+        (:->> (transaction/transaction-receipt-get
+                (transaction/transaction-execute
+                 (transaction/transaction-put
+                  "seqnet" (value/put-symbol "address") 0
+                  (op/constant (value/put-integer "7")) nil 10
+                  (value/put-integer "1") nil)
+                 "seqnet"
+                 (context/context-create
+                  (state/state-assoc-account
+                   (state/state-genesis)
+                   (value/put-symbol "address")
+                   (account/account-value-create (value/put-nil)) 0)
+                  (value/put-symbol "address")
+                  (value/put-symbol "address")
+                  nil nil 0 0 (value/put-vector (pg/jsonb-build-array)) 0 10 0)
+                 (state/state-assoc-account
+                  (state/state-genesis)
+                  (value/put-symbol "address")
+                  (account/account-value-create (value/put-nil)) 0)))
+               "state_root"))
+       (value/put-symbol "address"))))])
+  => '(14 1))
