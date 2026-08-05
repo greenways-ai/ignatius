@@ -1,6 +1,6 @@
 {:hara/type :project
  :hara/version "1.0.0"
- :project/id gw/ledger.noir
+ :project/id ignatius/noir
  :project/version "0.1.0"
  :project/source-paths ["src"]
  :project/test-paths ["test"]
@@ -12,4 +12,4 @@
  :project/package {:entry-points ["ignatius.extension.noir"]
                    :license "Apache-2.0"}
  :project/dependencies
- {"gw/ledger.sha" {:version "^0.1.0"}}}
+ {"ignatius/sha" {:version "^0.1.0"}}}
