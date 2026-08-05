@@ -1,0 +1,106 @@
+name: Refine Ignatius import
+
+on:
+  push:
+    branches: [agent/import-hestia]
+    paths:
+      - .github/workflows/refine-import.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/import-hestia
+          fetch-depth: 0
+
+      - name: Remove Hestia application modules and regenerate contracts
+        run: |
+          set -euo pipefail
+
+          git config user.name "greenways-ai-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -f \
+            db/src/gwdb/ledger/ot.clj \
+            db/src/gwdb/ledger/document.clj \
+            db/src/gwdb/ledger/document_protocol.clj \
+            db/test/gwdb/ledger/document_test.clj \
+            db/test/gwdb/ledger/document_protocol_test.clj
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          base = Path("db/src/gwdb/ledger/base.clj")
+          excluded = {
+              "[gwdb.ledger.ot]",
+              "[gwdb.ledger.document]",
+              "[gwdb.ledger.document-protocol]",
+          }
+          lines = base.read_text().splitlines()
+          lines = [line for line in lines if not any(token in line for token in excluded)]
+          base.write_text("\n".join(lines) + "\n")
+
+          project = Path("db/project.clj")
+          text = project.read_text()
+          text = text.replace('(defproject greenways/ledger "0.1.0-SNAPSHOT"',
+                              '(defproject greenways/ignatius "0.1.0-SNAPSHOT"')
+          text = text.replace(':description "Core libraries for greenways-ai"',
+                              ':description "PostgreSQL adapter for the Ignatius Hara chain"')
+          text = text.replace(':url "http://www.greenways.ai"',
+                              ':url "https://github.com/greenways-ai/ignatius"')
+          text = text.replace(':license {:name "Proprietory"}',
+                              ':license {:name "Apache License 2.0"\n            :url "https://www.apache.org/licenses/LICENSE-2.0"}')
+          project.write_text(text)
+          PY
+
+          mkdir -p extensions/sha/src/ignatius/extension \
+                   extensions/sha/test/ignatius/extension \
+                   extensions/noir/src/ignatius/extension \
+                   extensions/noir/test/ignatius/extension
+
+          git mv extensions/sha/src/gw/ledger/sha.hal \
+                 extensions/sha/src/ignatius/extension/sha.hal
+          git mv extensions/sha/test/gw/ledger/sha_test.hal \
+                 extensions/sha/test/ignatius/extension/sha_test.hal
+          git mv extensions/noir/src/gw/ledger/noir.hal \
+                 extensions/noir/src/ignatius/extension/noir.hal
+          git mv extensions/noir/test/gw/ledger/noir_test.hal \
+                 extensions/noir/test/ignatius/extension/noir_test.hal
+
+          find extensions -type f \( -name '*.hal' -o -name '*.edn' -o -name 'README.md' \) -print0 \
+            | xargs -0 sed -i \
+                -e 's/gw\.ledger\.sha/ignatius.extension.sha/g' \
+                -e 's/gw\.ledger\.noir/ignatius.extension.noir/g' \
+                -e 's/gw-ledger-sha/ignatius-sha/g' \
+                -e 's/gw-ledger-noir/ignatius-noir/g'
+
+          sudo apt-get update
+          sudo apt-get install -y leiningen
+          git clone --depth 1 https://github.com/zcaudate-xyz/foundation-base.git \
+            db/checkouts/foundation
+
+          (cd db && lein sql && lein contracts)
+          rm -rf db/checkouts
+
+          if grep -R -n -E 'gwdb\.ledger\.(ot|document|document-protocol)' \
+              db/src db/sql db/contracts; then
+            echo "Hestia document modules remain in Ignatius output" >&2
+            exit 1
+          fi
+
+          if grep -R -n -E '^\(ns gw\.ledger\.' hal extensions; then
+            echo "Legacy generic HAL namespaces remain after import" >&2
+            exit 1
+          fi
+
+          rm -f .github/workflows/refine-import.yml
+
+          git add -A
+          git commit -m "refactor: isolate the Ignatius chain boundary"
+          git push origin HEAD:agent/import-hestia
