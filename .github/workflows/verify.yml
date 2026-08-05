@@ -27,16 +27,18 @@ jobs:
             exit 1
           fi
 
-      - name: Verify generated SQL and contracts
+      - name: Install build tools
         run: |
-          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y leiningen
-          git clone --depth 1 https://github.com/zcaudate-xyz/foundation-base.git \
-            db/checkouts/foundation
-          (cd db && lein sql && lein contracts)
-          rm -rf db/checkouts
+
+      - name: Materialize pinned source dependencies
+        run: make setup
+
+      - name: Verify generated SQL and contracts
+        run: |
+          make db-sql db-contracts
           git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
 
       - name: Test SHA extension
-        run: cargo test --manifest-path extensions/sha/rust/Cargo.toml
+        run: make extension-sha-test
