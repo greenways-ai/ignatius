@@ -14,10 +14,13 @@
             [gwdb.ledger.op]
             [gwdb.ledger.context]
             [gwdb.ledger.primitive]
+            [gwdb.ledger.runtime-profile]
             [gwdb.ledger.runtime]
             [gwdb.ledger.function]
             [gwdb.ledger.protocol]
+            [gwdb.ledger.actor]
             [gwdb.ledger.runtime-support]
+            [gwdb.ledger.account-runtime]
             [gwdb.ledger.runtime-v2]
             [gwdb.ledger.protocol-runtime]
             [gwdb.ledger.module]
@@ -29,7 +32,7 @@
             [gwdb.ledger.admission]
             [gwdb.ledger.developer]))
 
-;; The ledger is deliberately a plain PostgreSQL project.  Supabase transforms,
+;; The ledger is deliberately a plain PostgreSQL project. Supabase transforms,
 ;; RPC metadata and application schemas do not participate in this protocol.
 (l/script :postgres
   {:require [[postgres.core :as pg]
@@ -45,10 +48,13 @@
              [gwdb.ledger.op]
              [gwdb.ledger.context]
              [gwdb.ledger.primitive]
+             [gwdb.ledger.runtime-profile]
              [gwdb.ledger.runtime]
              [gwdb.ledger.function]
              [gwdb.ledger.protocol]
+             [gwdb.ledger.actor]
              [gwdb.ledger.runtime-support]
+             [gwdb.ledger.account-runtime]
              [gwdb.ledger.runtime-v2]
              [gwdb.ledger.protocol-runtime]
              [gwdb.ledger.module]
