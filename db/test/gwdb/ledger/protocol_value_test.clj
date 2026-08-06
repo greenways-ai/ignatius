@@ -21,7 +21,9 @@
                         :image "gw-ledger-postgres:15-pgsodium"
                         :ports [5432]
                         :environment {"POSTGRES_PASSWORD" "postgres"
-                                      "POSTGRES_USER" "postgres"}
+                                      "POSTGRES_USER" "postgres"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
                         :cmd ["postgres"]}}
    :require [[postgres.core :as pg]
              [gwdb.ledger.base :as base :primary true]
