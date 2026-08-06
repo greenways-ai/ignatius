@@ -1,0 +1,120 @@
+(ns ignatius.examples.work-order-contract)
+
+;; A contract is an ordinary pure Hara reducer. The ledger supplies trusted
+;; :signer, :transaction, :timestamp, :contract and :previous-head fields.
+
+(defn init
+  [parameters]
+  {:buyer (get parameters :buyer)
+   :supplier (get parameters :supplier)
+   :terms (get parameters :terms)
+   :phase :offered
+   :accepted {}
+   :milestones {}})
+
+(defn party?
+  [state account]
+  (if (= account (get state :buyer))
+    true
+    (= account (get state :supplier))))
+
+(defn accept
+  [state event]
+  (let [signer (get event :signer)]
+    (if (party? state signer)
+      (let [accepted
+            (assoc (get state :accepted) signer true)]
+        {:ok
+         (assoc
+          (assoc state :accepted accepted)
+          :phase
+          (if (and
+               (= true
+                  (get accepted (get state :buyer)))
+               (= true
+                  (get accepted (get state :supplier))))
+            :active
+            :offered))})
+      {:error :not-a-party})))
+
+(defn submit-milestone
+  [state event]
+  (if (= (get event :signer)
+         (get state :supplier))
+    (if (= (get state :phase) :active)
+      (let [id (get event :id)]
+        {:ok
+         (assoc
+          state
+          :milestones
+          (assoc
+           (get state :milestones)
+           id
+           {:status :submitted
+            :evidence (get event :evidence)
+            :submitted-by (get event :signer)
+            :submitted-at (get event :timestamp)}))})
+      {:error :contract-not-active})
+    {:error :supplier-only}))
+
+(defn approve-milestone
+  [state event]
+  (if (= (get event :signer)
+         (get state :buyer))
+    (let [id (get event :id)
+          milestone
+          (get (get state :milestones) id)]
+      (if (= (get milestone :status) :submitted)
+        {:ok
+         (assoc
+          state
+          :milestones
+          (assoc
+           (get state :milestones)
+           id
+           (assoc
+            (assoc milestone :status :approved)
+            :approved-at
+            (get event :timestamp))))}
+        {:error :milestone-not-submitted}))
+    {:error :buyer-only}))
+
+(defn apply-event
+  [state event]
+  (let [action (get event :action)]
+    (cond
+      (= action :accept)
+      (accept state event)
+
+      (= action :milestone/submit)
+      (submit-milestone state event)
+
+      (= action :milestone/approve)
+      (approve-milestone state event)
+
+      :else
+      {:error :unknown-action})))
+
+(defn summary
+  [state]
+  {:phase (get state :phase)
+   :buyer (get state :buyer)
+   :supplier (get state :supplier)
+   :terms (get state :terms)
+   :milestones (get state :milestones)})
+
+;; Publication and use:
+;;
+;; (contract/publish 'ignatius.examples.work-order-contract
+;;                   'contracts/work-order@1)
+;;
+;; (def work-order
+;;   (contract/open 'contracts/work-order@1
+;;                  {:buyer alice
+;;                   :supplier bob
+;;                   :terms terms-root}))
+;;
+;; (contract/submit work-order
+;;                  {:action :accept})
+;;
+;; (contract/view work-order 'summary)
