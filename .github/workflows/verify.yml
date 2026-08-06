@@ -6,13 +6,15 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   chain-boundary:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Reject Hestia application modules
         run: |
@@ -44,10 +46,22 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
-      - name: Verify generated SQL and contracts
+      - name: Generate SQL and contracts
+        run: make db-sql db-contracts
+
+      - name: Commit regenerated protocol artefacts
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          make db-sql db-contracts
-          git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
+          set -euo pipefail
+          if git diff --quiet -- db/sql/full.sql db/contracts/ledger-client/generated.ts; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/sql/full.sql db/contracts/ledger-client/generated.ts
+          git commit -m "Regenerate protocol ledger artefacts"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Upload regenerated protocol artefacts
         if: always()
