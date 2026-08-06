@@ -50,6 +50,43 @@ The program deterministically returns:
  :spread 1}
 ```
 
+## Reducer contracts
+
+The primary application contract model is a pure Hara state machine:
+
+```clojure
+(defn init [parameters]
+  initial-state)
+
+(defn apply-event [state verified-event]
+  {:ok next-state})
+```
+
+A publisher compiles and signs an immutable template. Parties open instances
+pinned to that exact root and interact by submitting signed event maps. Ignatius
+derives trusted signer, transaction, time, contract, and previous-head fields,
+runs the reducer, and commits a new state and history root only for `{:ok ...}`.
+
+```clojure
+(contract/publish module 'contracts/work-order@1)
+
+(def work-order
+  (contract/open
+    'contracts/work-order@1
+    {:buyer alice
+     :supplier bob
+     :terms terms-root}))
+
+(contract/submit work-order {:action :accept})
+(contract/view work-order 'summary)
+```
+
+See [`docs/contracts.md`](docs/contracts.md),
+[`hal/src/ignatius/contract.hal`](hal/src/ignatius/contract.hal), and
+[`examples/work_order_contract.hal`](examples/work_order_contract.hal) for the
+compiler, HCV1/HCP1 publication pipeline, signed-event model, and work-order
+example.
+
 ## Convex-style accounts and actors
 
 New account roots use a backward-compatible v2 shape that separates the external
@@ -69,6 +106,10 @@ The first actor demo deploys a persistent counter and executes:
 pre-call state. Callable methods are explicitly marked in account definition
 metadata. The canonical `convex.compat` runtime profile maps Convex-shaped source
 symbols onto native Ignatius primitives and actor operations.
+
+Actors are an advanced account-composition facility. Ordinary agreements,
+workflows, approvals, and document lifecycles should generally use reducer
+contracts instead of actor-local mutable-looking state.
 
 See [`docs/convex-actors.md`](docs/convex-actors.md) and
 [`examples/counter_actor.hal`](examples/counter_actor.hal).
