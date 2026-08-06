@@ -7,9 +7,11 @@ Hara values. PostgreSQL is the durable multi-writer adapter; HAL modules provide
 the portable transaction and client semantics. Ignatius does not require a
 token, public activity feed, or public consensus network.
 
-Hestia builds agent authority, private rooms, documents, continuity,
-negotiation, and product experiences on top of Ignatius. Those application
-protocols and their query projections do not live in this repository.
+Ignatius also provides application-neutral process, artifact, signed timeline
+and execution-evidence primitives. Hestia builds agent authority, private rooms,
+document editing, continuity, negotiation, and product experiences on top of
+those primitives. Product-specific protocols and query projections do not live
+in this repository.
 
 ## Model
 
@@ -20,7 +22,7 @@ HAL client
   -> deterministic execution
   -> transaction, state and block roots
   -> signed receipt
-  -> application-owned projections
+  -> rebuildable application projections
 ```
 
 Ignatius owns the canonical chain outcome. A consuming application may maintain
@@ -87,6 +89,38 @@ See [`docs/contracts.md`](docs/contracts.md),
 compiler, HCV1/HCP1 publication pipeline, signed-event model, and work-order
 example.
 
+## Signed build timelines
+
+[`ignatius.timeline`](hal/src/ignatius/timeline.hal) is a reusable reducer for
+tracking a complete build through signed process runs, immutable artifact
+versions and reviews.
+
+```clojure
+(contract/submit timeline
+  {:action :process/start
+   :process/id "lighting-pass-17"
+   :process/definition-root lighting-agent-root
+   :process/input-roots [scene-root-A prompt-root]})
+
+(contract/submit timeline
+  {:action :artifact/publish
+   :artifact/id "scene/main"
+   :artifact/root scene-root-B
+   :artifact/previous-root scene-root-A
+   :process/id "lighting-pass-17"})
+```
+
+A stable artifact ID identifies the conceptual scene, DOM, document, codebase or
+other output. Its content root identifies one exact immutable version. Ignatius
+injects signer, transaction, timestamp and previous-head evidence, while stale
+artifact updates and reviews of obsolete roots are rejected.
+
+The v1 contract keeps one linear authoritative head and uses existing HCV1 maps.
+Multi-parent workspace commits, scalable indexes, structural merges and portable
+execution remain separate, compatible phases. See
+[`docs/build-timelines.md`](docs/build-timelines.md) and
+[`docs/process-graph-roadmap.md`](docs/process-graph-roadmap.md).
+
 ## Convex-style accounts and actors
 
 New account roots use a backward-compatible v2 shape that separates the external
@@ -141,6 +175,13 @@ make db-sql
 make db-contracts
 ```
 
+Run the portable HAL checks:
+
+```sh
+make hal-check
+make hal-test
+```
+
 Run the SHA extension test:
 
 ```sh
@@ -159,17 +200,20 @@ generated SQL, or generated contracts.
 ## Application boundary
 
 Ignatius includes generic controller registration, signed transaction admission,
-execution, receipts, integrity verification and snapshots.
+execution, receipts, integrity verification, snapshots, process runs, stable
+artifact/version records, signed reviews and build-timeline provenance.
 
 It deliberately excludes:
 
-- agent profiles, mandates and application authority;
+- agent profiles, mandates and product-specific authority policy;
 - private rooms, invitations, membership and negotiation;
-- document OT, provenance, approvals and delivery;
+- document OT/CRDT algorithms, editor behavior and delivery UX;
+- scene, DOM and document merge policy until published as generic modules;
 - continuity and recovery ceremonies; and
 - product services and user interfaces.
 
-Those belong to applications such as Hestia and commit their canonical records
+Applications such as Hestia own those experiences and policies while committing
+their canonical artifacts, process evidence and accepted lifecycle changes
 through Ignatius.
 
 ## Provenance

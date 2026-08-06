@@ -1,0 +1,245 @@
+(ns ignatius.timeline)
+
+(def timeline-format-version 1)
+
+(defn verified-provenance
+  "Copies only ledger-injected provenance from a verified contract event."
+  [event]
+  {:record/type :timeline/provenance
+   :timeline/signer (get event :signer)
+   :timeline/transaction (get event :transaction)
+   :timeline/timestamp (get event :timestamp)
+   :timeline/previous-head (get event :previous-head)})
+
+(defn participant?
+  [state signer]
+  (= true
+     (get (get state :timeline/participants) signer)))
+
+(defn active?
+  [state]
+  (= :active (get state :timeline/status)))
+
+(defn init
+  "Creates a linear signed build timeline.
+
+  The contract creator supplies the stable workspace identity, participant set
+  and optional schema root. Ignatius supplies identity and ordering facts on
+  every later event."
+  [parameters]
+  {:record/type :timeline/build
+   :timeline/format-version timeline-format-version
+   :timeline/workspace-id (get parameters :workspace/id)
+   :timeline/workspace-kind (get parameters :workspace/kind)
+   :timeline/schema-root (get parameters :workspace/schema-root)
+   :timeline/participants (get parameters :participants)
+   :timeline/status :active
+   :timeline/processes {}
+   :timeline/artifacts {}
+   :timeline/reviews {}})
+
+(defn start-process
+  [state event]
+  (let [process-id (get event :process/id)
+        definition-root (get event :process/definition-root)
+        processes (get state :timeline/processes)
+        current (get processes process-id)]
+    (cond
+      (= nil process-id)
+      {:error :timeline/missing-process-id}
+
+      (= nil definition-root)
+      {:error :timeline/missing-process-definition}
+
+      (= nil current)
+      {:ok
+       (assoc
+        state
+        :timeline/processes
+        (assoc
+         processes
+         process-id
+         {:record/type :timeline/process-run
+          :process/id process-id
+          :process/definition-root definition-root
+          :process/input-roots (get event :process/input-roots)
+          :process/parent-runs (get event :process/parent-runs)
+          :process/status :running
+          :process/started (verified-provenance event)}))}
+
+      :else
+      {:error :timeline/process-already-exists})))
+
+(defn complete-process
+  [state event]
+  (let [process-id (get event :process/id)
+        processes (get state :timeline/processes)
+        current (get processes process-id)]
+    (cond
+      (= nil current)
+      {:error :timeline/process-not-found}
+
+      (= :running (get current :process/status))
+      (let [with-status
+            (assoc current :process/status :complete)
+            with-outputs
+            (assoc
+             with-status
+             :process/output-roots
+             (get event :process/output-roots))
+            with-result
+            (assoc
+             with-outputs
+             :process/result-root
+             (get event :process/result-root))
+            with-receipt
+            (assoc
+             with-result
+             :process/receipt-root
+             (get event :process/receipt-root))
+            completed
+            (assoc
+             with-receipt
+             :process/completed
+             (verified-provenance event))]
+        {:ok
+         (assoc
+          state
+          :timeline/processes
+          (assoc processes process-id completed))})
+
+      :else
+      {:error :timeline/process-not-running})))
+
+(defn publish-artifact
+  [state event]
+  (let [artifact-id (get event :artifact/id)
+        artifact-root (get event :artifact/root)
+        previous-root (get event :artifact/previous-root)
+        process-id (get event :process/id)
+        processes (get state :timeline/processes)
+        process (get processes process-id)
+        artifacts (get state :timeline/artifacts)
+        current (get artifacts artifact-id)
+        current-root
+        (if (= nil current)
+          nil
+          (get current :artifact/root))]
+    (cond
+      (= nil artifact-id)
+      {:error :timeline/missing-artifact-id}
+
+      (= nil artifact-root)
+      {:error :timeline/missing-artifact-root}
+
+      (= nil process)
+      {:error :timeline/process-not-found}
+
+      (= previous-root current-root)
+      {:ok
+       (assoc
+        state
+        :timeline/artifacts
+        (assoc
+         artifacts
+         artifact-id
+         {:record/type :timeline/artifact-version
+          :artifact/id artifact-id
+          :artifact/kind (get event :artifact/kind)
+          :artifact/root artifact-root
+          :artifact/previous-root previous-root
+          :artifact/process-id process-id
+          :artifact/parent-roots (get event :artifact/parent-roots)
+          :artifact/schema-root (get event :artifact/schema-root)
+          :artifact/metadata (get event :artifact/metadata)
+          :artifact/published (verified-provenance event)}))}
+
+      :else
+      {:error :timeline/stale-artifact-root})))
+
+(defn record-review
+  [state event]
+  (let [review-id (get event :review/id)
+        artifact-id (get event :artifact/id)
+        artifact-root (get event :artifact/root)
+        artifacts (get state :timeline/artifacts)
+        artifact (get artifacts artifact-id)
+        reviews (get state :timeline/reviews)
+        current-review (get reviews review-id)]
+    (cond
+      (= nil review-id)
+      {:error :timeline/missing-review-id}
+
+      (= nil artifact)
+      {:error :timeline/artifact-not-found}
+
+      (= false
+         (= artifact-root (get artifact :artifact/root)))
+      {:error :timeline/stale-review-subject}
+
+      (= false (= nil current-review))
+      {:error :timeline/review-already-exists}
+
+      :else
+      {:ok
+       (assoc
+        state
+        :timeline/reviews
+        (assoc
+         reviews
+         review-id
+         {:record/type :timeline/review
+          :review/id review-id
+          :review/artifact-id artifact-id
+          :review/artifact-root artifact-root
+          :review/decision (get event :review/decision)
+          :review/evidence-root (get event :review/evidence-root)
+          :review/recorded (verified-provenance event)}))})))
+
+(defn apply-event
+  [state event]
+  (let [action (get event :action)]
+    (cond
+      (= false (active? state))
+      {:error :timeline/not-active}
+
+      (= false
+         (participant? state (get event :signer)))
+      {:error :timeline/not-participant}
+
+      (= action :process/start)
+      (start-process state event)
+
+      (= action :process/complete)
+      (complete-process state event)
+
+      (= action :artifact/publish)
+      (publish-artifact state event)
+
+      (= action :review/record)
+      (record-review state event)
+
+      :else
+      {:error :timeline/unknown-action})))
+
+(defn summary
+  [state]
+  {:workspace/id (get state :timeline/workspace-id)
+   :workspace/kind (get state :timeline/workspace-kind)
+   :workspace/schema-root (get state :timeline/schema-root)
+   :timeline/status (get state :timeline/status)
+   :timeline/processes (get state :timeline/processes)
+   :timeline/artifacts (get state :timeline/artifacts)
+   :timeline/reviews (get state :timeline/reviews)})
+
+(defn processes
+  [state]
+  (get state :timeline/processes))
+
+(defn artifacts
+  [state]
+  (get state :timeline/artifacts))
+
+(defn reviews
+  [state]
+  (get state :timeline/reviews))
