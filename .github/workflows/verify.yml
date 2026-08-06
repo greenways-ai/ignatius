@@ -44,5 +44,14 @@ jobs:
           make db-sql db-contracts
           git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
 
+      - name: Upload regenerated protocol artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-protocol-artefacts
+          path: |
+            db/sql/full.sql
+            db/contracts/ledger-client/generated.ts
+
       - name: Test SHA extension
         run: make extension-sha-test
