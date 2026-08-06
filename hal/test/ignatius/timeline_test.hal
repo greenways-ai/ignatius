@@ -1,0 +1,182 @@
+(ns ignatius.timeline-test
+  (:require [std.lib.test :as test]
+            [ignatius.timeline :as timeline]))
+
+(def initial
+  (timeline/init
+   {:workspace/id "world/orbital-station"
+    :workspace/kind :scene
+    :workspace/schema-root "scene-schema-root"
+    :participants {"alice" true
+                   "bob" true}}))
+
+(def rejected-outsider
+  (timeline/apply-event
+   initial
+   {:action :process/start
+    :process/id "run-1"
+    :process/definition-root "definition-root"
+    :signer "mallory"
+    :transaction "tx-outsider"
+    :timestamp 1
+    :previous-head "head-0"}))
+
+(def started
+  (get
+   (timeline/apply-event
+    initial
+    {:action :process/start
+     :process/id "run-1"
+     :process/definition-root "definition-root"
+     :process/input-roots ["prompt-root" "scene-A"]
+     :process/parent-runs []
+     :signer "alice"
+     :transaction "tx-start"
+     :timestamp 2
+     :previous-head "head-0"})
+   :ok))
+
+(def published-a
+  (get
+   (timeline/apply-event
+    started
+    {:action :artifact/publish
+     :artifact/id "scene/main"
+     :artifact/kind :scene
+     :artifact/root "scene-A"
+     :artifact/previous-root nil
+     :artifact/parent-roots []
+     :artifact/schema-root "scene-schema-root"
+     :artifact/metadata {:label "First scene"}
+     :process/id "run-1"
+     :signer "alice"
+     :transaction "tx-publish-a"
+     :timestamp 3
+     :previous-head "head-1"})
+   :ok))
+
+(def rejected-stale-publish
+  (timeline/apply-event
+   published-a
+   {:action :artifact/publish
+    :artifact/id "scene/main"
+    :artifact/kind :scene
+    :artifact/root "scene-B"
+    :artifact/previous-root "scene-before-A"
+    :process/id "run-1"
+    :signer "bob"
+    :transaction "tx-stale"
+    :timestamp 4
+    :previous-head "head-2"}))
+
+(def published-b
+  (get
+   (timeline/apply-event
+    published-a
+    {:action :artifact/publish
+     :artifact/id "scene/main"
+     :artifact/kind :scene
+     :artifact/root "scene-B"
+     :artifact/previous-root "scene-A"
+     :artifact/parent-roots ["scene-A"]
+     :artifact/schema-root "scene-schema-root"
+     :artifact/metadata {:label "Lighting pass"}
+     :process/id "run-1"
+     :signer "bob"
+     :transaction "tx-publish-b"
+     :timestamp 5
+     :previous-head "head-2"})
+   :ok))
+
+(def rejected-stale-review
+  (timeline/apply-event
+   published-b
+   {:action :review/record
+    :review/id "review-1"
+    :review/decision :approve
+    :review/evidence-root "notes-root"
+    :artifact/id "scene/main"
+    :artifact/root "scene-A"
+    :signer "alice"
+    :transaction "tx-review-stale"
+    :timestamp 6
+    :previous-head "head-3"}))
+
+(def reviewed
+  (get
+   (timeline/apply-event
+    published-b
+    {:action :review/record
+     :review/id "review-1"
+     :review/decision :approve
+     :review/evidence-root "notes-root"
+     :artifact/id "scene/main"
+     :artifact/root "scene-B"
+     :signer "alice"
+     :transaction "tx-review"
+     :timestamp 7
+     :previous-head "head-3"})
+   :ok))
+
+(def completed
+  (get
+   (timeline/apply-event
+    reviewed
+    {:action :process/complete
+     :process/id "run-1"
+     :process/output-roots ["scene-B"]
+     :process/result-root "result-root"
+     :process/receipt-root "receipt-root"
+     :signer "alice"
+     :transaction "tx-complete"
+     :timestamp 8
+     :previous-head "head-4"})
+   :ok))
+
+(def results
+  [(test/check "the timeline records its stable workspace identity"
+               (get (timeline/summary initial) :workspace/id)
+               "world/orbital-station")
+   (test/check "only verified participants may advance the timeline"
+               (get rejected-outsider :error)
+               :timeline/not-participant)
+   (test/check "process definitions and ledger provenance are pinned"
+               (get-in (timeline/processes started)
+                       ["run-1" :process/started :timeline/transaction])
+               "tx-start")
+   (test/check "artifact publication distinguishes stable IDs from exact roots"
+               (get-in (timeline/artifacts published-a)
+                       ["scene/main" :artifact/root])
+               "scene-A")
+   (test/check "artifact advancement requires the exact previous root"
+               (get rejected-stale-publish :error)
+               :timeline/stale-artifact-root)
+   (test/check "a later artifact version retains its parent root"
+               (get-in (timeline/artifacts published-b)
+                       ["scene/main" :artifact/parent-roots])
+               ["scene-A"])
+   (test/check "reviews are pinned to the current exact artifact root"
+               (get rejected-stale-review :error)
+               :timeline/stale-review-subject)
+   (test/check "review provenance comes from the verified event"
+               (get-in (timeline/reviews reviewed)
+                       ["review-1" :review/recorded :timeline/signer])
+               "alice")
+   (test/check "completed processes retain their execution receipt"
+               (get-in (timeline/processes completed)
+                       ["run-1" :process/receipt-root])
+               "receipt-root")
+   (test/check "completed processes cannot be completed twice"
+               (get
+                (timeline/apply-event
+                 completed
+                 {:action :process/complete
+                  :process/id "run-1"
+                  :signer "alice"
+                  :transaction "tx-complete-again"
+                  :timestamp 9
+                  :previous-head "head-5"})
+                :error)
+               :timeline/process-not-running)])
+
+(test/print-results results)
