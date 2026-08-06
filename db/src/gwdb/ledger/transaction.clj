@@ -9,7 +9,7 @@
             [gwdb.ledger.state :as state]
             [gwdb.ledger.op :as op]
             [gwdb.ledger.context :as context]
-            [gwdb.ledger.runtime :as runtime]))
+            [gwdb.ledger.protocol-runtime :as runtime]))
 
 (l/script :postgres
   {:require [[postgres.core :as pg]
@@ -21,7 +21,7 @@
              [gwdb.ledger.state :as state]
              [gwdb.ledger.op :as op]
              [gwdb.ledger.context :as context]
-             [gwdb.ledger.runtime :as runtime]]
+             [gwdb.ledger.protocol-runtime :as runtime]]
    :config {:dbname "gw-ledger-test"}
    :import [["pgcrypto"]]
    :static {:application ["gw"]
