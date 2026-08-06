@@ -27,11 +27,18 @@ Ignatius owns the canonical chain outcome. A consuming application may maintain
 ordinary PostgreSQL tables, indexes and caches, but those projections retain
 canonical roots and remain rebuildable.
 
+Language-level `defprotocol` and `extend-type` forms lower to closed protocol
+intrinsics whose descriptors, dispatchers and implementations become canonical
+state. Hara macros remain a pinned compiler-phase facility: transactions retain
+the original form root and execute only the signed expanded operation root. See
+[`docs/language-protocols.md`](docs/language-protocols.md).
+
 ## Layout
 
 - `db/` — PostgreSQL ledger DSL, generated SQL and generated client contract
 - `hal/` — portable codec, runtime, transaction and offline-client semantics
 - `extensions/` — optional chain cryptography and proof extensions
+- `docs/` — protocol notes and integration contracts
 - `versions.edn` — immutable upstream source revisions used by the build
 
 ## Set up
