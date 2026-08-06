@@ -29,6 +29,8 @@
             :all {:schema ["gw_ledger"]}}})
 
 
+(declare.pg execute)
+
 (defn.pg ^{:- [:bytea]}
   root-at
   {:added "0.7"}
