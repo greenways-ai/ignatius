@@ -182,15 +182,18 @@
 
 (defn.pg ^{:- [:bytea]}
   deploy-op
-  "Builds a special operation that creates an actor then executes its initializer."
+  "Builds actor deployment with explicit callable method symbols."
   {:added "0.8"}
-  [:bytea i-initializer-op-root]
-  (return
-   (op/put-op
-    "special" nil (value/put-symbol "actor/deploy")
-    nil nil nil nil nil
-    (pg/jsonb-build-array
-     (pg/encode i-initializer-op-root "hex")))))
+  [:bytea i-initializer-op-root :bytea i-callable-symbols-root]
+  (let [_ (pg/assert
+           (== (cell/cell-type-tag i-callable-symbols-root) 10)
+           [:ledger/actor-callables-not-vector])]
+    (return
+     (op/put-op
+      "special" i-callable-symbols-root (value/put-symbol "actor/deploy")
+      nil nil nil nil nil
+      (pg/jsonb-build-array
+       (pg/encode i-initializer-op-root "hex"))))))
 
 (defn.pg ^{:- [:bytea]}
   actor-call-op
