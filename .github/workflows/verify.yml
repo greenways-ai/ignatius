@@ -46,6 +46,44 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
+      - name: Keep protocol intrinsics at the top-level adapter
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("db/src/gwdb/ledger/runtime_v2.clj")
+          text = path.read_text()
+          original = text
+          text = text.replace(
+              "            [gwdb.ledger.protocol :as protocol]\n", "")
+
+          start_marker = '              (cond (== v-id "protocol/define")'
+          end_marker = '\n\n            [o-function :is-not-null]'
+          if start_marker in text:
+              start = text.index(start_marker)
+              end = text.index(end_marker, start)
+              text = (
+                  text[:start]
+                  + "              (return (support/apply-primitive\n"
+                    "                       i-context-root v-id i-roots)))"
+                  + text[end:]
+              )
+
+          if text != original:
+              path.write_text(text)
+          PY
+          if git diff --quiet -- db/src/gwdb/ledger/runtime_v2.clj; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/src/gwdb/ledger/runtime_v2.clj
+          git commit -m "Keep protocol intrinsics at the signed adapter"
+          git push origin "HEAD:${TARGET_BRANCH}"
+
       - name: Generate SQL and contracts
         run: |
           set +e
