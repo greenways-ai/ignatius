@@ -175,7 +175,7 @@
              v-call-context (:bytea (:->> o-function "body_root"))))))
 
 (defn.pg ^{:- [:jsonb]}
-  execute
+  protocol-execute
   "Executes one signed top-level operation, intercepting closed protocol intrinsics."
   {:added "0.5"}
   [:bytea i-context-root :bytea i-op-root]
