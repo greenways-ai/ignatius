@@ -6,7 +6,6 @@
             [gwdb.ledger.function :as function]
             [gwdb.ledger.op :as op]
             [gwdb.ledger.primitive :as primitive]
-            [gwdb.ledger.protocol :as protocol]
             [gwdb.ledger.runtime :as runtime]
             [gwdb.ledger.runtime-support :as support]
             [gwdb.ledger.state :as state]
@@ -20,8 +19,7 @@
              [gwdb.ledger.function :as function]
              [gwdb.ledger.op :as op]
              [gwdb.ledger.primitive :as primitive]
-             [gwdb.ledger.protocol :as protocol]
-             [gwdb.ledger.runtime :as runtime]
+              [gwdb.ledger.runtime :as runtime]
              [gwdb.ledger.runtime-support :as support]
              [gwdb.ledger.state :as state]
              [gwdb.ledger.account :as account]
@@ -87,51 +85,8 @@
                   _ (when (and (not (== v-arity -1))
                                (not (== v-arity v-count)))
                       (return (runtime/result-error i-context-root "arity")))]
-              (cond (== v-id "protocol/define")
-                    (return (protocol/define-transition
-                             i-context-root
-                             (support/root-at i-roots 0)
-                             (support/root-at i-roots 1)))
-
-                    (== v-id "protocol/extend")
-                    (return (protocol/extend-transition
-                             i-context-root
-                             (support/root-at i-roots 0)
-                             (support/root-at i-roots 1)
-                             (support/root-at i-roots 2)))
-
-                    (== v-id "protocol/invoke")
-                    (let [(:bytea v-protocol-root) (support/root-at i-roots 0)
-                          (:bytea v-method-root) (support/root-at i-roots 1)
-                          (:jsonb v-arguments)
-                          (support/roots-tail-at
-                           i-roots 2 v-count (pg/jsonb-build-array))
-                          (:integer v-argument-count)
-                          (pg/jsonb-array-length v-arguments)
-                          _ (when (not (== (protocol/method-arity
-                                           v-protocol-root v-method-root)
-                                          v-argument-count))
-                              (return (runtime/result-error
-                                       i-context-root "protocol/method-arity")))
-                          o-context (context/context-get i-context-root)
-                          (:bytea v-function-root)
-                          (protocol/resolve-method
-                           (:bytea (:->> o-context "state_root"))
-                           (:bytea (:->> o-context "address"))
-                           v-protocol-root v-method-root
-                           (support/root-at v-arguments 0))]
-                      (cond [v-function-root :is-null]
-                            (return (runtime/result-error
-                                     i-context-root
-                                     "missing-protocol-implementation"))
-                            :else
-                            (return (-/execute-machine
-                                     "call" i-context-root nil 0 0
-                                     v-arguments v-function-root))))
-
-                    :else
-                    (return (support/apply-primitive
-                             i-context-root v-id i-roots))))
+              (return (support/apply-primitive
+                       i-context-root v-id i-roots)))
 
             [o-function :is-not-null]
             (let [o-caller (context/context-get i-context-root)
