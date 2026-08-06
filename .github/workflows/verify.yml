@@ -46,19 +46,26 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
-      - name: Remove host-language forward declaration
+      - name: Install Tahto recursion header
         env:
           TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
-          if ! grep -q '^(declare execute)$' db/src/gwdb/ledger/runtime_v2.clj; then
+          if grep -q '^(declare.pg execute)$' db/src/gwdb/ledger/runtime_v2.clj; then
             exit 0
           fi
-          sed -i '/^(declare execute)$/d' db/src/gwdb/ledger/runtime_v2.clj
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("db/src/gwdb/ledger/runtime_v2.clj")
+          text = path.read_text()
+          marker = "(defn.pg"
+          index = text.index(marker)
+          path.write_text(text[:index] + "(declare.pg execute)\n\n" + text[index:])
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add db/src/gwdb/ledger/runtime_v2.clj
-          git commit -m "Remove obsolete runtime forward declaration"
+          git commit -m "Declare the recursive runtime entry"
           git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Generate SQL and contracts
