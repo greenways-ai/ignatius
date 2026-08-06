@@ -28,7 +28,8 @@
    :static {:application ["gw"]
             :all {:schema ["gw_ledger"]}}})
 
-(declare execute)
+
+(declare.pg execute)
 
 (defn.pg ^{:- [:bytea]}
   root-at
