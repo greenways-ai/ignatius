@@ -1,0 +1,222 @@
+(ns gwdb.ledger.runtime-v2-demo-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.runtime-v2 :as runtime-v2]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.runtime-v2 :as runtime-v2]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+(defn.pg ^{:- [:bytea]}
+  score-call
+  {:added "0.7"}
+  [:bytea i-score-symbol :bigint i-quality :bigint i-speed :bigint i-trust]
+  (return
+   (op/invoke
+    nil
+    (pg/jsonb-build-array
+     (pg/encode (op/lookup i-score-symbol) "hex")
+     (pg/encode (op/constant (value/put-integer-number i-quality)) "hex")
+     (pg/encode (op/constant (value/put-integer-number i-speed)) "hex")
+     (pg/encode (op/constant (value/put-integer-number i-trust)) "hex")))))
+
+(defn.pg ^{:- [:bytea]}
+  score-function
+  {:added "0.7"}
+  []
+  (let [(:bytea v-multiply) (primitive/primitive-put "integer/multiply" 2)
+        (:bytea v-add) (primitive/primitive-put "integer/add" 2)
+        (:bytea v-quality-score)
+        (op/invoke
+         v-multiply
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 0) "hex")
+          (pg/encode (op/constant (value/put-integer "5")) "hex")))
+        (:bytea v-speed-score)
+        (op/invoke
+         v-multiply
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 1) "hex")
+          (pg/encode (op/constant (value/put-integer "3")) "hex")))
+        (:bytea v-trust-score)
+        (op/invoke
+         v-multiply
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 2) "hex")
+          (pg/encode (op/constant (value/put-integer "2")) "hex")))
+        (:bytea v-secondary)
+        (op/invoke
+         v-add
+         (pg/jsonb-build-array
+          (pg/encode v-speed-score "hex")
+          (pg/encode v-trust-score "hex")))
+        (:bytea v-body)
+        (op/invoke
+         v-add
+         (pg/jsonb-build-array
+          (pg/encode v-quality-score "hex")
+          (pg/encode v-secondary "hex")))]
+    (return
+     (op/lambda-op
+      (value/put-vector
+       (pg/jsonb-build-array
+        (pg/encode (value/put-symbol "quality") "hex")
+        (pg/encode (value/put-symbol "speed") "hex")
+        (pg/encode (value/put-symbol "trust") "hex")))
+      v-body))))
+
+(defn.pg ^{:- [:bytea]}
+  demo-program
+  "Builds the canonical operation graph for the documented agent-score demo."
+  {:added "0.7"}
+  []
+  (let [(:bytea v-score-symbol) (value/put-symbol "score")
+        (:bytea v-alice-symbol) (value/put-symbol "alice-score")
+        (:bytea v-bob-symbol) (value/put-symbol "bob-score")
+        (:bytea v-winner-symbol) (value/put-symbol "winner")
+        (:bytea v-greater-than)
+        (primitive/primitive-put "integer/greater-than" 2)
+        (:bytea v-subtract) (primitive/primitive-put "integer/subtract" 2)
+        (:bytea v-vector-new) (primitive/primitive-put "vector/new" -1)
+        (:bytea v-map-new) (primitive/primitive-put "map/new" -1)
+        (:bytea v-string-concat) (primitive/primitive-put "string/concat" -1)
+        (:bytea v-winner-test)
+        (op/invoke
+         v-greater-than
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 0) "hex")
+          (pg/encode (op/local 0 1) "hex")))
+        (:bytea v-winner)
+        (op/cond-op
+         (pg/jsonb-build-array
+          (pg/encode v-winner-test "hex")
+          (pg/encode (op/constant (value/put-string "alice")) "hex")
+          (pg/encode (op/constant (value/put-boolean true)) "hex")
+          (pg/encode (op/constant (value/put-string "bob")) "hex")))
+        (:bytea v-message)
+        (op/invoke
+         v-string-concat
+         (pg/jsonb-build-array
+          (pg/encode (op/constant (value/put-string "selected:")) "hex")
+          (pg/encode (op/local 0 2) "hex")))
+        (:bytea v-scores)
+        (op/invoke
+         v-vector-new
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 0) "hex")
+          (pg/encode (op/local 0 1) "hex")))
+        (:bytea v-spread)
+        (op/invoke
+         v-subtract
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 0) "hex")
+          (pg/encode (op/local 0 1) "hex")))
+        (:bytea v-result)
+        (op/invoke
+         v-map-new
+         (pg/jsonb-build-array
+          (pg/encode (op/constant (value/put-keyword "winner")) "hex")
+          (pg/encode (op/local 0 2) "hex")
+          (pg/encode (op/constant (value/put-keyword "message")) "hex")
+          (pg/encode v-message "hex")
+          (pg/encode (op/constant (value/put-keyword "scores")) "hex")
+          (pg/encode v-scores "hex")
+          (pg/encode (op/constant (value/put-keyword "spread")) "hex")
+          (pg/encode v-spread "hex")))
+        (:bytea v-with-winner)
+        (op/let-op v-winner-symbol v-winner v-result)
+        (:bytea v-with-bob)
+        (op/let-op v-bob-symbol
+                   (-/score-call v-score-symbol 8 9 7)
+                   v-with-winner)
+        (:bytea v-with-alice)
+        (op/let-op v-alice-symbol
+                   (-/score-call v-score-symbol 9 7 8)
+                   v-with-bob)]
+    (return
+     (op/do-op
+      (pg/jsonb-build-array
+       (pg/encode
+        (op/def-op v-score-symbol (-/score-function)) "hex")
+       (pg/encode v-with-alice "hex"))))))
+
+(defn.pg ^{:- [:jsonb]}
+  run-demo
+  {:added "0.7"}
+  []
+  (let [(:bytea v-address) (value/put-symbol "demo-agent")
+        (:bytea v-state)
+        (state/state-assoc-account
+         (state/state-genesis) v-address
+         (account/account-value-create (value/put-nil)) 0)
+        (:bytea v-context)
+        (context/context-create
+         v-state v-address v-address nil nil 0 0
+         (value/put-vector (pg/jsonb-build-array)) 0 256 0)
+        o-result (runtime-v2/execute v-context (-/demo-program))
+        (:bytea v-map-root) (:bytea (:->> o-result "value_root"))
+        (:bytea v-winner)
+        (value/map-get v-map-root (value/put-keyword "winner"))
+        (:bytea v-message)
+        (value/map-get v-map-root (value/put-keyword "message"))
+        (:bytea v-scores)
+        (value/map-get v-map-root (value/put-keyword "scores"))
+        (:bytea v-spread)
+        (value/map-get v-map-root (value/put-keyword "spread"))]
+    (return
+     (pg/jsonb-build-object
+      "status" (:text (:->> o-result "status"))
+      "winner" (== v-winner (value/put-string "alice"))
+      "message" (== v-message (value/put-string "selected:alice"))
+      "alice" (value/integer-bigint (value/vector-get v-scores 0))
+      "bob" (value/integer-bigint (value/vector-get v-scores 1))
+      "spread" (value/integer-bigint v-spread)
+      "cost_used" (:bigint (:->> o-result "cost_used"))))))
+
+^{:refer gwdb.ledger.runtime-v2/execute :added "0.7"}
+(fact "a Hara-shaped agent scoring program runs as one recursive canonical graph"
+  (!.pg
+   [:select (:->> (-/run-demo) "status")]
+   [:select (:->> (-/run-demo) "winner")]
+   [:select (:->> (-/run-demo) "message")]
+   [:select (:->> (-/run-demo) "alice")]
+   [:select (:->> (-/run-demo) "bob")]
+   [:select (:->> (-/run-demo) "spread")]
+   [:select (< (:bigint (:->> (-/run-demo) "cost_used")) 256)])
+  => '("ok" true true 82 81 1 true))
