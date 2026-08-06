@@ -1,0 +1,22 @@
+(ns ignatius.examples.counter-actor)
+
+;; Compiler target for the Convex-compatible Ignatius runtime profile.
+;; `deploy`, `call` and `query` lower to actor special operations rather than
+;; ordinary function calls.
+
+(def counter
+  (deploy
+    (do
+      (def n 0)
+
+      (defn ^:callable increment! []
+        (do
+          (def n (+ n 1))
+          n))
+
+      (defn ^:callable current []
+        n))))
+
+[(call counter increment!)
+ (call counter increment!)
+ (query counter current)]
