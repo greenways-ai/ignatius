@@ -1,0 +1,15 @@
+(ns ignatius.examples.agent-score)
+
+(defn score
+  [quality speed trust]
+  (+ (* quality 5)
+     (* speed 3)
+     (* trust 2)))
+
+(let [alice-score (score 9 7 8)
+      bob-score   (score 8 9 7)
+      winner      (if (> alice-score bob-score) "alice" "bob")]
+  {:winner winner
+   :message (str "selected:" winner)
+   :scores [alice-score bob-score]
+   :spread (- alice-score bob-score)})
