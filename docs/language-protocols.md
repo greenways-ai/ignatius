@@ -52,6 +52,12 @@ method arguments. The protocol-aware executor:
 5. installs the arguments as the function's local frame; and
 6. executes the committed function body.
 
+The initial ledger slice treats the three protocol intrinsics as signed transaction
+entry points. Their arguments and implementation bodies use the existing deterministic
+v1 operation vocabulary. This keeps protocol state authoritative without introducing
+a second recursive VM; deeper protocol-call composition can move into the core runtime
+when that vocabulary expands.
+
 The PostgreSQL adapter is not parsing source text. Parsing, macro expansion and
 lowering happen in the pinned Hara frontend; Ignatius independently verifies and
 executes the resulting canonical operation graph.
