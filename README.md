@@ -35,7 +35,7 @@ the original form root and execute only the signed expanded operation root. See
 
 ## Runtime demo
 
-The recursive runtime can now execute a recognisable Hara-shaped program with a
+The recursive runtime can execute a recognisable Hara-shaped program with a
 three-argument function, dynamic lookup and invocation, nested arithmetic,
 lexical bindings, branching, strings, vectors, and maps. The checked-in example
 is [`examples/agent_score.hal`](examples/agent_score.hal), with its execution and
@@ -49,6 +49,29 @@ The program deterministically returns:
  :scores [82 81]
  :spread 1}
 ```
+
+## Convex-style accounts and actors
+
+New account roots use a backward-compatible v2 shape that separates the external
+transaction key from the internal controller. Keyless actor accounts can be
+deployed and called through the same recursive evaluator.
+
+The first actor demo deploys a persistent counter and executes:
+
+```clojure
+[(call counter increment!)
+ (call counter increment!)
+ (query counter current)]
+;; => [1 2 2]
+```
+
+`call` retains the callee's state, while `query` restores the caller's
+pre-call state. Callable methods are explicitly marked in account definition
+metadata. The canonical `convex.compat` runtime profile maps Convex-shaped source
+symbols onto native Ignatius primitives and actor operations.
+
+See [`docs/convex-actors.md`](docs/convex-actors.md) and
+[`examples/counter_actor.hal`](examples/counter_actor.hal).
 
 ## Layout
 
