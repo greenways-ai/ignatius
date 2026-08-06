@@ -24,8 +24,6 @@
    :static {:application ["gw"]
             :all {:schema ["gw_ledger"]}}})
 
-(declare execute)
-
 (defn.pg ^{:- [:jsonb]}
   arguments-ok
   {:added "0.5"}
@@ -38,7 +36,7 @@
 
 (defn.pg ^{:- [:jsonb]}
   evaluate-arguments-at
-  "Evaluates committed argument operations left-to-right and records value roots."
+  "Evaluates ordinary committed argument operations left-to-right."
   {:added "0.5"}
   [:bytea i-context-root :bytea i-op-root :integer i-position
    :integer i-count :jsonb i-roots]
@@ -46,7 +44,7 @@
         (return (-/arguments-ok i-context-root i-roots))
         :else
         (let [(:bytea v-child-root) (op/op-child-root i-op-root i-position)
-              o-result (-/execute i-context-root v-child-root)]
+              o-result (runtime/execute i-context-root v-child-root)]
           (cond (== (:text (:->> o-result "status")) "error")
                 (return o-result)
                 :else
@@ -123,7 +121,7 @@
 
 (defn.pg ^{:- [:jsonb]}
   execute-protocol-invoke
-  "Resolves a method against the receiver type and executes the immutable function body."
+  "Resolves a method against immutable state and executes its committed body."
   {:added "0.5"}
   [:bytea i-context-root :bytea i-op-root]
   (let [(:integer v-count) (cell/cell-ref-count i-op-root "op-child")
@@ -173,39 +171,12 @@
          v-argument-context-root v-locals-root
          (+ (:integer (:->> o-context "depth")) 1))
         (:bytea v-call-context) (context/context-charge v-function-context 3)]
-    (return (-/execute
+    (return (runtime/execute
              v-call-context (:bytea (:->> o-function "body_root"))))))
 
 (defn.pg ^{:- [:jsonb]}
-  execute-do-at
-  {:added "0.5"}
-  [:bytea i-context-root :bytea i-op-root :integer i-position
-   :integer i-count :jsonb i-last]
-  (cond (>= i-position i-count)
-        (return i-last)
-        :else
-        (let [(:bytea v-child-root) (op/op-child-root i-op-root i-position)
-              o-result (-/execute i-context-root v-child-root)]
-          (cond (== (:text (:->> o-result "status")) "error")
-                (return o-result)
-                :else
-                (return (-/execute-do-at
-                         (:bytea (:->> o-result "context_root"))
-                         i-op-root (+ i-position 1) i-count o-result))))))
-
-(defn.pg ^{:- [:jsonb]}
-  execute-do
-  {:added "0.5"}
-  [:bytea i-context-root :bytea i-op-root]
-  (let [(:integer v-count) (cell/cell-ref-count i-op-root "op-child")]
-    (cond (== v-count 0)
-          (return (protocol/result-error i-context-root "empty-do"))
-          :else
-          (return (-/execute-do-at i-context-root i-op-root 0 v-count nil)))))
-
-(defn.pg ^{:- [:jsonb]}
   execute
-  "Protocol-aware deterministic dispatcher; all unrelated operations delegate unchanged."
+  "Executes one signed top-level operation, intercepting closed protocol intrinsics."
   {:added "0.5"}
   [:bytea i-context-root :bytea i-op-root]
   (let [o-op (op/op-get i-op-root)
@@ -226,7 +197,5 @@
           (return (-/execute-protocol-extend i-context-root i-op-root))
           (== v-primitive-id "protocol/invoke")
           (return (-/execute-protocol-invoke i-context-root i-op-root))
-          (== v-kind "do")
-          (return (-/execute-do i-context-root i-op-root))
           :else
           (return (runtime/execute i-context-root i-op-root)))))
