@@ -69,7 +69,7 @@
          (pg/jsonb-build-array
           (pg/encode (op/constant v-protocol-name) "hex")
           (pg/encode (op/constant v-methods) "hex")))
-        o-defined (protocol-runtime/execute v-context v-define-op)
+        o-defined (protocol-runtime/protocol-execute v-context v-define-op)
         (:bytea v-defined-context)
         (:bytea (:->> o-defined "context_root"))
         o-defined-context (context/context-get v-defined-context)
@@ -102,7 +102,7 @@
           (pg/encode (op/constant v-protocol-name) "hex")
           (pg/encode (op/constant v-type-root) "hex")
           (pg/encode (op/constant v-implementations) "hex")))
-        o-extended (protocol-runtime/execute v-defined-context v-extend-op)
+        o-extended (protocol-runtime/protocol-execute v-defined-context v-extend-op)
         (:bytea v-extended-context)
         (:bytea (:->> o-extended "context_root"))
         (:bytea v-receiver)
@@ -114,7 +114,7 @@
           (pg/encode (op/constant v-protocol-root) "hex")
           (pg/encode (op/constant v-method-name) "hex")
           (pg/encode (op/constant v-receiver) "hex")))
-        o-called (protocol-runtime/execute v-extended-context v-call-op)]
+        o-called (protocol-runtime/protocol-execute v-extended-context v-call-op)]
     (return
      (pg/jsonb-build-object
       "define_status" (:text (:->> o-defined "status"))
