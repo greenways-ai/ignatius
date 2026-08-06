@@ -1,0 +1,87 @@
+(ns ignatius.program)
+
+(def primitive-catalog
+  {:integer/add {:id "integer/add" :arity 2}
+   :integer/subtract {:id "integer/subtract" :arity 2}
+   :integer/multiply {:id "integer/multiply" :arity 2}
+   :integer/less-than {:id "integer/less-than" :arity 2}
+   :integer/less-than-or-equal {:id "integer/less-than-or-equal" :arity 2}
+   :integer/greater-than {:id "integer/greater-than" :arity 2}
+   :integer/greater-than-or-equal {:id "integer/greater-than-or-equal" :arity 2}
+   :integer/equal {:id "integer/equal" :arity 2}
+   :value/equal {:id "value/equal" :arity 2}
+   :boolean/not {:id "boolean/not" :arity 1}
+   :vector/new {:id "vector/new" :arity -1}
+   :vector/count {:id "vector/count" :arity 1}
+   :vector/get {:id "vector/get" :arity 2}
+   :map/new {:id "map/new" :arity -1}
+   :map/get {:id "map/get" :arity 2}
+   :map/assoc {:id "map/assoc" :arity 3}
+   :string/concat {:id "string/concat" :arity -1}})
+
+(defn prepend
+  [head tail]
+  (reduce (fn [out item] (conj out item)) [head] tail))
+
+(defn constant-operation
+  [value-root]
+  {:op :constant
+   :value-root value-root})
+
+(defn local-operation
+  [index]
+  {:op :local
+   :depth 0
+   :index index})
+
+(defn lookup-operation
+  [symbol-root]
+  {:op :lookup
+   :symbol-root symbol-root})
+
+(defn invoke-operation
+  [callable-root arguments]
+  {:op :invoke
+   :function-root callable-root
+   :arguments arguments})
+
+(defn call-operation
+  "A nil static callable means the first child computes the callable value."
+  [callee arguments]
+  (invoke-operation nil (prepend callee arguments)))
+
+(defn primitive-operation
+  [primitive arguments]
+  (let [descriptor (get primitive-catalog primitive)]
+    {:op :invoke
+     :primitive-id (get descriptor :id)
+     :primitive-arity (get descriptor :arity)
+     :arguments arguments}))
+
+(defn lambda-operation
+  [parameters-root body-operation]
+  {:op :lambda
+   :parameter-root parameters-root
+   :body body-operation})
+
+(defn let-operation
+  [symbol-root binding body]
+  {:op :let
+   :symbol-root symbol-root
+   :children [binding body]})
+
+(defn def-operation
+  [symbol-root value]
+  {:op :def
+   :symbol-root symbol-root
+   :children [value]})
+
+(defn cond-operation
+  [condition-bodies]
+  {:op :cond
+   :children condition-bodies})
+
+(defn do-operation
+  [children]
+  {:op :do
+   :children children})

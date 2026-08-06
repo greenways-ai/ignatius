@@ -1,0 +1,27 @@
+(ns ignatius.program-test
+  (:require [std.lib.test :as test]
+            [ignatius.program :as program]))
+
+(def results
+  [(test/check "dynamic calls retain the callee as the first child"
+               (count
+                (get (program/call-operation
+                      (program/lookup-operation "score-symbol")
+                      [(program/constant-operation "argument-root")])
+                     :arguments))
+               2)
+   (test/check "the demo catalog exposes collection construction"
+               (get-in program/primitive-catalog [:map/new :arity])
+               -1)
+   (test/check "definitions may now contain arbitrary operation values"
+               (get (first
+                     (get (program/def-operation
+                           "score-symbol"
+                           (program/lambda-operation
+                            "parameters-root"
+                            (program/local-operation 0)))
+                          :children))
+                    :op)
+               :lambda)])
+
+(test/print-results results)

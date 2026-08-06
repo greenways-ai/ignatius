@@ -24,11 +24,26 @@
            :%% :sql
            :props [:immutable :parallel-safe]}
   primitive-id-valid
-  "Closed callable whitelist; protocol intrinsics remain deterministic ledger operations."
+  "Closed callable whitelist for the deterministic runtime."
   {:added "0.2"}
   [:text i-primitive-id :integer i-arity]
   (or (and (== i-primitive-id "integer/add") (== i-arity 2))
+      (and (== i-primitive-id "integer/subtract") (== i-arity 2))
       (and (== i-primitive-id "integer/multiply") (== i-arity 2))
+      (and (== i-primitive-id "integer/less-than") (== i-arity 2))
+      (and (== i-primitive-id "integer/less-than-or-equal") (== i-arity 2))
+      (and (== i-primitive-id "integer/greater-than") (== i-arity 2))
+      (and (== i-primitive-id "integer/greater-than-or-equal") (== i-arity 2))
+      (and (== i-primitive-id "integer/equal") (== i-arity 2))
+      (and (== i-primitive-id "value/equal") (== i-arity 2))
+      (and (== i-primitive-id "boolean/not") (== i-arity 1))
+      (and (== i-primitive-id "vector/new") (== i-arity -1))
+      (and (== i-primitive-id "vector/count") (== i-arity 1))
+      (and (== i-primitive-id "vector/get") (== i-arity 2))
+      (and (== i-primitive-id "map/new") (== i-arity -1))
+      (and (== i-primitive-id "map/get") (== i-arity 2))
+      (and (== i-primitive-id "map/assoc") (== i-arity 3))
+      (and (== i-primitive-id "string/concat") (== i-arity -1))
       (and (== i-primitive-id "protocol/define") (== i-arity 2))
       (and (== i-primitive-id "protocol/extend") (== i-arity 3))
       (and (== i-primitive-id "protocol/invoke") (== i-arity -1))))

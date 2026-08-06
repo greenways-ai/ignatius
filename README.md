@@ -33,10 +33,28 @@ state. Hara macros remain a pinned compiler-phase facility: transactions retain
 the original form root and execute only the signed expanded operation root. See
 [`docs/language-protocols.md`](docs/language-protocols.md).
 
+## Runtime demo
+
+The recursive runtime can now execute a recognisable Hara-shaped program with a
+three-argument function, dynamic lookup and invocation, nested arithmetic,
+lexical bindings, branching, strings, vectors, and maps. The checked-in example
+is [`examples/agent_score.hal`](examples/agent_score.hal), with its execution and
+lowering contract described in [`docs/demo-runtime.md`](docs/demo-runtime.md).
+
+The program deterministically returns:
+
+```clojure
+{:winner "alice"
+ :message "selected:alice"
+ :scores [82 81]
+ :spread 1}
+```
+
 ## Layout
 
 - `db/` — PostgreSQL ledger DSL, generated SQL and generated client contract
 - `hal/` — portable codec, runtime, transaction and offline-client semantics
+- `examples/` — Hara programs used to drive executable ledger demos
 - `extensions/` — optional chain cryptography and proof extensions
 - `docs/` — protocol notes and integration contracts
 - `versions.edn` — immutable upstream source revisions used by the build

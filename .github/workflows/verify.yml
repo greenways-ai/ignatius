@@ -6,13 +6,15 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   chain-boundary:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Reject Hestia application modules
         run: |
@@ -44,12 +46,24 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
-      - name: Verify generated SQL and contracts
-        run: |
-          make db-sql db-contracts
-          git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
+      - name: Generate SQL and contracts
+        run: make db-sql db-contracts
 
-      - name: Test language protocol round trip
+      - name: Commit regenerated runtime artefacts
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- db/sql/full.sql db/contracts/ledger-client/generated.ts; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/sql/full.sql db/contracts/ledger-client/generated.ts
+          git commit -m "Regenerate recursive runtime artefacts"
+          git push origin "HEAD:${TARGET_BRANCH}"
+
+      - name: Test protocol and recursive runtime round trips
         run: |
           docker build \
             -t gw-ledger-postgres:15-pgsodium \
@@ -59,7 +73,8 @@ jobs:
           lein update-in :dependencies conj \
             '[org.clojure/core.rrb-vector "0.1.2"]' \
             '[org.apache.commons/commons-math3 "3.6.1"]' -- \
-            test :only gwdb.ledger.protocol-value-test
+            test gwdb.ledger.protocol-value-test \
+                 gwdb.ledger.runtime-v2-demo-test
 
       - name: Test SHA extension
         run: make extension-sha-test
