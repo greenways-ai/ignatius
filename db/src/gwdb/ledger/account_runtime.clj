@@ -4,6 +4,7 @@
             [gwdb.ledger.account :as account]
             [gwdb.ledger.cell :as cell]
             [gwdb.ledger.context :as context]
+            [gwdb.ledger.crypto :as crypto]
             [gwdb.ledger.runtime :as runtime]
             [gwdb.ledger.runtime-support :as support]
             [gwdb.ledger.state :as state]
@@ -14,6 +15,7 @@
              [gwdb.ledger.account :as account]
              [gwdb.ledger.cell :as cell]
              [gwdb.ledger.context :as context]
+             [gwdb.ledger.crypto :as crypto]
              [gwdb.ledger.runtime :as runtime]
              [gwdb.ledger.runtime-support :as support]
              [gwdb.ledger.state :as state]
@@ -116,8 +118,13 @@
         _ (when [v-account-root :is-null]
             (return (runtime/result-error i-context-root "missing-account")))
         (:bytea v-key-root) (support/root-at i-roots 0)
-        _ (when [(cell/cell-by-hash v-key-root) :is-null]
-            (return (runtime/result-error i-context-root "missing-key-value")))
+        o-key (cell/cell-by-hash v-key-root)
+        _ (when (or [o-key :is-null]
+                    (not
+                     (or (== (:smallint (:->> o-key "type_tag")) 0)
+                         (crypto/public-key-root-valid v-key-root))))
+            (return
+             (runtime/result-error i-context-root "invalid-account-key")))
         (:bytea v-next-account)
         (account/account-value-set-key v-account-root v-key-root)
         (:bytea v-next-context)
