@@ -44,6 +44,17 @@
       (and (== i-primitive-id "map/get") (== i-arity 2))
       (and (== i-primitive-id "map/assoc") (== i-arity 3))
       (and (== i-primitive-id "string/concat") (== i-arity -1))
+      (and (== i-primitive-id "account/exists") (== i-arity 1))
+      (and (== i-primitive-id "account/root") (== i-arity 1))
+      (and (== i-primitive-id "account/sequence") (== i-arity 1))
+      (and (== i-primitive-id "account/key") (== i-arity 1))
+      (and (== i-primitive-id "account/controller") (== i-arity 1))
+      (and (== i-primitive-id "account/environment") (== i-arity 1))
+      (and (== i-primitive-id "account/metadata") (== i-arity 1))
+      (and (== i-primitive-id "account/set-key") (== i-arity 1))
+      (and (== i-primitive-id "account/set-controller") (== i-arity 1))
+      (and (== i-primitive-id "account/set-definition-metadata")
+           (== i-arity 2))
       (and (== i-primitive-id "protocol/define") (== i-arity 2))
       (and (== i-primitive-id "protocol/extend") (== i-arity 3))
       (and (== i-primitive-id "protocol/invoke") (== i-arity -1))))
@@ -62,23 +73,23 @@
                      [:ledger/unknown-primitive i-primitive-id])
         (:bytea v-payload) (-/primitive-payload i-primitive-id i-arity)
         (:bytea v-root) (cell/cell-put (codec/canonical-hash 16 v-payload)
-                                        1 16 v-payload)
+                                       1 16 v-payload)
         o-upsert (pg/t:upsert -/Primitive
-                               {:primitive-root v-root
-                                :primitive-id i-primitive-id
-                                :arity i-arity})]
+                              {:primitive-root v-root
+                               :primitive-id i-primitive-id
+                               :arity i-arity})]
     (return v-root)))
 
 (defn.pg primitive-get
   "Returns a whitelisted primitive descriptor by stable protocol id."
   {:added "0.2"}
   [:text i-primitive-id]
-  (let [o-row (pg/t:get -/Primitive {:where {:primitive-id i-primitive-id}})]
-    (return o-row)))
+  (return
+   (pg/t:get -/Primitive {:where {:primitive-id i-primitive-id}})))
 
 (defn.pg primitive-get-root
   "Returns a primitive descriptor by canonical value root."
   {:added "0.2"}
   [:bytea i-primitive-root]
-  (let [o-row (pg/t:get -/Primitive {:where {:primitive-root i-primitive-root}})]
-    (return o-row)))
+  (return
+   (pg/t:get -/Primitive {:where {:primitive-root i-primitive-root}})))
