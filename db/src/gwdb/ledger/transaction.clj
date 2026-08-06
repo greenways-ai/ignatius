@@ -9,7 +9,7 @@
             [gwdb.ledger.state :as state]
             [gwdb.ledger.op :as op]
             [gwdb.ledger.context :as context]
-            [gwdb.ledger.runtime :as runtime]))
+            [gwdb.ledger.protocol-runtime :as protocol-runtime]))
 
 (l/script :postgres
   {:require [[postgres.core :as pg]
@@ -21,7 +21,7 @@
              [gwdb.ledger.state :as state]
              [gwdb.ledger.op :as op]
              [gwdb.ledger.context :as context]
-             [gwdb.ledger.runtime :as runtime]]
+             [gwdb.ledger.protocol-runtime :as protocol-runtime]]
    :config {:dbname "gw-ledger-test"}
    :import [["pgcrypto"]]
    :static {:application ["gw"]
@@ -280,7 +280,8 @@
         _ (pg/assert (-/transaction-valid i-transaction-root i-network
                                           i-previous-state-root)
                      [:ledger/invalid-transaction])
-        o-result (runtime/execute i-context-root (:bytea (:->> o-tx "op_root")))
+        o-result (protocol-runtime/protocol-execute
+                  i-context-root (:bytea (:->> o-tx "op_root")))
         (:text v-status) (:text (:->> o-result "status"))
         (:bytea v-result-root) (:bytea (:->> o-result "value_root"))
         (:bigint v-cost-used) (:bigint (:->> o-result "cost_used"))

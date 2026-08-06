@@ -1,0 +1,50 @@
+(ns ignatius.protocol)
+
+(def protocol-version 1)
+
+(defn constant-operation
+  [value-root]
+  {:op :constant
+   :value-root value-root})
+
+(defn primitive-invocation
+  [primitive-id primitive-arity arguments]
+  {:op :invoke
+   :primitive-id primitive-id
+   :primitive-arity primitive-arity
+   :arguments arguments})
+
+(defn defprotocol-operation
+  "Lowers a validated defprotocol form after its symbol and method map are canonical roots."
+  [protocol-name-root methods-root]
+  (primitive-invocation
+   "protocol/define" 2
+   [(constant-operation protocol-name-root)
+    (constant-operation methods-root)]))
+
+(defn extend-type-operation
+  "Lowers extend-type to a deterministic implementation transition."
+  [protocol-name-root type-root methods-root]
+  (primitive-invocation
+   "protocol/extend" 3
+   [(constant-operation protocol-name-root)
+    (constant-operation type-root)
+    (constant-operation methods-root)]))
+
+(defn protocol-invoke-operation
+  "Lowers a protocol method call. The primitive is variadic after protocol and method roots."
+  [protocol-root method-name-root argument-operations]
+  (primitive-invocation
+   "protocol/invoke" -1
+   (reduce (fn [out operation] (conj out operation))
+           [(constant-operation protocol-root)
+            (constant-operation method-name-root)]
+           argument-operations)))
+
+(defn macro-policy
+  "Macros expand in the pinned compiler before signing; the chain executes only the expansion."
+  []
+  {:form :defmacro
+   :phase :compile
+   :persist [:form-root :macro-function-root :compiler-root :expanded-operation-root]
+   :ledger-executable false})

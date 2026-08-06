@@ -3226,6 +3226,843 @@ CREATE OR REPLACE FUNCTION "gw_ledger".function_valid(
 
 $$ LANGUAGE 'plpgsql';
 
+-- gwdb.ledger.protocol/result-ok [23] 
+CREATE OR REPLACE FUNCTION "gw_ledger".result_ok(
+  i_context_root BYTEA,
+  i_value_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_context JSONB;
+  BEGIN
+    o_context := "gw_ledger".context_get(i_context_root);
+    RETURN jsonb_build_object(
+      'status',
+      'ok',
+      'context_root',
+      i_context_root,
+      'value_root',
+      i_value_root,
+      'cost_used',
+      (o_context ->> 'cost_used')::BIGINT
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/result-error [33] 
+CREATE OR REPLACE FUNCTION "gw_ledger".result_error(
+  i_context_root BYTEA,
+  i_error_code TEXT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_context JSONB;
+    v_cost_used BIGINT;
+  BEGIN
+    o_context := "gw_ledger".context_get(i_context_root);
+    v_cost_used := CASE WHEN o_context IS NULL THEN (0)::BIGINT
+    ELSE (o_context ->> 'cost_used')::BIGINT
+    END;
+    RETURN jsonb_build_object(
+      'status',
+      'error',
+      'context_root',
+      i_context_root,
+      'error',
+      jsonb_build_object('code',i_error_code),
+      'cost_used',
+      v_cost_used
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/keyword-root [46] 
+CREATE OR REPLACE FUNCTION "gw_ledger".keyword_root(
+  i_name TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".put_keyword(i_name);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/record-field [52] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_field(
+  i_record_root BYTEA,
+  i_field TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_get(i_record_root,"gw_ledger".keyword_root(i_field));
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/record-start [58] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_start(
+  i_kind TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_assoc(
+    "gw_ledger".put_map(jsonb_build_array()),
+    "gw_ledger".keyword_root('record/type'),
+    "gw_ledger".keyword_root(i_kind)
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/record-assoc [68] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_assoc(
+  i_record_root BYTEA,
+  i_field TEXT,
+  i_value_root BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_assoc(i_record_root,"gw_ledger".keyword_root(i_field),i_value_root);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/record-kind [75] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_kind(
+  i_record_root BYTEA,
+  i_kind TEXT
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_cell JSONB;
+    v_kind_root BYTEA;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_record_root);
+    IF o_cell IS NULL OR NOT ((o_cell ->> 'type_tag')::SMALLINT = 11) THEN
+      RETURN false;
+    END IF;
+    v_kind_root := "gw_ledger".record_field(i_record_root,'record/type');
+    RETURN v_kind_root = "gw_ledger".keyword_root(i_kind);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-methods-valid-at [86] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_methods_valid_at(
+  i_methods_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    o_arity JSONB;
+      o_name JSONB;
+      v_arity_root BYTEA;
+      v_name TEXT;
+      v_name_root BYTEA;
+  BEGIN
+    v_name_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'key');
+      v_arity_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'value');
+      o_name := "gw_ledger".cell_by_hash(v_name_root);
+      o_arity := "gw_ledger".cell_by_hash(v_arity_root);
+      v_name := CASE WHEN o_name IS NULL THEN ''
+      ELSE encode((o_name ->> 'payload')::BYTEA,'escape')
+      END;
+      IF o_name IS NULL OR o_arity IS NULL OR NOT ((o_name ->> 'type_tag')::SMALLINT = 7) OR NOT ((o_arity ->> 'type_tag')::SMALLINT = 2) OR regexp_match(v_name,'!$') IS NOT NULL OR ("gw_ledger".integer_bigint(v_arity_root) < 1) THEN
+        RETURN false;
+      ELSE
+        RETURN "gw_ledger".protocol_methods_valid_at(i_methods_root,i_position + 1,i_count);
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-methods-valid [113] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_methods_valid(
+  i_methods_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_methods JSONB;
+  BEGIN
+    o_methods := "gw_ledger".cell_by_hash(i_methods_root);
+    RETURN o_methods IS NOT NULL AND ((o_methods ->> 'type_tag')::SMALLINT = 11) AND "gw_ledger".protocol_methods_valid_at(
+      i_methods_root,
+      0,
+      "gw_ledger".cell_ref_count(i_methods_root,'key')
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-put [124] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_put(
+  i_name_root BYTEA,
+  i_methods_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_complete BYTEA;
+    v_named BYTEA;
+    v_record BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".cell_type_tag(i_name_root) = 7) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/protocol_name_not_symbol',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/protocol-name-not-symbol'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".protocol_methods_valid(i_methods_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_protocol_methods',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-protocol-methods'
+      ;
+    END IF;
+    v_record := "gw_ledger".record_start('protocol');
+    v_named := "gw_ledger".record_assoc(v_record,'protocol/name',i_name_root);
+    v_complete := "gw_ledger".record_assoc(v_named,'protocol/methods',i_methods_root);
+    RETURN v_complete;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-valid [139] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_valid(
+  i_protocol_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_name JSONB;
+    v_methods_root BYTEA;
+    v_name_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".record_kind(i_protocol_root,'protocol') THEN
+      RETURN false;
+    END IF;
+    v_name_root := "gw_ledger".record_field(i_protocol_root,'protocol/name');
+    v_methods_root := "gw_ledger".record_field(i_protocol_root,'protocol/methods');
+    o_name := "gw_ledger".cell_by_hash(v_name_root);
+    RETURN o_name IS NOT NULL AND ((o_name ->> 'type_tag')::SMALLINT = 7) AND "gw_ledger".protocol_methods_valid(v_methods_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-method-put [152] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_method_put(
+  i_protocol_root BYTEA,
+  i_name_root BYTEA,
+  i_arity_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_complete BYTEA;
+    v_name BYTEA;
+    v_protocol BYTEA;
+    v_record BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".protocol_valid(i_protocol_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_protocol','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-protocol'
+      ;
+    END IF;
+    v_record := "gw_ledger".record_start('protocol-method');
+    v_protocol := "gw_ledger".record_assoc(v_record,'protocol/root',i_protocol_root);
+    v_name := "gw_ledger".record_assoc(v_protocol,'method/name',i_name_root);
+    v_complete := "gw_ledger".record_assoc(v_name,'method/arity',i_arity_root);
+    RETURN v_complete;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-method-valid [165] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_method_valid(
+  i_method_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_arity_root BYTEA;
+    v_name_root BYTEA;
+    v_protocol_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".record_kind(i_method_root,'protocol-method') THEN
+      RETURN false;
+    END IF;
+    v_protocol_root := "gw_ledger".record_field(i_method_root,'protocol/root');
+    v_name_root := "gw_ledger".record_field(i_method_root,'method/name');
+    v_arity_root := "gw_ledger".record_field(i_method_root,'method/arity');
+    RETURN "gw_ledger".protocol_valid(v_protocol_root) AND ("gw_ledger".cell_type_tag(v_name_root) = 7) AND ("gw_ledger".cell_type_tag(v_arity_root) = 2) AND ("gw_ledger".integer_bigint(v_arity_root) >= 1);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-bindings-available-at [179] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_bindings_available_at(
+  i_account_root BYTEA,
+  i_protocol_root BYTEA,
+  i_methods_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    v_arity_root BYTEA;
+      v_existing BYTEA;
+      v_method_root BYTEA;
+      v_name_root BYTEA;
+  BEGIN
+    v_name_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'key');
+      v_arity_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'value');
+      v_method_root := "gw_ledger".protocol_method_put(i_protocol_root,v_name_root,v_arity_root);
+      v_existing := "gw_ledger".account_value_lookup(i_account_root,v_name_root);
+      IF v_existing IS NULL OR (v_existing = v_method_root) THEN
+        RETURN "gw_ledger".protocol_bindings_available_at(
+          i_account_root,
+          i_protocol_root,
+          i_methods_root,
+          i_position + 1,
+          i_count
+        );
+      ELSE
+        RETURN false;
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/protocol-bind-methods-at [202] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_bind_methods_at(
+  i_account_root BYTEA,
+  i_protocol_root BYTEA,
+  i_methods_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN i_account_root;
+  ELSE
+    DECLARE
+    v_arity_root BYTEA;
+      v_method_root BYTEA;
+      v_name_root BYTEA;
+      v_next_account BYTEA;
+  BEGIN
+    v_name_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'key');
+      v_arity_root := "gw_ledger".cell_ref_child(i_methods_root,i_position,'value');
+      v_method_root := "gw_ledger".protocol_method_put(i_protocol_root,v_name_root,v_arity_root);
+      v_next_account := "gw_ledger".account_value_define(i_account_root,v_name_root,v_method_root);
+      RETURN "gw_ledger".protocol_bind_methods_at(
+        v_next_account,
+        i_protocol_root,
+        i_methods_root,
+        i_position + 1,
+        i_count
+      );
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/define-transition [222] 
+CREATE OR REPLACE FUNCTION "gw_ledger".define_transition(
+  i_context_root BYTEA,
+  i_name_root BYTEA,
+  i_methods_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_context JSONB;
+    v_account_root BYTEA;
+    v_cost INTEGER;
+    v_count INTEGER;
+    v_existing BYTEA;
+    v_next_account BYTEA;
+    v_next_context BYTEA;
+    v_next_state BYTEA;
+    v_protocol_root BYTEA;
+    v_with_protocol BYTEA;
+  BEGIN
+    o_context := "gw_ledger".context_get(i_context_root);
+    IF o_context is null  THEN
+      RETURN "gw_ledger".result_error(i_context_root,'missing-context');
+    END IF;
+    IF NOT "gw_ledger".protocol_methods_valid(i_methods_root) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'invalid-protocol-methods');
+    END IF;
+    v_count := "gw_ledger".cell_ref_count(i_methods_root,'key');
+    v_cost := (4 + (2 * v_count));
+    IF NOT "gw_ledger".context_can_charge(i_context_root,v_cost) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'cost-limit');
+    END IF;
+    v_account_root := "gw_ledger".state_account_root(
+      (o_context ->> 'state_root')::BYTEA,
+      (o_context ->> 'address')::BYTEA
+    );
+    IF v_account_root is null  THEN
+      RETURN "gw_ledger".result_error(i_context_root,'missing-account');
+    END IF;
+    v_protocol_root := "gw_ledger".protocol_put(i_name_root,i_methods_root);
+    v_existing := "gw_ledger".account_value_lookup(v_account_root,i_name_root);
+    IF NOT (v_existing IS NULL OR (v_existing = v_protocol_root)) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol-binding-conflict');
+    END IF;
+    IF NOT "gw_ledger".protocol_bindings_available_at(v_account_root,v_protocol_root,i_methods_root,0,v_count) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol-method-binding-conflict');
+    END IF;
+    v_with_protocol := "gw_ledger".account_value_define(v_account_root,i_name_root,v_protocol_root);
+    v_next_account := "gw_ledger".protocol_bind_methods_at(v_with_protocol,v_protocol_root,i_methods_root,0,v_count);
+    v_next_state := "gw_ledger".state_assoc_account(
+      (o_context ->> 'state_root')::BYTEA,
+      (o_context ->> 'address')::BYTEA,
+      v_next_account,
+      (o_context ->> 'block_height')::BIGINT
+    );
+    v_next_context := "gw_ledger".context_charge(
+      "gw_ledger".context_with_state(i_context_root,v_next_state),
+      v_cost
+    );
+    RETURN "gw_ledger".result_ok(v_next_context,v_protocol_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/type-put [265] 
+CREATE OR REPLACE FUNCTION "gw_ledger".type_put(
+  i_name_root BYTEA,
+  i_representation_tag INTEGER
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_complete BYTEA;
+    v_named BYTEA;
+    v_record BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".cell_type_tag(i_name_root) = 7) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/type_name_not_symbol','data',null))::TEXT,
+        MESSAGE = 'ledger/type-name-not-symbol'
+      ;
+    END IF;
+    IF NOT ((i_representation_tag >= 0) AND (i_representation_tag <= 20)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_representation_tag',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-representation-tag'
+      ;
+    END IF;
+    v_record := "gw_ledger".record_start('type');
+    v_named := "gw_ledger".record_assoc(v_record,'type/name',i_name_root);
+    v_complete := "gw_ledger".record_assoc(
+      v_named,
+      'type/representation-tag',
+      "gw_ledger".put_integer_number(i_representation_tag)
+    );
+    RETURN v_complete;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/type-valid [282] 
+CREATE OR REPLACE FUNCTION "gw_ledger".type_valid(
+  i_type_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_name_root BYTEA;
+    v_tag_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".record_kind(i_type_root,'type') THEN
+      RETURN false;
+    END IF;
+    v_name_root := "gw_ledger".record_field(i_type_root,'type/name');
+    v_tag_root := "gw_ledger".record_field(i_type_root,'type/representation-tag');
+    RETURN ("gw_ledger".cell_type_tag(v_name_root) = 7) AND ("gw_ledger".cell_type_tag(v_tag_root) = 2) AND ("gw_ledger".integer_bigint(v_tag_root) >= 0) AND ("gw_ledger".integer_bigint(v_tag_root) <= 20);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/builtin-type-put [294] 
+CREATE OR REPLACE FUNCTION "gw_ledger".builtin_type_put(
+  i_type_tag INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".type_put(
+    "gw_ledger".put_symbol('hara.type/' || (i_type_tag)::TEXT),
+    i_type_tag
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/typed-value-put [302] 
+CREATE OR REPLACE FUNCTION "gw_ledger".typed_value_put(
+  i_type_root BYTEA,
+  i_value_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_complete BYTEA;
+    v_record BYTEA;
+    v_typed BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".type_valid(i_type_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/missing_type_descriptor',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/missing-type-descriptor'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".cell_by_hash(i_value_root) IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_typed_value','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-typed-value'
+      ;
+    END IF;
+    v_record := "gw_ledger".record_start('typed-value');
+    v_typed := "gw_ledger".record_assoc(v_record,'typed/type',i_type_root);
+    v_complete := "gw_ledger".record_assoc(v_typed,'typed/value',i_value_root);
+    RETURN v_complete;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/typed-value-valid [316] 
+CREATE OR REPLACE FUNCTION "gw_ledger".typed_value_valid(
+  i_typed_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_type_root BYTEA;
+    v_value_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".record_kind(i_typed_root,'typed-value') THEN
+      RETURN false;
+    END IF;
+    v_type_root := "gw_ledger".record_field(i_typed_root,'typed/type');
+    v_value_root := "gw_ledger".record_field(i_typed_root,'typed/value');
+    RETURN "gw_ledger".type_valid(v_type_root) AND "gw_ledger".cell_by_hash(v_value_root) IS NOT NULL;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/value-type-root [327] 
+CREATE OR REPLACE FUNCTION "gw_ledger".value_type_root(
+  i_value_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_value_root);
+    IF o_cell is null  THEN
+      RETURN null;
+    ELSIF "gw_ledger".typed_value_valid(i_value_root) THEN
+      RETURN "gw_ledger".record_field(i_value_root,'typed/type');
+    ELSE
+      RETURN "gw_ledger".builtin_type_put((o_cell ->> 'type_tag')::SMALLINT);
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/implementation-methods-valid-at [339] 
+CREATE OR REPLACE FUNCTION "gw_ledger".implementation_methods_valid_at(
+  i_protocol_methods_root BYTEA,
+  i_methods_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    o_function JSONB;
+      v_arity_root BYTEA;
+      v_function_root BYTEA;
+      v_name_root BYTEA;
+      v_parameter_count INTEGER;
+  BEGIN
+    v_name_root := "gw_ledger".cell_ref_child(i_protocol_methods_root,i_position,'key');
+      v_arity_root := "gw_ledger".cell_ref_child(i_protocol_methods_root,i_position,'value');
+      v_function_root := "gw_ledger".map_get(i_methods_root,v_name_root);
+      o_function := "gw_ledger".function_get(v_function_root);
+      v_parameter_count := CASE WHEN o_function IS NULL THEN -1
+      ELSE "gw_ledger".cell_ref_count((o_function ->> 'parameters_root')::BYTEA,'element')
+      END;
+      IF v_function_root IS NULL OR o_function IS NULL OR NOT "gw_ledger".function_valid(v_function_root) OR NOT (v_parameter_count = "gw_ledger".integer_bigint(v_arity_root)) THEN
+        RETURN false;
+      ELSE
+        RETURN "gw_ledger".implementation_methods_valid_at(i_protocol_methods_root,i_methods_root,i_position + 1,i_count);
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/implementation-methods-valid [368] 
+CREATE OR REPLACE FUNCTION "gw_ledger".implementation_methods_valid(
+  i_protocol_root BYTEA,
+  i_methods_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_methods JSONB;
+    v_count INTEGER;
+    v_protocol_methods_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".protocol_valid(i_protocol_root) THEN
+      RETURN false;
+    END IF;
+    v_protocol_methods_root := "gw_ledger".record_field(i_protocol_root,'protocol/methods');
+    o_methods := "gw_ledger".cell_by_hash(i_methods_root);
+    IF o_methods IS NULL OR NOT ((o_methods ->> 'type_tag')::SMALLINT = 11) THEN
+      RETURN false;
+    END IF;
+    v_count := "gw_ledger".cell_ref_count(v_protocol_methods_root,'key');
+    RETURN (v_count = "gw_ledger".cell_ref_count(i_methods_root,'key')) AND "gw_ledger".implementation_methods_valid_at(v_protocol_methods_root,i_methods_root,0,v_count);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/implementation-put [385] 
+CREATE OR REPLACE FUNCTION "gw_ledger".implementation_put(
+  i_protocol_root BYTEA,
+  i_type_root BYTEA,
+  i_methods_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_complete BYTEA;
+    v_protocol BYTEA;
+    v_record BYTEA;
+    v_type BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".protocol_valid(i_protocol_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_protocol','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-protocol'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".type_valid(i_type_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/missing_type_descriptor',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/missing-type-descriptor'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".implementation_methods_valid(i_protocol_root,i_methods_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_protocol_implementation',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-protocol-implementation'
+      ;
+    END IF;
+    v_record := "gw_ledger".record_start('protocol-implementation');
+    v_protocol := "gw_ledger".record_assoc(v_record,'implementation/protocol',i_protocol_root);
+    v_type := "gw_ledger".record_assoc(v_protocol,'implementation/type',i_type_root);
+    v_complete := "gw_ledger".record_assoc(v_type,'implementation/methods',i_methods_root);
+    RETURN v_complete;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/implementation-valid [405] 
+CREATE OR REPLACE FUNCTION "gw_ledger".implementation_valid(
+  i_implementation_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_methods_root BYTEA;
+    v_protocol_root BYTEA;
+    v_type_root BYTEA;
+  BEGIN
+    IF NOT "gw_ledger".record_kind(i_implementation_root,'protocol-implementation') THEN
+      RETURN false;
+    END IF;
+    v_protocol_root := "gw_ledger".record_field(i_implementation_root,'implementation/protocol');
+    v_type_root := "gw_ledger".record_field(i_implementation_root,'implementation/type');
+    v_methods_root := "gw_ledger".record_field(i_implementation_root,'implementation/methods');
+    RETURN "gw_ledger".type_valid(v_type_root) AND "gw_ledger".implementation_methods_valid(v_protocol_root,v_methods_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/implementation-key-root [422] 
+CREATE OR REPLACE FUNCTION "gw_ledger".implementation_key_root(
+  i_protocol_root BYTEA,
+  i_type_root BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".put_symbol(
+    'ignatius.protocol.impl/' || encode(i_protocol_root,'hex') || '/' || encode(i_type_root,'hex')
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/extend-transition [432] 
+CREATE OR REPLACE FUNCTION "gw_ledger".extend_transition(
+  i_context_root BYTEA,
+  i_protocol_name_root BYTEA,
+  i_type_root BYTEA,
+  i_methods_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_context JSONB;
+    v_account_root BYTEA;
+    v_cost INTEGER;
+    v_count INTEGER;
+    v_existing BYTEA;
+    v_implementation_root BYTEA;
+    v_key_root BYTEA;
+    v_next_account BYTEA;
+    v_next_context BYTEA;
+    v_next_state BYTEA;
+    v_protocol_root BYTEA;
+  BEGIN
+    o_context := "gw_ledger".context_get(i_context_root);
+    IF o_context is null  THEN
+      RETURN "gw_ledger".result_error(i_context_root,'missing-context');
+    END IF;
+    v_account_root := "gw_ledger".state_account_root(
+      (o_context ->> 'state_root')::BYTEA,
+      (o_context ->> 'address')::BYTEA
+    );
+    IF v_account_root is null  THEN
+      RETURN "gw_ledger".result_error(i_context_root,'missing-account');
+    END IF;
+    v_protocol_root := "gw_ledger".account_value_lookup(v_account_root,i_protocol_name_root);
+    IF v_protocol_root IS NULL OR NOT "gw_ledger".protocol_valid(v_protocol_root) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'missing-protocol');
+    END IF;
+    IF NOT "gw_ledger".implementation_methods_valid(v_protocol_root,i_methods_root) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'invalid-protocol-implementation');
+    END IF;
+    v_count := "gw_ledger".cell_ref_count(i_methods_root,'key');
+    v_cost := (4 + (2 * v_count));
+    IF NOT "gw_ledger".context_can_charge(i_context_root,v_cost) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'cost-limit');
+    END IF;
+    v_implementation_root := "gw_ledger".implementation_put(v_protocol_root,i_type_root,i_methods_root);
+    v_key_root := "gw_ledger".implementation_key_root(v_protocol_root,i_type_root);
+    v_existing := "gw_ledger".account_value_lookup(v_account_root,v_key_root);
+    IF NOT (v_existing IS NULL OR (v_existing = v_implementation_root)) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol-implementation-conflict');
+    END IF;
+    v_next_account := "gw_ledger".account_value_define(v_account_root,v_key_root,v_implementation_root);
+    v_next_state := "gw_ledger".state_assoc_account(
+      (o_context ->> 'state_root')::BYTEA,
+      (o_context ->> 'address')::BYTEA,
+      v_next_account,
+      (o_context ->> 'block_height')::BIGINT
+    );
+    v_next_context := "gw_ledger".context_charge(
+      "gw_ledger".context_with_state(i_context_root,v_next_state),
+      v_cost
+    );
+    RETURN "gw_ledger".result_ok(v_next_context,v_implementation_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/resolve-method [483] 
+CREATE OR REPLACE FUNCTION "gw_ledger".resolve_method(
+  i_state_root BYTEA,
+  i_address_root BYTEA,
+  i_protocol_root BYTEA,
+  i_method_name_root BYTEA,
+  i_receiver_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_account_root BYTEA;
+    v_implementation_root BYTEA;
+    v_key_root BYTEA;
+    v_methods_root BYTEA;
+    v_type_root BYTEA;
+  BEGIN
+    v_account_root := "gw_ledger".state_account_root(i_state_root,i_address_root);
+    v_type_root := "gw_ledger".value_type_root(i_receiver_root);
+    v_key_root := CASE WHEN v_type_root IS NULL THEN null
+    ELSE "gw_ledger".implementation_key_root(i_protocol_root,v_type_root)
+    END;
+    v_implementation_root := CASE WHEN v_account_root IS NULL OR v_key_root IS NULL THEN null
+    ELSE "gw_ledger".account_value_lookup(v_account_root,v_key_root)
+    END;
+    v_methods_root := CASE WHEN "gw_ledger".implementation_valid(v_implementation_root) THEN "gw_ledger".record_field(v_implementation_root,'implementation/methods')
+    ELSE null
+    END;
+    RETURN CASE WHEN v_methods_root IS NULL THEN null
+    ELSE "gw_ledger".map_get(v_methods_root,i_method_name_root)
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol/method-arity [506] 
+CREATE OR REPLACE FUNCTION "gw_ledger".method_arity(
+  i_protocol_root BYTEA,
+  i_method_name_root BYTEA
+) RETURNS BIGINT AS $$
+
+  DECLARE
+    v_arity_root BYTEA;
+    v_methods_root BYTEA;
+  BEGIN
+    v_methods_root := CASE WHEN "gw_ledger".protocol_valid(i_protocol_root) THEN "gw_ledger".record_field(i_protocol_root,'protocol/methods')
+    ELSE null
+    END;
+    v_arity_root := CASE WHEN v_methods_root IS NULL THEN null
+    ELSE "gw_ledger".map_get(v_methods_root,i_method_name_root)
+    END;
+    RETURN CASE WHEN v_arity_root IS NULL THEN -1
+    ELSE "gw_ledger".integer_bigint(v_arity_root)
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- gwdb.ledger.op/Op [18] 
@@ -3788,11 +4625,11 @@ CREATE OR REPLACE FUNCTION "gw_ledger".primitive_id_valid(
   i_arity INTEGER
 ) RETURNS BOOLEAN AS $$
 
-  SELECT ((i_primitive_id = 'integer/add') AND (i_arity = 2)) OR ((i_primitive_id = 'integer/multiply') AND (i_arity = 2));
+  SELECT ((i_primitive_id = 'integer/add') AND (i_arity = 2)) OR ((i_primitive_id = 'integer/multiply') AND (i_arity = 2)) OR ((i_primitive_id = 'protocol/define') AND (i_arity = 2)) OR ((i_primitive_id = 'protocol/extend') AND (i_arity = 3)) OR ((i_primitive_id = 'protocol/invoke') AND (i_arity = -1));
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.primitive/primitive-payload [33] 
+-- gwdb.ledger.primitive/primitive-payload [36] 
 CREATE OR REPLACE FUNCTION "gw_ledger".primitive_payload(
   i_primitive_id TEXT,
   i_arity INTEGER
@@ -3802,7 +4639,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.primitive/primitive-put [39] 
+-- gwdb.ledger.primitive/primitive-put [42] 
 CREATE OR REPLACE FUNCTION "gw_ledger".primitive_put(
   i_primitive_id TEXT,
   i_arity INTEGER
@@ -3840,7 +4677,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".primitive_put(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.primitive/primitive-get [54] 
+-- gwdb.ledger.primitive/primitive-get [57] 
 CREATE OR REPLACE FUNCTION "gw_ledger".primitive_get(
   i_primitive_id TEXT
 ) RETURNS JSONB AS $$
@@ -3858,7 +4695,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".primitive_get(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.primitive/primitive-get-root [61] 
+-- gwdb.ledger.primitive/primitive-get-root [64] 
 CREATE OR REPLACE FUNCTION "gw_ledger".primitive_get_root(
   i_primitive_root BYTEA
 ) RETURNS JSONB AS $$
@@ -4850,6 +5687,285 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
+-- gwdb.ledger.protocol-runtime/arguments-ok [27] 
+CREATE OR REPLACE FUNCTION "gw_ledger".arguments_ok(
+  i_context_root BYTEA,
+  i_roots JSONB
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_context JSONB;
+  BEGIN
+    o_context := "gw_ledger".context_get(i_context_root);
+    RETURN jsonb_build_object(
+      'status',
+      'ok',
+      'context_root',
+      i_context_root,
+      'roots',
+      i_roots,
+      'cost_used',
+      (o_context ->> 'cost_used')::BIGINT
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/evaluate-arguments-at [37] 
+CREATE OR REPLACE FUNCTION "gw_ledger".evaluate_arguments_at(
+  i_context_root BYTEA,
+  i_op_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER,
+  i_roots JSONB
+) RETURNS JSONB AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN "gw_ledger".arguments_ok(i_context_root,i_roots);
+  ELSE
+    DECLARE
+    o_result JSONB;
+      v_child_root BYTEA;
+  BEGIN
+    v_child_root := "gw_ledger".op_child_root(i_op_root,i_position);
+      o_result := "gw_ledger".execute(i_context_root,v_child_root);
+      IF (o_result ->> 'status')::TEXT = 'error' THEN
+        RETURN o_result;
+      ELSE
+        DECLARE
+        v_next_roots JSONB;
+      BEGIN
+        v_next_roots := (i_roots || jsonb_build_array(encode((o_result ->> 'value_root')::BYTEA,'hex')));
+          RETURN "gw_ledger".evaluate_arguments_at(
+            (o_result ->> 'context_root')::BYTEA,
+            i_op_root,
+            i_position + 1,
+            i_count,
+            v_next_roots
+          );
+      END;
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/evaluate-arguments [60] 
+CREATE OR REPLACE FUNCTION "gw_ledger".evaluate_arguments(
+  i_context_root BYTEA,
+  i_op_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".evaluate_arguments_at(
+    i_context_root,
+    i_op_root,
+    0,
+    "gw_ledger".cell_ref_count(i_op_root,'op-child'),
+    jsonb_build_array()
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/argument-root [69] 
+CREATE OR REPLACE FUNCTION "gw_ledger".argument_root(
+  i_roots JSONB,
+  i_position INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN decode((i_roots ->> i_position)::TEXT,'hex');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/copy-argument-tail-at [75] 
+CREATE OR REPLACE FUNCTION "gw_ledger".copy_argument_tail_at(
+  i_roots JSONB,
+  i_position INTEGER,
+  i_count INTEGER,
+  i_out JSONB
+) RETURNS JSONB AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN i_out;
+  ELSE
+    RETURN "gw_ledger".copy_argument_tail_at(
+      i_roots,
+      i_position + 1,
+      i_count,
+      i_out || jsonb_build_array((i_roots ->> i_position)::TEXT)
+    );
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/execute-protocol-define [87] 
+CREATE OR REPLACE FUNCTION "gw_ledger".execute_protocol_define(
+  i_context_root BYTEA,
+  i_op_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_arguments JSONB;
+    v_count INTEGER;
+    v_roots JSONB;
+  BEGIN
+    v_count := "gw_ledger".cell_ref_count(i_op_root,'op-child');
+    IF NOT (v_count = 2) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol/define-arity');
+    END IF;
+    o_arguments := "gw_ledger".evaluate_arguments(i_context_root,i_op_root);
+    IF (o_arguments ->> 'status')::TEXT = 'error' THEN
+      RETURN o_arguments;
+    END IF;
+    v_roots := (o_arguments ->> 'roots')::JSONB;
+    RETURN "gw_ledger".define_transition(
+      (o_arguments ->> 'context_root')::BYTEA,
+      "gw_ledger".argument_root(v_roots,0),
+      "gw_ledger".argument_root(v_roots,1)
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/execute-protocol-extend [104] 
+CREATE OR REPLACE FUNCTION "gw_ledger".execute_protocol_extend(
+  i_context_root BYTEA,
+  i_op_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_arguments JSONB;
+    v_count INTEGER;
+    v_roots JSONB;
+  BEGIN
+    v_count := "gw_ledger".cell_ref_count(i_op_root,'op-child');
+    IF NOT (v_count = 3) THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol/extend-arity');
+    END IF;
+    o_arguments := "gw_ledger".evaluate_arguments(i_context_root,i_op_root);
+    IF (o_arguments ->> 'status')::TEXT = 'error' THEN
+      RETURN o_arguments;
+    END IF;
+    v_roots := (o_arguments ->> 'roots')::JSONB;
+    RETURN "gw_ledger".extend_transition(
+      (o_arguments ->> 'context_root')::BYTEA,
+      "gw_ledger".argument_root(v_roots,0),
+      "gw_ledger".argument_root(v_roots,1),
+      "gw_ledger".argument_root(v_roots,2)
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/execute-protocol-invoke [122] 
+CREATE OR REPLACE FUNCTION "gw_ledger".execute_protocol_invoke(
+  i_context_root BYTEA,
+  i_op_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_arguments JSONB;
+    o_context JSONB;
+    o_function JSONB;
+    v_argument_context_root BYTEA;
+    v_call_arity INTEGER;
+    v_call_context BYTEA;
+    v_count INTEGER;
+    v_declared_arity BIGINT;
+    v_function_context BYTEA;
+    v_function_root BYTEA;
+    v_local_roots JSONB;
+    v_locals_root BYTEA;
+    v_method_name_root BYTEA;
+    v_parameter_count INTEGER;
+    v_protocol_root BYTEA;
+    v_receiver_root BYTEA;
+    v_roots JSONB;
+  BEGIN
+    v_count := "gw_ledger".cell_ref_count(i_op_root,'op-child');
+    IF v_count < 3 THEN
+      RETURN "gw_ledger".result_error(i_context_root,'protocol/invoke-arity');
+    END IF;
+    o_arguments := "gw_ledger".evaluate_arguments(i_context_root,i_op_root);
+    IF (o_arguments ->> 'status')::TEXT = 'error' THEN
+      RETURN o_arguments;
+    END IF;
+    v_roots := (o_arguments ->> 'roots')::JSONB;
+    v_argument_context_root := (o_arguments ->> 'context_root')::BYTEA;
+    o_context := "gw_ledger".context_get(v_argument_context_root);
+    v_protocol_root := "gw_ledger".argument_root(v_roots,0);
+    v_method_name_root := "gw_ledger".argument_root(v_roots,1);
+    v_receiver_root := "gw_ledger".argument_root(v_roots,2);
+    v_declared_arity := "gw_ledger".method_arity(v_protocol_root,v_method_name_root);
+    v_call_arity := (v_count - 2);
+    IF NOT (v_declared_arity = v_call_arity) THEN
+      RETURN "gw_ledger".result_error(v_argument_context_root,'protocol/method-arity');
+    END IF;
+    v_function_root := "gw_ledger".resolve_method(
+      (o_context ->> 'state_root')::BYTEA,
+      (o_context ->> 'address')::BYTEA,
+      v_protocol_root,
+      v_method_name_root,
+      v_receiver_root
+    );
+    o_function := "gw_ledger".function_get(v_function_root);
+    IF v_function_root IS NULL OR o_function IS NULL OR NOT "gw_ledger".function_valid(v_function_root) THEN
+      RETURN "gw_ledger".result_error(v_argument_context_root,'missing-protocol-implementation');
+    END IF;
+    v_parameter_count := "gw_ledger".cell_ref_count((o_function ->> 'parameters_root')::BYTEA,'element');
+    IF NOT (v_parameter_count = v_call_arity) THEN
+      RETURN "gw_ledger".result_error(v_argument_context_root,'protocol/function-arity');
+    END IF;
+    IF NOT "gw_ledger".context_can_charge(v_argument_context_root,3) THEN
+      RETURN "gw_ledger".result_error(v_argument_context_root,'cost-limit');
+    END IF;
+    v_local_roots := "gw_ledger".copy_argument_tail_at(v_roots,2,v_count,jsonb_build_array());
+    v_locals_root := "gw_ledger".put_vector(v_local_roots);
+    v_function_context := "gw_ledger".context_with_locals(
+      v_argument_context_root,
+      v_locals_root,
+      (o_context ->> 'depth')::INTEGER + 1
+    );
+    v_call_context := "gw_ledger".context_charge(v_function_context,3);
+    RETURN "gw_ledger".execute(v_call_context,(o_function ->> 'body_root')::BYTEA);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.protocol-runtime/protocol-execute [177] 
+CREATE OR REPLACE FUNCTION "gw_ledger".protocol_execute(
+  i_context_root BYTEA,
+  i_op_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_op JSONB;
+    o_primitive JSONB;
+    v_kind TEXT;
+    v_primitive_id TEXT;
+  BEGIN
+    o_op := "gw_ledger".op_get(i_op_root);
+    v_kind := CASE WHEN o_op IS NULL THEN ''
+    ELSE (o_op ->> 'op_kind')::TEXT
+    END;
+    o_primitive := CASE WHEN v_kind = 'invoke' THEN "gw_ledger".primitive_get_root((o_op ->> 'function_root')::BYTEA)
+    ELSE null
+    END;
+    v_primitive_id := CASE WHEN o_primitive IS NULL THEN ''
+    ELSE (o_primitive ->> 'primitive_id')::TEXT
+    END;
+    IF v_primitive_id = 'protocol/define' THEN
+      RETURN "gw_ledger".execute_protocol_define(i_context_root,i_op_root);
+    ELSIF v_primitive_id = 'protocol/extend' THEN
+      RETURN "gw_ledger".execute_protocol_extend(i_context_root,i_op_root);
+    ELSIF v_primitive_id = 'protocol/invoke' THEN
+      RETURN "gw_ledger".execute_protocol_invoke(i_context_root,i_op_root);
+    ELSE
+      RETURN "gw_ledger".execute(i_context_root,i_op_root);
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- gwdb.ledger.transaction/Transaction [30] 
@@ -5387,7 +6503,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".transaction_execute(
         MESSAGE = 'ledger/invalid-transaction'
       ;
     END IF;
-    o_result := "gw_ledger".execute(i_context_root,(o_tx ->> 'op_root')::BYTEA);
+    o_result := "gw_ledger".protocol_execute(i_context_root,(o_tx ->> 'op_root')::BYTEA);
     v_status := (o_result ->> 'status')::TEXT;
     v_result_root := (o_result ->> 'value_root')::BYTEA;
     v_cost_used := (o_result ->> 'cost_used')::BIGINT;
@@ -5413,7 +6529,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".transaction_execute(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.transaction/transaction-execute-signed [300] 
+-- gwdb.ledger.transaction/transaction-execute-signed [301] 
 CREATE OR REPLACE FUNCTION "gw_ledger".transaction_execute_signed(
   i_transaction_root BYTEA,
   i_network TEXT,

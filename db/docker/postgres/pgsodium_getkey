@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+key="${IGNATIUS_PGSODIUM_ROOT_KEY:-${HESTIA_PGSODIUM_ROOT_KEY:-}}"
+: "${key:?missing IGNATIUS_PGSODIUM_ROOT_KEY}"
+printf '%s\n' "$key"

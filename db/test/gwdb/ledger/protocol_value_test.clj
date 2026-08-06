@@ -1,0 +1,140 @@
+(ns gwdb.ledger.protocol-value-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.function :as function]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.protocol :as protocol]
+            [gwdb.ledger.protocol-runtime :as protocol-runtime]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.function :as function]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.protocol :as protocol]
+             [gwdb.ledger.protocol-runtime :as protocol-runtime]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+(defn.pg ^{:- [:jsonb]}
+  protocol-roundtrip
+  []
+  (let [(:bytea v-address) (value/put-symbol "agent")
+        (:bytea v-protocol-name) (value/put-symbol "IMeow")
+        (:bytea v-method-name) (value/put-symbol "meow")
+        (:bytea v-methods)
+        (value/put-map
+         (pg/jsonb-build-array
+          (pg/encode v-method-name "hex")
+          (pg/encode (value/put-integer "1") "hex")))
+        (:bytea v-state)
+        (state/state-assoc-account
+         (state/state-genesis) v-address
+         (account/account-value-create (value/put-nil)) 0)
+        (:bytea v-context)
+        (context/context-create
+         v-state v-address v-address nil nil 0 0
+         (value/put-vector (pg/jsonb-build-array)) 0 100 0)
+        (:bytea v-define-op)
+        (op/invoke
+         (primitive/primitive-put "protocol/define" 2)
+         (pg/jsonb-build-array
+          (pg/encode (op/constant v-protocol-name) "hex")
+          (pg/encode (op/constant v-methods) "hex")))
+        o-defined (protocol-runtime/protocol-execute v-context v-define-op)
+        (:bytea v-defined-context)
+        (:bytea (:->> o-defined "context_root"))
+        o-defined-context (context/context-get v-defined-context)
+        (:bytea v-defined-account)
+        (state/state-account-root
+         (:bytea (:->> o-defined-context "state_root")) v-address)
+        (:bytea v-protocol-root)
+        (account/account-value-lookup v-defined-account v-protocol-name)
+        (:bytea v-method-root)
+        (account/account-value-lookup v-defined-account v-method-name)
+        (:bytea v-type-root)
+        (protocol/type-put (value/put-symbol "example/Cat") 14)
+        (:bytea v-function-root)
+        (function/function-put
+         (value/put-vector
+          (pg/jsonb-build-array
+           (pg/encode (value/put-symbol "self") "hex")))
+         (op/local 0 0)
+         (value/put-vector (pg/jsonb-build-array))
+         (value/put-map (pg/jsonb-build-array)))
+        (:bytea v-implementations)
+        (value/put-map
+         (pg/jsonb-build-array
+          (pg/encode v-method-name "hex")
+          (pg/encode v-function-root "hex")))
+        (:bytea v-extend-op)
+        (op/invoke
+         (primitive/primitive-put "protocol/extend" 3)
+         (pg/jsonb-build-array
+          (pg/encode (op/constant v-protocol-name) "hex")
+          (pg/encode (op/constant v-type-root) "hex")
+          (pg/encode (op/constant v-implementations) "hex")))
+        o-extended (protocol-runtime/protocol-execute v-defined-context v-extend-op)
+        (:bytea v-extended-context)
+        (:bytea (:->> o-extended "context_root"))
+        (:bytea v-receiver)
+        (protocol/typed-value-put v-type-root (value/put-string "Miso"))
+        (:bytea v-call-op)
+        (op/invoke
+         (primitive/primitive-put "protocol/invoke" -1)
+         (pg/jsonb-build-array
+          (pg/encode (op/constant v-protocol-root) "hex")
+          (pg/encode (op/constant v-method-name) "hex")
+          (pg/encode (op/constant v-receiver) "hex")))
+        o-called (protocol-runtime/protocol-execute v-extended-context v-call-op)]
+    (return
+     (pg/jsonb-build-object
+      "define_status" (:text (:->> o-defined "status"))
+      "extend_status" (:text (:->> o-extended "status"))
+      "call_status" (:text (:->> o-called "status"))
+      "protocol_valid" (protocol/protocol-valid v-protocol-root)
+      "method_valid" (protocol/protocol-method-valid v-method-root)
+      "dispatch_value_matches"
+      (== (:bytea (:->> o-called "value_root")) v-receiver)))))
+
+^{:refer gwdb.ledger.protocol/define-transition :added "0.5"}
+(fact "defprotocol, extend-type and protocol invocation are canonical state transitions"
+  (!.pg
+   [:select (:->> (-/protocol-roundtrip) "define_status")]
+   [:select (:->> (-/protocol-roundtrip) "extend_status")]
+   [:select (:->> (-/protocol-roundtrip) "call_status")]
+   [:select (:->> (-/protocol-roundtrip) "protocol_valid")]
+   [:select (:->> (-/protocol-roundtrip) "method_valid")]
+   [:select (:->> (-/protocol-roundtrip) "dispatch_value_matches")])
+  => '("ok" "ok" "ok" true true true))

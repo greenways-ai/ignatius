@@ -31,10 +31,15 @@ jobs:
             exit 1
           fi
 
-      - name: Install build tools
+      - name: Install Leiningen
         run: |
-          sudo apt-get update
-          sudo apt-get install -y leiningen
+          set -euo pipefail
+          curl -fsSL --retry 4 --retry-delay 2 \
+            https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein \
+            -o /tmp/lein
+          chmod +x /tmp/lein
+          sudo mv /tmp/lein /usr/local/bin/lein
+          lein version
 
       - name: Materialize pinned source dependencies
         run: make setup
@@ -43,6 +48,15 @@ jobs:
         run: |
           make db-sql db-contracts
           git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
+
+      - name: Test language protocol round trip
+        run: |
+          docker build \
+            -t gw-ledger-postgres:15-pgsodium \
+            -f db/Dockerfile.postgres15-pgsodium \
+            db
+          cd db
+          lein test :only gwdb.ledger.protocol-value-test
 
       - name: Test SHA extension
         run: make extension-sha-test

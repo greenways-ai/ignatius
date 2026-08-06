@@ -24,11 +24,14 @@
            :%% :sql
            :props [:immutable :parallel-safe]}
   primitive-id-valid
-  "Initial closed callable whitelist; no stored value can select arbitrary SQL."
+  "Closed callable whitelist; protocol intrinsics remain deterministic ledger operations."
   {:added "0.2"}
   [:text i-primitive-id :integer i-arity]
   (or (and (== i-primitive-id "integer/add") (== i-arity 2))
-      (and (== i-primitive-id "integer/multiply") (== i-arity 2))))
+      (and (== i-primitive-id "integer/multiply") (== i-arity 2))
+      (and (== i-primitive-id "protocol/define") (== i-arity 2))
+      (and (== i-primitive-id "protocol/extend") (== i-arity 3))
+      (and (== i-primitive-id "protocol/invoke") (== i-arity -1))))
 
 (defn.pg ^{:- [:bytea]}
   primitive-payload
