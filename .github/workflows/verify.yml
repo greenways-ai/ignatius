@@ -57,7 +57,9 @@ jobs:
             db
           cd db
           lein update-in :dependencies conj \
-            '[org.clojure/core.rrb-vector "0.1.2"]' -- \
+            '[org.clojure/core.rrb-vector "0.1.2"]' \
+            update-in :dependencies conj \
+            '[org.apache.commons/commons-math3 "3.6.1"]' -- \
             test :only gwdb.ledger.protocol-value-test
 
       - name: Test SHA extension
