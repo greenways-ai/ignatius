@@ -46,6 +46,14 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
+      - name: Report pinned generator toolchain
+        run: |
+          set -euo pipefail
+          java -version
+          lein version
+          printf 'Hara:       %s\n' "$(git -C .local/hara.lang rev-parse HEAD)"
+          printf 'Foundation: %s\n' "$(git -C db/checkouts/foundation rev-parse HEAD)"
+
       - name: Build pinned Hara CLI
         run: |
           set -euo pipefail
@@ -101,15 +109,67 @@ jobs:
           git commit -m "Keep protocol intrinsics at the signed adapter"
           git push origin "HEAD:${TARGET_BRANCH}"
 
-      - name: Generate SQL and contracts
+      - name: Generate SQL
         run: |
           set +e
-          make db-sql db-contracts
-          status=$?
+          set -o pipefail
+          rm -f /tmp/clojure-*.edn /tmp/db-sql.log
+          make db-sql 2>&1 | tee /tmp/db-sql.log
+          status=${PIPESTATUS[0]}
+          set -e
           if [ "$status" -ne 0 ]; then
+            echo "::group::SQL generator output"
+            tail -n 400 /tmp/db-sql.log
             for report in /tmp/clojure-*.edn; do
               [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
             done
+            echo "::endgroup::"
+            python - "SQL generation" /tmp/db-sql.log /tmp/clojure-*.edn <<'PY'
+          import glob
+          import pathlib
+          import sys
+
+          stage = sys.argv[1]
+          paths = [pathlib.Path(sys.argv[2])]
+          paths.extend(pathlib.Path(path) for path in glob.glob('/tmp/clojure-*.edn'))
+          text = '\n'.join(path.read_text(errors='replace') for path in paths if path.exists())
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          message = ' | '.join(lines[-35:])[-6000:]
+          message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::error title={stage} failed::{message}')
+          PY
+            exit "$status"
+          fi
+
+      - name: Generate client contracts
+        run: |
+          set +e
+          set -o pipefail
+          rm -f /tmp/clojure-*.edn /tmp/db-contracts.log
+          make db-contracts 2>&1 | tee /tmp/db-contracts.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Contract generator output"
+            tail -n 400 /tmp/db-contracts.log
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            echo "::endgroup::"
+            python - "Client contract generation" /tmp/db-contracts.log /tmp/clojure-*.edn <<'PY'
+          import glob
+          import pathlib
+          import sys
+
+          stage = sys.argv[1]
+          paths = [pathlib.Path(sys.argv[2])]
+          paths.extend(pathlib.Path(path) for path in glob.glob('/tmp/clojure-*.edn'))
+          text = '\n'.join(path.read_text(errors='replace') for path in paths if path.exists())
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          message = ' | '.join(lines[-35:])[-6000:]
+          message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::error title={stage} failed::{message}')
+          PY
             exit "$status"
           fi
 
