@@ -31,10 +31,15 @@ jobs:
             exit 1
           fi
 
-      - name: Install build tools
+      - name: Install Leiningen
         run: |
-          sudo apt-get update
-          sudo apt-get install -y leiningen
+          set -euo pipefail
+          curl -fsSL --retry 4 --retry-delay 2 \
+            https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein \
+            -o /tmp/lein
+          chmod +x /tmp/lein
+          sudo mv /tmp/lein /usr/local/bin/lein
+          lein version
 
       - name: Materialize pinned source dependencies
         run: make setup
