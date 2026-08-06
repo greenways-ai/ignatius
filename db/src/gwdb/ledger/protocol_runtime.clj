@@ -3,6 +3,7 @@
             [postgres.core :as pg]
             [gwdb.ledger.account-runtime :as account-runtime]
             [gwdb.ledger.actor-runtime :as actor-runtime]
+            [gwdb.ledger.contract-runtime :as contract-runtime]
             [gwdb.ledger.cell :as cell]
             [gwdb.ledger.context :as context]
             [gwdb.ledger.function :as function]
@@ -16,6 +17,7 @@
   {:require [[postgres.core :as pg]
              [gwdb.ledger.account-runtime :as account-runtime]
              [gwdb.ledger.actor-runtime :as actor-runtime]
+             [gwdb.ledger.contract-runtime :as contract-runtime]
              [gwdb.ledger.cell :as cell]
              [gwdb.ledger.context :as context]
              [gwdb.ledger.function :as function]
@@ -215,8 +217,8 @@
 
 (defn.pg ^{:- [:jsonb]}
   protocol-execute
-  "Signed adapter for protocol, account and actor transitions."
-  {:added "0.8"}
+  "Signed adapter for protocol, account, actor and reducer-contract transitions."
+  {:added "0.9"}
   [:bytea i-context-root :bytea i-op-root]
   (let [o-op (op/op-get i-op-root)
         (:text v-kind)
@@ -230,7 +232,11 @@
         (:text v-primitive-id)
         (pg/case [o-primitive :is-null] ""
                  :else (:text (:->> o-primitive "primitive_id")))]
-    (cond (actor-runtime/actor-special i-op-root)
+    (cond (contract-runtime/contract-special i-op-root)
+          (return
+           (contract-runtime/execute i-context-root i-op-root))
+
+          (actor-runtime/actor-special i-op-root)
           (return (actor-runtime/execute i-context-root i-op-root))
 
           (account-runtime/account-primitive-id v-primitive-id)

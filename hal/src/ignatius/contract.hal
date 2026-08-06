@@ -1,0 +1,74 @@
+(ns ignatius.contract)
+
+(def contract-format-version 1)
+
+(defn constant-operation
+  [value-root]
+  {:op :constant
+   :value-root value-root})
+
+(defn template-descriptor
+  "Canonical compiler output before HCV1 encoding and publication."
+  [name version publisher init-root transition-root views-root
+   source-root compiler-root runtime-root event-schema-root state-schema-root]
+  {:record/type :contract/template
+   :contract/name name
+   :contract/version version
+   :contract/publisher publisher
+   :contract/init init-root
+   :contract/transition transition-root
+   :contract/views views-root
+   :contract/source source-root
+   :contract/compiler compiler-root
+   :contract/runtime runtime-root
+   :contract/event-schema event-schema-root
+   :contract/state-schema state-schema-root
+   :contract/format-version contract-format-version})
+
+(defn publish-operation
+  "Publishes an exact template root under a publisher-local symbolic alias."
+  [template-operation alias-operation]
+  {:op :special
+   :special "contract/publish"
+   :arguments [template-operation alias-operation]})
+
+(defn open-operation
+  "Creates a contract instance by applying the template's pure init function."
+  [template-operation parameters-operation]
+  {:op :special
+   :special "contract/open"
+   :arguments [template-operation parameters-operation]})
+
+(defn submit-operation
+  "Applies a signed event against an exact expected contract head."
+  [contract-operation expected-head-operation event-operation]
+  {:op :special
+   :special "contract/apply"
+   :arguments
+   [contract-operation expected-head-operation event-operation]})
+
+(defn simulate-operation
+  "Runs the reducer and returns a hypothetical state without advancing the head."
+  [contract-operation event-operation]
+  {:op :special
+   :special "contract/simulate"
+   :arguments [contract-operation event-operation]})
+
+(defn state-operation
+  [contract-operation]
+  {:op :special
+   :special "contract/state"
+   :arguments [contract-operation]})
+
+(defn history-operation
+  [contract-operation]
+  {:op :special
+   :special "contract/history"
+   :arguments [contract-operation]})
+
+(defn view-operation
+  [contract-operation view-symbol-root]
+  {:op :special
+   :special "contract/view"
+   :value-root view-symbol-root
+   :arguments [contract-operation]})
