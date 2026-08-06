@@ -49,5 +49,14 @@ jobs:
           make db-sql db-contracts
           git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
 
+      - name: Test language protocol round trip
+        run: |
+          docker build \
+            -t gw-ledger-postgres:15-pgsodium \
+            -f db/Dockerfile.postgres15-pgsodium \
+            db
+          cd db
+          lein test :only gwdb.ledger.protocol-value-test
+
       - name: Test SHA extension
         run: make extension-sha-test
