@@ -1,0 +1,77 @@
+(ns ignatius.convex)
+
+(def profile-version 1)
+
+(defn constant-operation
+  [value-root]
+  {:op :constant
+   :value-root value-root})
+
+(defn primitive-invocation
+  [primitive-id primitive-arity arguments]
+  {:op :invoke
+   :primitive-id primitive-id
+   :primitive-arity primitive-arity
+   :arguments arguments})
+
+(defn deploy-operation
+  "Lowers deploy with the callable method symbols declared by the initializer."
+  [initializer-operation callable-symbols-root]
+  {:op :special
+   :special "actor/deploy"
+   :value-root callable-symbols-root
+   :arguments [initializer-operation]})
+
+(defn actor-call-operation
+  "Lowers a stateful call. The target is evaluated before the method arguments."
+  [target-operation method-symbol-root argument-operations]
+  {:op :special
+   :special "actor/call"
+   :value-root method-symbol-root
+   :arguments
+   (reduce (fn [out operation] (conj out operation))
+           [target-operation]
+           argument-operations)})
+
+(defn actor-query-operation
+  "Lowers a read-only actor call; callee state is discarded after execution."
+  [target-operation method-symbol-root argument-operations]
+  {:op :special
+   :special "actor/query"
+   :value-root method-symbol-root
+   :arguments
+   (reduce (fn [out operation] (conj out operation))
+           [target-operation]
+           argument-operations)})
+
+(defn callable-metadata-operation
+  "Attaches callable metadata to an already-defined account symbol."
+  [method-symbol-root metadata-root]
+  (primitive-invocation
+   "account/set-definition-metadata" 2
+   [(constant-operation method-symbol-root)
+    (constant-operation metadata-root)]))
+
+(defn convex-profile
+  "Source-level profile committed as the transaction runtime root."
+  []
+  {:profile/name 'convex.compat
+   :profile/version profile-version
+   :bindings
+   {'+ ["integer/add" 2]
+    '- ["integer/subtract" 2]
+    '* ["integer/multiply" 2]
+    '= ["value/equal" 2]
+    'not ["boolean/not" 1]
+    'vector ["vector/new" -1]
+    'count ["vector/count" 1]
+    'get ["map/get" 2]
+    'assoc ["map/assoc" 3]
+    'str ["string/concat" -1]
+    'account ["account/root" 1]
+    'account-key ["account/key" 1]
+    'account-controller ["account/controller" 1]}
+   :operations
+   {'deploy "actor/deploy"
+    'call "actor/call"
+    'query "actor/query"}})
