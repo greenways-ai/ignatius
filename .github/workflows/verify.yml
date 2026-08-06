@@ -47,7 +47,16 @@ jobs:
         run: make setup
 
       - name: Generate SQL and contracts
-        run: make db-sql db-contracts
+        run: |
+          set +e
+          make db-sql db-contracts
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            exit "$status"
+          fi
 
       - name: Commit regenerated runtime artefacts
         env:
