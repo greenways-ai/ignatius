@@ -46,6 +46,21 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
+      - name: Remove host-language forward declaration
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! grep -q '^(declare execute)$' db/src/gwdb/ledger/runtime_v2.clj; then
+            exit 0
+          fi
+          sed -i '/^(declare execute)$/d' db/src/gwdb/ledger/runtime_v2.clj
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/src/gwdb/ledger/runtime_v2.clj
+          git commit -m "Remove obsolete runtime forward declaration"
+          git push origin "HEAD:${TARGET_BRANCH}"
+
       - name: Generate SQL and contracts
         run: make db-sql db-contracts
 
