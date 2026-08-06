@@ -26,8 +26,9 @@ adding a new storage codec, a multi-parent commit DAG, or a portable VM.
 
 ## State model
 
-The contract state separates stable logical identities from exact immutable
-content roots:
+The contract separates stable logical identities from exact immutable content
+roots and keeps both current indexes and a directly queryable transition
+timeline:
 
 ```clojure
 {:record/type :timeline/build
@@ -42,10 +43,22 @@ content roots:
   bob true}
 
  :timeline/status :active
+
+ ;; current state
  :timeline/processes {}
  :timeline/artifacts {}
- :timeline/reviews {}}
+ :timeline/reviews {}
+
+ ;; immutable version and transition indexes
+ :timeline/artifact-versions {}
+ :timeline/entries {}
+ :timeline/latest-entry nil}
 ```
+
+Ordinary maps are sufficient for this first slice. HPT1 remains a later
+optimization for workloads that demonstrate a real flat-map bottleneck.
+
+## Process runs
 
 A process run is addressed by a stable `:process/id` and pins its exact
 definition, inputs, outputs and execution receipt:
@@ -64,7 +77,13 @@ definition, inputs, outputs and execution receipt:
  :process/completed verified-completion-provenance}
 ```
 
-An artifact entry maps a stable ID to one exact version:
+Starting and completing the process also creates separate transition entries.
+The current process index is therefore convenient to query without losing the
+event-level history.
+
+## Artifact identities and versions
+
+`:timeline/artifacts` maps each stable artifact ID to its current exact version:
 
 ```clojure
 {:record/type :timeline/artifact-version
@@ -72,16 +91,65 @@ An artifact entry maps a stable ID to one exact version:
  :artifact/kind :scene
  :artifact/root scene-root-B
  :artifact/previous-root scene-root-A
- :artifact/parent-roots [scene-root-A]
+ :artifact/source-roots [texture-root]
  :artifact/process-id "lighting-pass-17"
  :artifact/schema-root scene-schema-root
  :artifact/metadata {:label "Lighting pass"}
  :artifact/published verified-publication-provenance}
 ```
 
-The old root remains immutable and reachable through the event and contract
-history. Updating the stable artifact ID requires the caller to supply the exact
-current `:artifact/previous-root`; a stale value is rejected.
+`:timeline/artifact-versions` retains every accepted version under the stable ID
+and exact root:
+
+```clojure
+{"scene/main"
+ {scene-root-A version-A
+  scene-root-B version-B}}
+```
+
+The caller supplies `:artifact/previous-root` as an optimistic concurrency
+expectation. The reducer checks it against the current accepted root and writes
+the stored `:artifact/previous-root` from state, not from unverified lineage
+claims. A first version has a `nil` immediate predecessor but no synthetic
+`nil` member in a parent collection.
+
+`:artifact/source-roots` are separate domain provenance: they identify other
+immutable inputs used to derive the version. They do not replace the reducer-
+derived immediate predecessor.
+
+A root already recorded for the same stable artifact cannot be reused to
+overwrite an earlier version record.
+
+## Queryable transition timeline
+
+Every accepted transition is indexed by the verified transaction root. When an
+internal execution context has no transaction root, the verified previous
+contract head is used as the fallback entry ID.
+
+```clojure
+{:record/type :timeline/artifact-version
+ :timeline/entry-id tx-publish-B
+ :timeline/previous-entry-id tx-publish-A
+ ...}
+```
+
+The state stores:
+
+```clojure
+{:timeline/latest-entry tx-complete
+ :timeline/entries
+ {tx-start process-start-entry
+  tx-publish-A artifact-A-entry
+  tx-publish-B artifact-B-entry
+  tx-review review-entry
+  tx-complete process-complete-entry}}
+```
+
+Following `:timeline/previous-entry-id` from `:timeline/latest-entry` yields the
+accepted timeline in reverse order. This avoids requiring a vector-append
+primitive in the frozen PostgreSQL runtime while still making the complete
+build directly queryable. The surrounding contract history independently pins
+the corresponding state and commit roots.
 
 ## Events
 
@@ -108,14 +176,15 @@ rather than trusting signer or time fields supplied by the payload.
    :artifact/kind :scene
    :artifact/root scene-root-B
    :artifact/previous-root scene-root-A
-   :artifact/parent-roots [scene-root-A]
+   :artifact/source-roots [texture-root]
    :artifact/schema-root scene-schema-root
    :artifact/metadata {:label "Lighting pass"}
    :process/id "lighting-pass-17"})
 ```
 
 For an artifact's first version, `:artifact/previous-root` is `nil`. Subsequent
-updates must name the exact current root.
+updates must name the exact current root. The producing process must already
+exist in the timeline.
 
 ### Record a review
 
@@ -169,7 +238,7 @@ global Ignatius state.
 
 ### AI processes
 
-- process definition root: exact agent/workflow/model/tool contract;
+- process definition root: exact agent, workflow, model and tool contract;
 - inputs: prompt, context, source artifact and capability roots;
 - outputs: generated document, scene, code, evaluation or tool-result roots;
 - process receipt: model call, tool execution and effect evidence;
@@ -181,10 +250,10 @@ global Ignatius state.
 - artifact ID: stable scene, DOM, asset or layer name;
 - artifact root: exact immutable graph version;
 - process run: import, generation, layout, shader, animation or rendering pass;
-- parent roots: source versions used to derive the new graph.
+- source roots: other graph, asset and configuration versions used by the pass.
 
-Large stable-node indexes and structural merges are separate roadmap work; the
-v1 timeline can already pin whole graph roots and their production history.
+Large stable-node indexes and structural merges are separate roadmap work. The
+v1 timeline already pins whole graph roots and their production history.
 
 ### Documents as workflows
 
@@ -195,26 +264,47 @@ v1 timeline can already pin whole graph roots and their production history.
 
 Document editing algorithms, private-room policy and product UX remain in Hestia
 or another application. Ignatius supplies the generic signed process and
-artifact record underneath them.
+artifact records underneath them.
 
 ## Publication and views
 
 Compile and publish `ignatius.timeline` as an ordinary reducer template with:
 
 ```text
-init          -> ignatius.timeline/init
-apply-event   -> ignatius.timeline/apply-event
-views         -> summary, processes, artifacts, reviews
+init              -> ignatius.timeline/init
+apply-event       -> ignatius.timeline/apply-event
+
+views:
+summary           -> current workspace summary
+processes         -> current process runs
+artifacts         -> current artifact versions
+artifact-versions -> complete per-artifact version index
+reviews           -> signed review records
+entries           -> transaction-keyed transition entries
+latest-entry      -> latest accepted transition record
 ```
 
-An instance is opened with a workspace descriptor and participant map, then
-advanced through normal `contract/submit` calls.
+Every view remains a pure one-argument function over contract state.
+
+## CI and runtime compatibility
+
+The repository builds the exact Hara revision pinned in `versions.edn` and runs:
+
+```shell
+make hal-check
+make hal-test
+```
+
+The timeline deliberately uses the frozen runtime's existing map and equality
+operations. Transition order is represented as a linked map rather than relying
+on a new vector mutation primitive.
 
 ## Deliberate v1 limits
 
 - One contract instance has one linear authoritative head.
 - Participants are fixed by the initial parameters.
-- Process, artifact and review indexes are ordinary HCV1 maps.
+- Process, artifact, version, review and timeline indexes are ordinary HCV1
+  maps.
 - The reducer records supplied execution-receipt roots but does not yet derive
   required capabilities or execute effects.
 - It does not define document OT, scene merge, DOM merge or AI orchestration

@@ -46,6 +46,23 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
+      - name: Build pinned Hara CLI
+        run: |
+          set -euo pipefail
+          cargo build \
+            --locked \
+            --release \
+            --bin hara \
+            --manifest-path .local/hara.lang/rust/Cargo.toml
+
+      - name: Check and test portable HAL
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.local/hara.lang/rust/target/release:$PATH"
+          hara --version
+          make hal-check
+          make hal-test
+
       - name: Keep protocol intrinsics at the top-level adapter
         env:
           TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
