@@ -54,7 +54,7 @@ jobs:
           docker build \
             -t gw-ledger-postgres:15-pgsodium \
             -f db/Dockerfile.postgres15-pgsodium \
-            db
+            .
           cd db
           lein test :only gwdb.ledger.protocol-value-test
 
