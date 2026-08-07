@@ -1,0 +1,204 @@
+(ns ignatius.workspace-admission-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-admission :as admission]))
+
+(def workspace-id "world/orbital-station")
+(def origin-root "account/alice")
+
+(def author-evidence
+  (record/ledger-evidence
+   {:ledger/signer origin-root
+    :ledger/transaction-root "transaction/root"
+    :ledger/timestamp 1700000000
+    :ledger/previous-head-root "head/root"
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil}))
+
+(defn root-valid?
+  [root commit]
+  (= root (get-in commit [:record/extensions :test/root])))
+
+(defn candidate
+  [root candidate-workspace parents state-root]
+  (workspace/commit-candidate
+   {:workspace/id candidate-workspace
+    :workspace/root nil
+    :commit/parent-roots parents
+    :commit/state-root state-root
+    :commit/operation-root
+    (if (= 0 (count parents))
+      nil
+      (str "operation/" root))
+    :commit/merge-base-root nil
+    :commit/merge-policy-root nil
+    :commit/author-evidence author-evidence
+    :commit/execution-provenance nil
+    :commit/metadata {}
+    :record/extensions {:test/root root}}))
+
+(def c0 (candidate "C0" workspace-id [] "W0"))
+(def c1 (candidate "C1" workspace-id ["C0"] "W1"))
+(def c2 (candidate "C2" workspace-id ["C0"] "W2"))
+(def c3 (candidate "C3" workspace-id ["C1"] "W3"))
+(def x0 (candidate "X0" "world/other" [] "WX"))
+
+(def store-0 (workspace/commit-store))
+(def store-c0
+  (get
+   (workspace/register-commit root-valid? store-0 "C0" c0)
+   :ok))
+(def store-c1
+  (get
+   (workspace/register-commit root-valid? store-c0 "C1" c1)
+   :ok))
+(def store-c2
+  (get
+   (workspace/register-commit root-valid? store-c1 "C2" c2)
+   :ok))
+(def store-c3
+  (get
+   (workspace/register-commit root-valid? store-c2 "C3" c3)
+   :ok))
+(def store-all
+  (get
+   (workspace/register-commit root-valid? store-c3 "X0" x0)
+   :ok))
+
+(def create-intent
+  (admission/personal-ref-update-intent
+   workspace-id origin-root nil "C0" {:device "laptop"} {}))
+
+(def advance-intent
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "C0" "C1" {} {}))
+
+(def later-intent
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "C1" "C3" {} {}))
+
+(def unknown-desired
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "C0" "UNKNOWN" {} {}))
+
+(def unknown-expected
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "UNKNOWN" "C1" {} {}))
+
+(def non-fast-forward
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "C1" "C2" {} {}))
+
+(def wrong-workspace
+  (admission/personal-ref-update-intent
+   workspace-id origin-root nil "X0" {} {}))
+
+(def no-op
+  (admission/personal-ref-update-intent
+   workspace-id origin-root "C1" "C1" {} {}))
+
+(def tampered-scope
+  (assoc create-intent :ref/scope "workspace/other"))
+
+(def tampered-name
+  (assoc create-intent :ref/name "main"))
+
+(def tampered-authorization
+  (assoc create-intent :ref/authorization-root "account/bob"))
+
+(def tampered-policy
+  (assoc create-intent :ref/policy :shared-main-v1))
+
+(def valid-create
+  (admission/validate-personal-ref-update
+   store-all origin-root create-intent))
+
+(def valid-advance
+  (admission/validate-personal-ref-update
+   store-all origin-root advance-intent))
+
+(def valid-later
+  (admission/validate-personal-ref-update
+   store-all origin-root later-intent))
+
+(def results
+  [(test/check "personal scope is derived from the workspace"
+               (get create-intent :ref/scope)
+               "workspace/world/orbital-station")
+   (test/check "personal name is derived from the verified origin"
+               (get create-intent :ref/name)
+               "user/account/alice")
+   (test/check "authorization is the verified origin"
+               (get create-intent :ref/authorization-root)
+               origin-root)
+   (test/check "the first authority policy is explicit"
+               (get create-intent :ref/policy)
+               :personal-fast-forward-v1)
+   (test/check "a verified genesis may create the personal ref"
+               [(get valid-create :error)
+                (get valid-create :ref/desired-root)]
+               [nil "C0"])
+   (test/check "one-parent descendants may advance the personal ref"
+               (get valid-advance :error)
+               nil)
+   (test/check "later descendants remain valid fast-forwards"
+               (get valid-later :error)
+               nil)
+   (test/check "clients cannot inject another scope"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-scope)
+                :error)
+               :workspace/ref-scope-not-derived)
+   (test/check "the personal policy cannot write main"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-name)
+                :error)
+               :workspace/ref-name-not-personal)
+   (test/check "authorization cannot differ from the signed origin"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-authorization)
+                :error)
+               :workspace/ref-authorization-not-origin)
+   (test/check "an unrecognized policy cannot be smuggled into the intent"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-policy)
+                :error)
+               :workspace/unsupported-ref-policy)
+   (test/check "desired roots must be verified commits"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root unknown-desired)
+                :error)
+               :workspace/desired-commit-not-found)
+   (test/check "non-nil expected roots must be verified commits"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root unknown-expected)
+                :error)
+               :workspace/expected-commit-not-found)
+   (test/check "desired commits must belong to the named workspace"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root wrong-workspace)
+                :error)
+               :workspace/desired-commit-workspace-mismatch)
+   (test/check "sibling branches are not personal fast-forwards"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root non-fast-forward)
+                :error)
+               :workspace/non-fast-forward-ref-update)
+   (test/check "no-op updates do not produce meaningless receipts"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root no-op)
+                :error)
+               :workspace/noop-ref-update)])
+
+(test/print-results results)
