@@ -23,41 +23,14 @@ jobs:
 
           path = Path("hal/src/ignatius/workspace_review.hal")
           text = path.read_text()
-
-          replacements = {
-              '''(defn decision-valid?
-  "Checks the portable public decision text."
-  [decision]
-  (or (= decision "approve")
-      (= decision "reject")
-      (= decision "withdraw")))''': '''(defn decision-valid?
-  "Checks the portable public decision text and always returns a boolean."
-  [decision]
-  (if (or (= decision "approve")
-          (= decision "reject")
-          (= decision "withdraw"))
-    true
-    false))''',
-              '''(defn decision-value-valid?
-  "Checks one decoded canonical review decision value."
-  [decision]
-  (or (= decision :approve)
-      (= decision :reject)
-      (= decision :withdraw)))''': '''(defn decision-value-valid?
-  "Checks one decoded canonical decision and always returns a boolean."
-  [decision]
-  (if (or (= decision :approve)
-          (= decision :reject)
-          (= decision :withdraw))
-    true
-    false))''',
-          }
-
-          for old, new in replacements.items():
+          old_public = '(defn decision-valid?\n  "Checks the portable public decision text."\n  [decision]\n  (or (= decision "approve")\n      (= decision "reject")\n      (= decision "withdraw")))'
+          new_public = '(defn decision-valid?\n  "Checks the portable public decision text and always returns a boolean."\n  [decision]\n  (if (or (= decision "approve")\n          (= decision "reject")\n          (= decision "withdraw"))\n    true\n    false))'
+          old_value = '(defn decision-value-valid?\n  "Checks one decoded canonical review decision value."\n  [decision]\n  (or (= decision :approve)\n      (= decision :reject)\n      (= decision :withdraw)))'
+          new_value = '(defn decision-value-valid?\n  "Checks one decoded canonical decision and always returns a boolean."\n  [decision]\n  (if (or (= decision :approve)\n          (= decision :reject)\n          (= decision :withdraw))\n    true\n    false))'
+          for old, new in ((old_public, new_public), (old_value, new_value)):
               if old not in text:
-                  raise SystemExit(f"missing review predicate marker:\n{old}")
+                  raise SystemExit(f"missing review predicate marker: {old[:40]}")
               text = text.replace(old, new, 1)
-
           path.write_text(text)
           PY
 
