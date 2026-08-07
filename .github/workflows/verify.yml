@@ -163,7 +163,7 @@ jobs:
           git commit -m "Regenerate ledger artefacts"
           git push origin "HEAD:${TARGET_BRANCH}"
 
-      - name: Test signed workspace reviews, proposals, refs, commits and runtime contracts
+      - name: Test signed workspace policies, reviews, proposals, refs, commits and runtime contracts
         run: |
           docker build \
             -t gw-ledger-postgres:15-pgsodium \
@@ -177,6 +177,7 @@ jobs:
                  gwdb.ledger.workspace-admission-test \
                  gwdb.ledger.workspace-proposal-test \
                  gwdb.ledger.workspace-review-test \
+                 gwdb.ledger.workspace-acceptance-test \
                  gwdb.ledger.scoped-ref-test \
                  gwdb.ledger.protocol-value-test \
                  gwdb.ledger.runtime-v2-demo-test \
