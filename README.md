@@ -253,12 +253,15 @@ V1 requires every listed reviewer to have a current `:approve` decision.
 Superseded approvals, rejects, withdrawals, unpublished candidates, non-genesis
 bootstrap attempts and non-fast-forward updates are rejected before ref CAS.
 
-The first signed PostgreSQL slice publishes the immutable policy at `policy/main`
-through account sequencing, Ed25519 verification, exact create-only CAS, a
-receipt whose result is the policy root, and one linear block. It does not yet
-advance `main`. See
-[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md) and
-[`docs/workspace-main-policy-admission.md`](docs/workspace-main-policy-admission.md).
+PostgreSQL first publishes the immutable policy at `policy/main` through account
+sequencing, Ed25519 verification and create-only CAS. A separate signed
+acceptance then verifies the selected policy, proposed candidate, exact current
+approval roots and commit ancestry before advancing `main`. The transaction
+receipt returns the immutable acceptance root while the ref selects the candidate
+root; stale main updates consume neither sequence nor block height. See
+[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md),
+[`docs/workspace-main-policy-admission.md`](docs/workspace-main-policy-admission.md),
+and [`docs/workspace-main-admission.md`](docs/workspace-main-admission.md).
 
 ## Convex-style accounts and actors
 
