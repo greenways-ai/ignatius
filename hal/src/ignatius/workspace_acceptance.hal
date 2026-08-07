@@ -1,0 +1,620 @@
+(ns ignatius.workspace-acceptance
+  (:require [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-proposal :as proposal]
+            [ignatius.workspace-review :as review]))
+
+(def main-policy-claim :workspace/main-policy-v1)
+(def main-acceptance-claim :workspace/main-accepted-v1)
+(def unanimous-review-policy :unanimous-reviewers-v1)
+(def main-acceptance-policy :main-acceptance-v1)
+(def main-policy-ref-name "policy/main")
+
+(defn policy-id
+  [workspace-id authority-root]
+  (str "main-policy/" workspace-id "/" authority-root))
+
+(defn acceptance-id
+  [workspace-id candidate-root]
+  (str "main-acceptance/" workspace-id "/" candidate-root))
+
+(defn issuer-evidence
+  [authority-root recorded-at]
+  (record/ledger-evidence
+   {:ledger/signer authority-root
+    :ledger/transaction-root nil
+    :ledger/timestamp recorded-at
+    :ledger/previous-head-root nil
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil
+    :record/extensions {}}))
+
+(defn evidence-shape-error
+  [authority-root recorded-at evidence]
+  (cond
+    (= false (record/record-valid? evidence))
+    :workspace/invalid-acceptance-evidence
+
+    (not (= :ledger/evidence (get evidence :record/type)))
+    :workspace/invalid-acceptance-evidence
+
+    (not (= authority-root (get evidence :ledger/signer)))
+    :workspace/acceptance-authority-not-derived
+
+    (not (= recorded-at (get evidence :ledger/timestamp)))
+    :workspace/acceptance-recorded-at-mismatch
+
+    (not (= nil (get evidence :ledger/transaction-root)))
+    :workspace/acceptance-transaction-evidence-not-supported
+
+    (not (= nil (get evidence :ledger/previous-head-root)))
+    :workspace/acceptance-head-evidence-not-supported
+
+    (not (= nil (get evidence :ledger/contract-root)))
+    :workspace/acceptance-contract-evidence-not-supported
+
+    (not (= nil (get evidence :ledger/template-root)))
+    :workspace/acceptance-template-evidence-not-supported
+
+    (not (= nil (get evidence :ledger/global-state-root)))
+    :workspace/acceptance-state-evidence-not-supported
+
+    (not (= {} (record/map-or-empty
+                (get evidence :record/extensions))))
+    :workspace/acceptance-evidence-extensions-not-supported
+
+    :else nil))
+
+(defn nil-root?
+  [roots]
+  (reduce
+   (fn [found root]
+     (if found
+       true
+       (= nil root)))
+   false
+   roots))
+
+(defn main-policy-value
+  "Defines one immutable v1 authority and exact reviewer set for `main`.
+
+  The reviewer vector is ordered and therefore part of policy identity. V1 is
+  deliberately unanimous: every listed reviewer must have one exact, current
+  approval root for the candidate being accepted."
+  [workspace-id authority-root reviewer-roots recorded-at]
+  (record/attestation-claim
+   {:attestation/id (policy-id workspace-id authority-root)
+    :attestation/claim main-policy-claim
+    :attestation/subject-id workspace-id
+    :attestation/subject-root workspace-id
+    :attestation/context-root nil
+    :attestation/evidence-roots []
+    :attestation/process-run-id nil
+    :attestation/process-run-root nil
+    :attestation/issuer-evidence
+    (issuer-evidence authority-root recorded-at)
+    :attestation/scope :workspace/main
+    :attestation/audience :workspace/reviewers
+    :attestation/valid-from recorded-at
+    :attestation/valid-until nil
+    :attestation/revokes-root nil
+    :attestation/metadata {}
+    :record/extensions
+    {:workspace/policy-kind unanimous-review-policy
+     :workspace/reviewer-roots reviewer-roots}}))
+
+(defn policy-authority
+  [policy]
+  (get-in policy
+          [:attestation/issuer-evidence :ledger/signer]))
+
+(defn policy-recorded-at
+  [policy]
+  (get-in policy
+          [:attestation/issuer-evidence :ledger/timestamp]))
+
+(defn policy-reviewer-roots
+  [policy]
+  (record/vector-or-empty
+   (get-in policy
+           [:record/extensions :workspace/reviewer-roots])))
+
+(defn policy-shape-error
+  [workspace-id authority-root policy]
+  (let [recorded-at (policy-recorded-at policy)
+        reviewer-roots (policy-reviewer-roots policy)
+        extensions (record/map-or-empty
+                    (get policy :record/extensions))
+        evidence-error
+        (evidence-shape-error
+         authority-root recorded-at
+         (get policy :attestation/issuer-evidence))]
+    (cond
+      (= false (record/record-valid? policy))
+      :workspace/invalid-main-policy-record
+
+      (not (= :attestation/claim (get policy :record/type)))
+      :workspace/invalid-main-policy-record
+
+      (not (= (policy-id workspace-id authority-root)
+              (get policy :attestation/id)))
+      :workspace/main-policy-id-not-derived
+
+      (not (= main-policy-claim
+              (get policy :attestation/claim)))
+      :workspace/unsupported-main-policy-claim
+
+      (not (= workspace-id
+              (get policy :attestation/subject-id)))
+      :workspace/main-policy-subject-id-mismatch
+
+      (not (= workspace-id
+              (get policy :attestation/subject-root)))
+      :workspace/main-policy-subject-root-mismatch
+
+      (not (= nil (get policy :attestation/context-root)))
+      :workspace/main-policy-context-not-supported
+
+      (not (= [] (record/vector-or-empty
+                  (get policy :attestation/evidence-roots))))
+      :workspace/main-policy-evidence-roots-not-supported
+
+      (not (= nil (get policy :attestation/process-run-id)))
+      :workspace/main-policy-process-not-supported
+
+      (not (= nil (get policy :attestation/process-run-root)))
+      :workspace/main-policy-process-not-supported
+
+      (not (= nil evidence-error))
+      evidence-error
+
+      (not (= :workspace/main
+              (get policy :attestation/scope)))
+      :workspace/main-policy-scope-mismatch
+
+      (not (= :workspace/reviewers
+              (get policy :attestation/audience)))
+      :workspace/main-policy-audience-mismatch
+
+      (not (= recorded-at
+              (get policy :attestation/valid-from)))
+      :workspace/main-policy-valid-from-mismatch
+
+      (not (= nil (get policy :attestation/valid-until)))
+      :workspace/main-policy-expiry-not-supported
+
+      (not (= nil (get policy :attestation/revokes-root)))
+      :workspace/main-policy-revocation-not-supported
+
+      (not (= {} (record/map-or-empty
+                  (get policy :attestation/metadata))))
+      :workspace/main-policy-metadata-not-supported
+
+      (= 0 (count reviewer-roots))
+      :workspace/main-policy-missing-reviewers
+
+      (nil-root? reviewer-roots)
+      :workspace/main-policy-nil-reviewer
+
+      (workspace/duplicate-parent-roots? reviewer-roots)
+      :workspace/main-policy-duplicate-reviewer
+
+      (not (= extensions
+              {:workspace/policy-kind unanimous-review-policy
+               :workspace/reviewer-roots reviewer-roots}))
+      :workspace/main-policy-extensions-not-supported
+
+      :else nil)))
+
+(defn policy-store
+  []
+  {:workspace/main-policy-store-version 1
+   :workspace/main-policies {}})
+
+(defn policies
+  [store]
+  (get store :workspace/main-policies))
+
+(defn policy-at
+  [store root]
+  (get (policies store) root))
+
+(defn register-policy
+  "Indexes one decoded immutable policy after canonical-root verification."
+  [verify-root store root workspace-id authority-root policy]
+  (let [error
+        (policy-shape-error workspace-id authority-root policy)
+        existing (policy-at store root)]
+    (cond
+      (= nil root)
+      {:error :workspace/missing-main-policy-root}
+
+      (not (= nil error))
+      {:error error}
+
+      (= false (= true (verify-root root policy)))
+      {:error :workspace/main-policy-root-mismatch
+       :policy/root root}
+
+      (not (= nil existing))
+      (if (= existing policy)
+        {:ok store
+         :policy/root root
+         :policy/value policy
+         :policy/created false}
+        {:error :workspace/main-policy-root-conflict
+         :policy/root root
+         :policy/existing existing
+         :policy/proposed policy})
+
+      :else
+      {:ok
+       (assoc store :workspace/main-policies
+              (assoc (policies store) root policy))
+       :policy/root root
+       :policy/value policy
+       :policy/created true})))
+
+(defn main-acceptance-value
+  "Pins one exact proposed candidate, policy, review vector and main CAS edge."
+  [workspace-id authority-root expected-main-root candidate-root
+   policy-root review-roots recorded-at]
+  (record/attestation-claim
+   {:attestation/id (acceptance-id workspace-id candidate-root)
+    :attestation/claim main-acceptance-claim
+    :attestation/subject-id (proposal/proposal-ref-name candidate-root)
+    :attestation/subject-root candidate-root
+    :attestation/context-root policy-root
+    :attestation/evidence-roots review-roots
+    :attestation/process-run-id nil
+    :attestation/process-run-root nil
+    :attestation/issuer-evidence
+    (issuer-evidence authority-root recorded-at)
+    :attestation/scope :workspace/main
+    :attestation/audience :workspace/members
+    :attestation/valid-from recorded-at
+    :attestation/valid-until nil
+    :attestation/revokes-root nil
+    :attestation/metadata {}
+    :record/extensions
+    {:workspace/id workspace-id
+     :ref/expected-root expected-main-root
+     :ref/desired-root candidate-root
+     :ref/policy main-acceptance-policy}}))
+
+(defn acceptance-authority
+  [acceptance]
+  (get-in acceptance
+          [:attestation/issuer-evidence :ledger/signer]))
+
+(defn acceptance-recorded-at
+  [acceptance]
+  (get-in acceptance
+          [:attestation/issuer-evidence :ledger/timestamp]))
+
+(defn acceptance-review-roots
+  [acceptance]
+  (record/vector-or-empty
+   (get acceptance :attestation/evidence-roots)))
+
+(defn acceptance-expected-root
+  [acceptance]
+  (get-in acceptance
+          [:record/extensions :ref/expected-root]))
+
+(defn acceptance-candidate-root
+  [acceptance]
+  (get acceptance :attestation/subject-root))
+
+(defn acceptance-policy-root
+  [acceptance]
+  (get acceptance :attestation/context-root))
+
+(defn acceptance-shape-error
+  [workspace-id authority-root acceptance]
+  (let [candidate-root (acceptance-candidate-root acceptance)
+        expected-root (acceptance-expected-root acceptance)
+        policy-root (acceptance-policy-root acceptance)
+        review-roots (acceptance-review-roots acceptance)
+        recorded-at (acceptance-recorded-at acceptance)
+        extensions (record/map-or-empty
+                    (get acceptance :record/extensions))
+        evidence-error
+        (evidence-shape-error
+         authority-root recorded-at
+         (get acceptance :attestation/issuer-evidence))]
+    (cond
+      (= false (record/record-valid? acceptance))
+      :workspace/invalid-main-acceptance-record
+
+      (not (= :attestation/claim (get acceptance :record/type)))
+      :workspace/invalid-main-acceptance-record
+
+      (= nil candidate-root)
+      :workspace/missing-main-candidate-root
+
+      (= nil policy-root)
+      :workspace/missing-main-policy-root
+
+      (not (= (acceptance-id workspace-id candidate-root)
+              (get acceptance :attestation/id)))
+      :workspace/main-acceptance-id-not-derived
+
+      (not (= main-acceptance-claim
+              (get acceptance :attestation/claim)))
+      :workspace/unsupported-main-acceptance-claim
+
+      (not (= (proposal/proposal-ref-name candidate-root)
+              (get acceptance :attestation/subject-id)))
+      :workspace/main-acceptance-subject-id-mismatch
+
+      (= 0 (count review-roots))
+      :workspace/main-acceptance-missing-reviews
+
+      (nil-root? review-roots)
+      :workspace/main-acceptance-nil-review-root
+
+      (workspace/duplicate-parent-roots? review-roots)
+      :workspace/main-acceptance-duplicate-review-root
+
+      (not (= nil (get acceptance :attestation/process-run-id)))
+      :workspace/main-acceptance-process-not-supported
+
+      (not (= nil (get acceptance :attestation/process-run-root)))
+      :workspace/main-acceptance-process-not-supported
+
+      (not (= nil evidence-error))
+      evidence-error
+
+      (not (= :workspace/main
+              (get acceptance :attestation/scope)))
+      :workspace/main-acceptance-scope-mismatch
+
+      (not (= :workspace/members
+              (get acceptance :attestation/audience)))
+      :workspace/main-acceptance-audience-mismatch
+
+      (not (= recorded-at
+              (get acceptance :attestation/valid-from)))
+      :workspace/main-acceptance-valid-from-mismatch
+
+      (not (= nil (get acceptance :attestation/valid-until)))
+      :workspace/main-acceptance-expiry-not-supported
+
+      (not (= nil (get acceptance :attestation/revokes-root)))
+      :workspace/main-acceptance-revocation-not-supported
+
+      (not (= {} (record/map-or-empty
+                  (get acceptance :attestation/metadata))))
+      :workspace/main-acceptance-metadata-not-supported
+
+      (= expected-root candidate-root)
+      :workspace/noop-main-acceptance
+
+      (not (= extensions
+              {:workspace/id workspace-id
+               :ref/expected-root expected-root
+               :ref/desired-root candidate-root
+               :ref/policy main-acceptance-policy}))
+      :workspace/main-acceptance-extensions-not-supported
+
+      :else nil)))
+
+(defn current-ref-root
+  [backend workspace-id name authorization-root]
+  (get-in
+   (storage/memory-get-ref
+    backend
+    (storage/ref-read-request
+     (workspace/workspace-scope workspace-id)
+     name
+     authorization-root))
+   [:ok :ref/root]))
+
+(defn policy-published?
+  [backend workspace-id policy-root authority-root]
+  (= policy-root
+     (current-ref-root
+      backend workspace-id main-policy-ref-name authority-root)))
+
+(defn proposal-published?
+  [backend workspace-id candidate-root authority-root]
+  (= candidate-root
+     (current-ref-root
+      backend workspace-id
+      (proposal/proposal-ref-name candidate-root)
+      authority-root)))
+
+(defn review-evidence-error-at
+  [review-store-value backend workspace-id candidate-root
+   reviewer-roots review-roots position]
+  (if (>= position (count reviewer-roots))
+    nil
+    (let [reviewer-root (get reviewer-roots position)
+          review-root (get review-roots position)
+          decision (review/review-at review-store-value review-root)
+          shape-error
+          (if (= nil decision)
+            nil
+            (review/review-shape-error
+             candidate-root reviewer-root decision))
+          current-root
+          (current-ref-root
+           backend workspace-id
+           (review/review-ref-name candidate-root reviewer-root)
+           reviewer-root)]
+      (cond
+        (= nil decision)
+        :workspace/main-acceptance-review-not-found
+
+        (not (= nil shape-error))
+        :workspace/invalid-main-acceptance-review
+
+        (not (= :approve (get decision :review/decision)))
+        :workspace/main-acceptance-review-not-approved
+
+        (not (= review-root current-root))
+        :workspace/main-acceptance-review-not-current
+
+        :else
+        (review-evidence-error-at
+         review-store-value backend workspace-id candidate-root
+         reviewer-roots review-roots (+ position 1))))))
+
+(defn review-evidence-error
+  [review-store-value backend workspace-id candidate-root
+   reviewer-roots review-roots]
+  (if (not (= (count reviewer-roots) (count review-roots)))
+    :workspace/main-acceptance-review-count-mismatch
+    (review-evidence-error-at
+     review-store-value backend workspace-id candidate-root
+     reviewer-roots review-roots 0)))
+
+(defn validate-policy-publication
+  [policy-store-value workspace-id authority-root policy-root]
+  (let [policy (policy-at policy-store-value policy-root)]
+    (cond
+      (= nil policy)
+      {:error :workspace/main-policy-not-found}
+
+      (not (= nil
+              (policy-shape-error
+               workspace-id authority-root policy)))
+      {:error :workspace/invalid-main-policy}
+
+      :else
+      {:ok policy
+       :policy/root policy-root
+       :policy/reviewer-roots (policy-reviewer-roots policy)
+       :policy/authority-root authority-root})))
+
+(defn publish-memory-policy
+  "Creates the immutable `policy/main` selection exactly once."
+  [policy-store-value backend workspace-id authority-root policy-root]
+  (let [validation
+        (validate-policy-publication
+         policy-store-value workspace-id authority-root policy-root)]
+    (if (not (= nil (get validation :error)))
+      validation
+      (storage/memory-compare-and-set-ref
+       backend
+       (storage/ref-update-request
+        (workspace/workspace-scope workspace-id)
+        main-policy-ref-name nil policy-root authority-root)))))
+
+(defn main-selection-error
+  [commit-store policy-store-value review-store-value backend
+   workspace-id authority-root acceptance]
+  (let [candidate-root (acceptance-candidate-root acceptance)
+        expected-root (acceptance-expected-root acceptance)
+        policy-root (acceptance-policy-root acceptance)
+        review-roots (acceptance-review-roots acceptance)
+        candidate (workspace/commit-at commit-store candidate-root)
+        expected
+        (if (= nil expected-root)
+          nil
+          (workspace/commit-at commit-store expected-root))
+        policy (policy-at policy-store-value policy-root)
+        reviewer-roots
+        (if (= nil policy)
+          []
+          (policy-reviewer-roots policy))]
+    (cond
+      (= nil policy)
+      :workspace/main-policy-not-found
+
+      (not (= nil
+              (policy-shape-error
+               workspace-id authority-root policy)))
+      :workspace/invalid-main-policy
+
+      (not (= authority-root (policy-authority policy)))
+      :workspace/main-policy-authority-mismatch
+
+      (= false
+         (policy-published?
+          backend workspace-id policy-root authority-root))
+      :workspace/main-policy-not-published
+
+      (= nil candidate)
+      :workspace/main-candidate-not-found
+
+      (not (= workspace-id (get candidate :workspace/id)))
+      :workspace/main-candidate-workspace-mismatch
+
+      (= false
+         (proposal-published?
+          backend workspace-id candidate-root authority-root))
+      :workspace/main-candidate-not-proposed
+
+      (and (= nil expected-root)
+           (= false (workspace/genesis-commit? candidate)))
+      :workspace/main-bootstrap-not-genesis
+
+      (and (not (= nil expected-root))
+           (= nil expected))
+      :workspace/expected-main-not-found
+
+      (and (not (= nil expected-root))
+           (not (= workspace-id (get expected :workspace/id))))
+      :workspace/expected-main-workspace-mismatch
+
+      (and (not (= nil expected-root))
+           (= false
+              (workspace/ancestor?
+               commit-store expected-root candidate-root)))
+      :workspace/non-fast-forward-main-acceptance
+
+      :else
+      (review-evidence-error
+       review-store-value backend workspace-id candidate-root
+       reviewer-roots review-roots))))
+
+(defn validate-main-acceptance
+  "Validates exact policy, proposal, approvals and commit ancestry.
+
+  No ambient tally is consulted. The acceptance value pins the immutable policy
+  root and the ordered review roots that authorize this exact CAS edge."
+  [commit-store policy-store-value review-store-value backend
+   workspace-id authority-root acceptance]
+  (let [shape-error
+        (acceptance-shape-error
+         workspace-id authority-root acceptance)]
+    (if (not (= nil shape-error))
+      {:error shape-error}
+      (let [selection-error
+            (main-selection-error
+             commit-store policy-store-value review-store-value backend
+             workspace-id authority-root acceptance)]
+        (if (not (= nil selection-error))
+          {:error selection-error}
+          {:ok acceptance
+           :ref/scope (workspace/workspace-scope workspace-id)
+           :ref/name workspace/main-ref-name
+           :ref/expected-root
+           (acceptance-expected-root acceptance)
+           :ref/desired-root
+           (acceptance-candidate-root acceptance)
+           :ref/authorization-root
+           (acceptance-policy-root acceptance)})))))
+
+(defn select-memory-main
+  "Validates then exact-CAS advances `main` under the pinned policy root."
+  [commit-store policy-store-value review-store-value backend
+   workspace-id authority-root acceptance]
+  (let [validation
+        (validate-main-acceptance
+         commit-store policy-store-value review-store-value backend
+         workspace-id authority-root acceptance)]
+    (if (not (= nil (get validation :error)))
+      validation
+      (storage/memory-compare-and-set-ref
+       backend
+       (storage/ref-update-request
+        (get validation :ref/scope)
+        (get validation :ref/name)
+        (get validation :ref/expected-root)
+        (get validation :ref/desired-root)
+        (get validation :ref/authorization-root))))))
