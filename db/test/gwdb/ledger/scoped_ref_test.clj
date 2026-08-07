@@ -162,3 +162,52 @@
        "ok" 1 true "ok" 2
        "conflict" "storage/ref-conflict"
        true true true 2 true true 3 true))
+
+^{:refer gwdb.ledger.scoped-ref/scoped-ref-compare-and-set :added "0.10"}
+(fact "concurrent ref creation admits exactly one writer"
+  (let [_ (!.pg
+           (pg/t:delete
+            scoped-ref/ScopedRef
+            {:where {:scope "workspace/race"}}))
+        _ (!.pg
+           [:select
+            (value/put-symbol "authority/race")
+            (value/put-string "race-A")
+            (value/put-string "race-B")])
+        start (promise)
+        left
+        (future
+          @start
+          (!.pg
+           [:select
+            (:->>
+             (scoped-ref/scoped-ref-compare-and-set
+              "workspace/race" "main"
+              nil
+              (value/put-string "race-A")
+              (value/put-symbol "authority/race"))
+             "status")]))
+        right
+        (future
+          @start
+          (!.pg
+           [:select
+            (:->>
+             (scoped-ref/scoped-ref-compare-and-set
+              "workspace/race" "main"
+              nil
+              (value/put-string "race-B")
+              (value/put-symbol "authority/race"))
+             "status")]))
+        _ (deliver start true)]
+    (sort [@left @right]))
+  => '("conflict" "ok")
+
+  (!.pg
+   [:select
+    (:->>
+     (scoped-ref/scoped-ref-read
+      "workspace/race" "main"
+      (value/put-symbol "authority/race"))
+     "version")])
+  => 1)
