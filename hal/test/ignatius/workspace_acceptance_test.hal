@@ -1,0 +1,352 @@
+(ns ignatius.workspace-acceptance-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-proposal :as proposal]
+            [ignatius.workspace-review :as review]
+            [ignatius.workspace-acceptance :as acceptance]))
+
+(def workspace-id "world/orbital-station")
+(def authority-root "account/alice")
+(def reviewer-bob "account/bob")
+
+(def author-evidence
+  (record/ledger-evidence
+   {:ledger/signer authority-root
+    :ledger/transaction-root "transaction/root"
+    :ledger/timestamp 1
+    :ledger/previous-head-root nil
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil}))
+
+(defn candidate
+  [root parents state-root]
+  (workspace/commit-candidate
+   {:workspace/id workspace-id
+    :workspace/root nil
+    :commit/parent-roots parents
+    :commit/state-root state-root
+    :commit/operation-root
+    (if (= 0 (count parents))
+      nil
+      (str "operation/" root))
+    :commit/merge-base-root nil
+    :commit/merge-policy-root nil
+    :commit/author-evidence author-evidence
+    :commit/execution-provenance nil
+    :commit/metadata {}
+    :record/extensions {:test/root root}}))
+
+(def c0 (candidate "C0" [] "W0"))
+(def c1 (candidate "C1" ["C0"] "W1"))
+(def c2 (candidate "C2" ["C0"] "W2"))
+(def c3 (candidate "C3" ["C1"] "W3"))
+
+(defn commit-root-valid?
+  [root value]
+  (= root (get-in value [:record/extensions :test/root])))
+
+(def commit-store-0 (workspace/commit-store))
+(def commit-store-c0
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-0 "C0" c0)
+   :ok))
+(def commit-store-c1
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-c0 "C1" c1)
+   :ok))
+(def commit-store-c2
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-c1 "C2" c2)
+   :ok))
+(def commit-store
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-c2 "C3" c3)
+   :ok))
+
+(def policy
+  (acceptance/main-policy-value
+   workspace-id authority-root
+   [authority-root reviewer-bob] 10))
+
+(def duplicate-reviewer-policy
+  (acceptance/main-policy-value
+   workspace-id authority-root
+   [authority-root authority-root] 10))
+
+(defn policy-root-valid?
+  [root value]
+  (and (= root "P1") (= value policy)))
+
+(def policy-store-result
+  (acceptance/register-policy
+   policy-root-valid? (acceptance/policy-store)
+   "P1" workspace-id authority-root policy))
+(def policy-store (get policy-store-result :ok))
+
+(def backend-0 (storage/memory-backend "workspace-lifecycle"))
+
+(defn publish-proposal
+  [backend candidate-root]
+  (get
+   (storage/memory-compare-and-set-ref
+    backend
+    (storage/ref-update-request
+     (workspace/workspace-scope workspace-id)
+     (proposal/proposal-ref-name candidate-root)
+     nil candidate-root authority-root))
+   :ok))
+
+(def backend-proposal-c0 (publish-proposal backend-0 "C0"))
+(def backend-proposal-c1 (publish-proposal backend-proposal-c0 "C1"))
+(def backend-proposals (publish-proposal backend-proposal-c1 "C2"))
+
+(def policy-publication
+  (acceptance/publish-memory-policy
+   policy-store backend-proposals workspace-id authority-root "P1"))
+(def backend-policy (get policy-publication :ok))
+(def duplicate-policy-publication
+  (acceptance/publish-memory-policy
+   policy-store backend-policy workspace-id authority-root "P1"))
+
+(def alice-c0-approve
+  (review/review-decision-value
+   "C0" authority-root "approve" 11))
+(def bob-c0-approve
+  (review/review-decision-value
+   "C0" reviewer-bob "approve" 12))
+(def alice-c1-approve
+  (review/review-decision-value
+   "C1" authority-root "approve" 13))
+(def bob-c1-approve
+  (review/review-decision-value
+   "C1" reviewer-bob "approve" 14))
+(def bob-c1-reject
+  (review/review-decision-value
+   "C1" reviewer-bob "reject" 15))
+
+(defn review-root-valid?
+  [root value]
+  (or (and (= root "R-A0") (= value alice-c0-approve))
+      (and (= root "R-B0") (= value bob-c0-approve))
+      (and (= root "R-A1") (= value alice-c1-approve))
+      (and (= root "R-B1") (= value bob-c1-approve))
+      (and (= root "R-BX") (= value bob-c1-reject))))
+
+(def review-store-0 (review/review-store))
+(def review-store-a0
+  (get
+   (review/register-review
+    review-root-valid? review-store-0 "R-A0"
+    "C0" authority-root alice-c0-approve)
+   :ok))
+(def review-store-b0
+  (get
+   (review/register-review
+    review-root-valid? review-store-a0 "R-B0"
+    "C0" reviewer-bob bob-c0-approve)
+   :ok))
+(def review-store-a1
+  (get
+   (review/register-review
+    review-root-valid? review-store-b0 "R-A1"
+    "C1" authority-root alice-c1-approve)
+   :ok))
+(def review-store-b1
+  (get
+   (review/register-review
+    review-root-valid? review-store-a1 "R-B1"
+    "C1" reviewer-bob bob-c1-approve)
+   :ok))
+(def review-store
+  (get
+   (review/register-review
+    review-root-valid? review-store-b1 "R-BX"
+    "C1" reviewer-bob bob-c1-reject)
+   :ok))
+
+(defn select-review
+  [backend candidate-root reviewer-root expected-root desired-root]
+  (get
+   (review/select-memory-review
+    commit-store review-store backend backend
+    workspace-id candidate-root reviewer-root
+    (review/review-update-intent
+     workspace-id candidate-root reviewer-root
+     expected-root desired-root))
+   :ok))
+
+(def backend-a0
+  (select-review backend-policy "C0" authority-root nil "R-A0"))
+(def backend-b0
+  (select-review backend-a0 "C0" reviewer-bob nil "R-B0"))
+(def backend-a1
+  (select-review backend-b0 "C1" authority-root nil "R-A1"))
+(def backend-ready
+  (select-review backend-a1 "C1" reviewer-bob nil "R-B1"))
+(def backend-rejected
+  (select-review backend-ready "C1" reviewer-bob "R-B1" "R-BX"))
+
+(def accept-c0
+  (acceptance/main-acceptance-value
+   workspace-id authority-root nil "C0"
+   "P1" ["R-A0" "R-B0"] 20))
+(def accept-c1
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C0" "C1"
+   "P1" ["R-A1" "R-B1"] 21))
+(def accept-c1-with-reject
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C0" "C1"
+   "P1" ["R-A1" "R-BX"] 21))
+(def wrong-count-acceptance
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C0" "C1"
+   "P1" ["R-A1"] 21))
+(def duplicate-review-acceptance
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C0" "C1"
+   "P1" ["R-A1" "R-A1"] 21))
+(def bootstrap-edit
+  (acceptance/main-acceptance-value
+   workspace-id authority-root nil "C1"
+   "P1" ["R-A1" "R-B1"] 21))
+(def non-fast-forward
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C1" "C2"
+   "P1" ["R-A1" "R-B1"] 22))
+(def unpublished-c3
+  (acceptance/main-acceptance-value
+   workspace-id authority-root "C1" "C3"
+   "P1" ["R-A1" "R-B1"] 23))
+(def tampered-acceptance
+  (assoc accept-c0 :record/extensions
+         {:workspace/id workspace-id
+          :ref/expected-root nil
+          :ref/desired-root "C0"
+          :ref/policy :shared-main-v2}))
+
+(def main-c0-result
+  (acceptance/select-memory-main
+   commit-store policy-store review-store backend-ready
+   workspace-id authority-root accept-c0))
+(def backend-main-c0 (get main-c0-result :ok))
+(def main-c1-result
+  (acceptance/select-memory-main
+   commit-store policy-store review-store backend-main-c0
+   workspace-id authority-root accept-c1))
+(def backend-main-c1 (get main-c1-result :ok))
+(def stale-main-result
+  (acceptance/select-memory-main
+   commit-store policy-store review-store backend-main-c1
+   workspace-id authority-root accept-c0))
+
+(def results
+  [(test/check "policy identity pins workspace and authority"
+               (get policy :attestation/id)
+               "main-policy/world/orbital-station/account/alice")
+   (test/check "policy pins one exact ordered reviewer set"
+               (acceptance/policy-reviewer-roots policy)
+               [authority-root reviewer-bob])
+   (test/check "policy uses the explicit unanimous v1 law"
+               (get-in policy
+                       [:record/extensions :workspace/policy-kind])
+               :unanimous-reviewers-v1)
+   (test/check "canonical policy registration succeeds"
+               [(get policy-store-result :error)
+                (get policy-store-result :policy/root)]
+               [nil "P1"])
+   (test/check "policy/main is create-only"
+               [(get duplicate-policy-publication :error)
+                (get duplicate-policy-publication :ref/actual-root)]
+               [:storage/ref-conflict "P1"])
+   (test/check "duplicate reviewers are rejected by policy shape"
+               (acceptance/policy-shape-error
+                workspace-id authority-root duplicate-reviewer-policy)
+               :workspace/main-policy-duplicate-reviewer)
+   (test/check "acceptance pins candidate policy reviews and CAS edge"
+               [(get accept-c1 :attestation/subject-root)
+                (get accept-c1 :attestation/context-root)
+                (get accept-c1 :attestation/evidence-roots)
+                (acceptance/acceptance-expected-root accept-c1)]
+               ["C1" "P1" ["R-A1" "R-B1"] "C0"])
+   (test/check "genesis may bootstrap main under exact approvals"
+               [(get main-c0-result :error)
+                (get-in main-c0-result [:ref/value :ref/root])]
+               [nil "C0"])
+   (test/check "a proposed approved descendant advances main"
+               [(get main-c1-result :error)
+                (get-in main-c1-result [:ref/value :ref/root])]
+               [nil "C1"])
+   (test/check "main now selects the accepted descendant"
+               (acceptance/current-ref-root
+                backend-main-c1 workspace-id
+                workspace/main-ref-name "P1")
+               "C1")
+   (test/check "a stale main CAS reports the accepted root"
+               [(get stale-main-result :error)
+                (get stale-main-result :ref/actual-root)]
+               [:storage/ref-conflict "C1"])
+   (test/check "superseded approval roots cannot authorize acceptance"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-rejected
+                 workspace-id authority-root accept-c1)
+                :error)
+               :workspace/main-acceptance-review-not-current)
+   (test/check "current reject decisions cannot authorize acceptance"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-rejected
+                 workspace-id authority-root accept-c1-with-reject)
+                :error)
+               :workspace/main-acceptance-review-not-approved)
+   (test/check "review evidence count must match the policy"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-ready
+                 workspace-id authority-root wrong-count-acceptance)
+                :error)
+               :workspace/main-acceptance-review-count-mismatch)
+   (test/check "one immutable review root cannot be counted twice"
+               (acceptance/acceptance-shape-error
+                workspace-id authority-root duplicate-review-acceptance)
+               :workspace/main-acceptance-duplicate-review-root)
+   (test/check "main bootstrap must select a genesis commit"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-ready
+                 workspace-id authority-root bootstrap-edit)
+                :error)
+               :workspace/main-bootstrap-not-genesis)
+   (test/check "main advancement must be a commit fast-forward"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-ready
+                 workspace-id authority-root non-fast-forward)
+                :error)
+               :workspace/non-fast-forward-main-acceptance)
+   (test/check "unpublished candidates cannot enter main"
+               (get
+                (acceptance/validate-main-acceptance
+                 commit-store policy-store review-store backend-ready
+                 workspace-id authority-root unpublished-c3)
+                :error)
+               :workspace/main-candidate-not-proposed)
+   (test/check "acceptance extensions cannot smuggle another policy"
+               (acceptance/acceptance-shape-error
+                workspace-id authority-root tampered-acceptance)
+               :workspace/main-acceptance-extensions-not-supported)
+   (test/check "the policy root remains independently selected"
+               (acceptance/current-ref-root
+                backend-main-c1 workspace-id
+                acceptance/main-policy-ref-name authority-root)
+               "P1")])
+
+(test/print-results results)
