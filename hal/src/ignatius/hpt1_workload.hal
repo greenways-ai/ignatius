@@ -1,0 +1,124 @@
+(ns ignatius.hpt1-workload)
+
+(def workload-contract-version 1)
+(def root-transport-byte-count 64)
+(def hcv1-preferred-max-entries 64)
+(def hpt1-candidate-min-entries 256)
+
+(def benchmark-entry-counts
+  [16 64 256 1024 4096 16384 65536])
+
+(defn flat-map-prefix-byte-count
+  "Returns the exact ASCII byte count of `M:<entry-count>:`."
+  [entry-count]
+  (+ 3 (count (str entry-count))))
+
+(defn flat-map-payload-byte-count
+  "Returns the exact HCV1 map payload size for root-only key/value pairs.
+
+  Each entry contributes two lowercase SHA-256 roots, transported as sixty-four
+  ASCII hex characters each. The outer HCV1 envelope is deliberately excluded."
+  [entry-count]
+  (+ (flat-map-prefix-byte-count entry-count)
+     (* entry-count 2 root-transport-byte-count)))
+
+(defn flat-map-ref-count
+  "Returns the derived key and value CellRef count."
+  [entry-count]
+  (* entry-count 2))
+
+(defn flat-map-worst-get-comparisons
+  "Returns the current linear ordered-map worst-case comparison count."
+  [entry-count]
+  entry-count)
+
+(defn flat-map-existing-assoc-ref-writes
+  "Returns derived refs rebuilt when replacing an existing value."
+  [entry-count]
+  (flat-map-ref-count entry-count))
+
+(defn flat-map-new-assoc-ref-writes
+  "Returns derived refs rebuilt when inserting one previously absent key."
+  [entry-count]
+  (flat-map-ref-count (+ entry-count 1)))
+
+(defn flat-map-pressure-tier
+  "Classifies a workload for evidence gathering, not automatic codec choice."
+  [entry-count]
+  (cond
+    (<= entry-count hcv1-preferred-max-entries)
+    :hcv1/preferred
+
+    (< entry-count hpt1-candidate-min-entries)
+    :benchmark/required
+
+    :else
+    :hpt1/candidate))
+
+(defn flat-map-baseline
+  [entry-count]
+  {:baseline/version workload-contract-version
+   :baseline/entry-count entry-count
+   :baseline/payload-byte-count
+   (flat-map-payload-byte-count entry-count)
+   :baseline/derived-ref-count
+   (flat-map-ref-count entry-count)
+   :baseline/worst-get-comparisons
+   (flat-map-worst-get-comparisons entry-count)
+   :baseline/existing-assoc-ref-writes
+   (flat-map-existing-assoc-ref-writes entry-count)
+   :baseline/new-assoc-ref-writes
+   (flat-map-new-assoc-ref-writes entry-count)
+   :baseline/pressure-tier
+   (flat-map-pressure-tier entry-count)})
+
+(defn flat-map-baselines
+  [entry-counts]
+  (reduce
+   (fn [out entry-count]
+     (conj out (flat-map-baseline entry-count)))
+   []
+   entry-counts))
+
+(def default-flat-map-baselines
+  (flat-map-baselines benchmark-entry-counts))
+
+(def benchmark-scenarios
+  {:get
+   [:first :middle :last :missing-before :missing-after]
+   :assoc-existing
+   [:first :middle :last]
+   :assoc-new
+   [:append :interior]
+   :iterate
+   [:full]
+   :diff
+   [:same-root :one-change :one-percent]
+   :merge
+   [:disjoint :same-key-conflict]})
+
+(def workload-corpus
+  [{:workload/id :scene/entity-index
+    :workload/entry-counts [1024 16384 65536]
+    :workload/key-kind :stable-entity-id
+    :workload/value-kind :entity-root
+    :workload/read-pattern :random-point
+    :workload/write-pattern :sparse-component-batch}
+   {:workload/id :dom/node-index
+    :workload/entry-counts [256 4096 16384]
+    :workload/key-kind :stable-node-id
+    :workload/value-kind :node-root
+    :workload/read-pattern :mixed-point-and-subtree
+    :workload/write-pattern :localized-edit-batch}
+   {:workload/id :hara/namespace-bindings
+    :workload/entry-counts [64 256 4096]
+    :workload/key-kind :qualified-symbol
+    :workload/value-kind :definition-root
+    :workload/read-pattern :dependency-closure
+    :workload/write-pattern :sparse-binding-update}
+   {:workload/id :process/catalog
+    :workload/entry-counts [256 4096 65536]
+    :workload/key-kind :stable-process-id
+    :workload/value-kind :process-definition-root
+    :workload/read-pattern :random-point
+    :workload/write-pattern :append-and-revise}])
