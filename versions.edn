@@ -6,5 +6,5 @@
    :checkout ".local/hara.lang"}
   :foundation
   {:repository "https://github.com/zcaudate-xyz/foundation-base.git"
-   :revision "c3e37bfc41cc1a27305351279fb31832f637448d"
+   :revision "baa75aabd6a879753d7d5cb07271b1448271e7cb"
    :checkout "db/checkouts/foundation"}}}
