@@ -42,8 +42,21 @@ jobs:
           HPT1_BENCHMARK_WARMUPS: 2
           HPT1_BENCHMARK_SAMPLES: 7
         run: |
-          set -euo pipefail
-          make hpt1-flat-map-benchmark
+          set +e
+          set -o pipefail
+          rm -f /tmp/clojure-*.edn /tmp/hpt1-flat-map-benchmark.log
+          make hpt1-flat-map-benchmark 2>&1 | tee /tmp/hpt1-flat-map-benchmark.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Benchmark output"
+            tail -n 300 /tmp/hpt1-flat-map-benchmark.log
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            echo "::endgroup::"
+            exit "$status"
+          fi
 
       - name: Commit measured evidence
         if: steps.existing.outputs.present != 'true'
