@@ -1,34 +1,10 @@
 name: Integrate workspace main admission
 
 on:
-  push:
-    branches: [agent/workspace-main-acceptance-submit]
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  integrate:
+  completed:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/workspace-main-acceptance-submit
-
-      - name: Wire signed main into generators and documentation
-        run: |
-          set -euo pipefail
-          if [ ! -f scripts/integrate_workspace_main_admission.py ]; then
-            exit 0
-          fi
-          python scripts/integrate_workspace_main_admission.py
-          rm scripts/integrate_workspace_main_admission.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md \
-                  db/src/gwdb/ledger/base.clj \
-                  db/src/ledger/build_contract.clj \
-                  db/test/gwdb/ledger/workspace_main_test.clj \
-                  scripts/integrate_workspace_main_admission.py
-          git commit -m "Integrate signed workspace main admission"
-          git push origin HEAD:agent/workspace-main-acceptance-submit
+      - run: echo "Workspace main integration has already been applied"
