@@ -1,0 +1,31 @@
+name: Fix nullable main selection expected root
+
+on:
+  push:
+    branches: [agent/workspace-release-publication]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-release-publication
+
+      - name: Preserve genesis selection validity
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/fix_main_selection_expected_root.py ]; then
+            exit 0
+          fi
+          python scripts/fix_main_selection_expected_root.py
+          rm scripts/fix_main_selection_expected_root.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/src/gwdb/ledger/workspace_main.clj \
+                  scripts/fix_main_selection_expected_root.py
+          git commit -m "Handle nullable expected roots in main selections"
+          git push origin HEAD:agent/workspace-release-publication
