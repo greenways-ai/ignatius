@@ -110,6 +110,24 @@ The generated client contract exposes a signing-request operation and a signed
 submission operation. Both carry the exact policy, review-vector and expected
 root rather than a server-computed approval tally.
 
+## Executable conformance lifecycle
+
+The PostgreSQL suite uses two independent RFC 8032 Ed25519 accounts. It publishes
+one unanimous policy, two proposal candidates and four reviewer decisions, then
+proves:
+
+```text
+nil -> C0   accepted genesis bootstrap
+C0  -> C1   accepted fast-forward
+C0  -> C1   stale retry conflicts after C1 is current
+```
+
+Both successful acceptance receipts return their immutable acceptance roots,
+while `main` advances to the candidate roots. The stale retry leaves the signing
+account sequence and the eleven-block network height unchanged. A reversed
+review-evidence vector is rejected before signing because reviewer position is
+part of the selected policy.
+
 ## Boundary
 
 This completes policy-gated shared `main`. It does not publish releases. The
