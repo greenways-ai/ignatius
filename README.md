@@ -168,6 +168,46 @@ instances remain pinned to their original immutable template and state shape.
 See [`docs/build-timelines.md`](docs/build-timelines.md) and
 [`docs/process-graph-roadmap.md`](docs/process-graph-roadmap.md).
 
+## Portable storage contracts
+
+[`ignatius.storage`](hal/src/ignatius/storage.hal) separates immutable block
+storage, scoped mutable refs and backend capability declarations from any one
+provider.
+
+```clojure
+(def block
+  (storage/hcv1-block
+    sha256 type-tag payload-byte-count payload-hex references))
+
+(def stored
+  (storage/memory-put-block sha256 backend block))
+
+(def advanced
+  (storage/memory-compare-and-set-ref
+    (get stored :ok)
+    (storage/ref-update-request
+      "workspace/orbital-station"
+      "main"
+      expected-commit-root
+      desired-commit-root
+      authorization-root)))
+```
+
+Every block read is re-hashed before it is returned to a decoder. Exact duplicate
+writes are idempotent, while a different envelope under an existing root is a
+conflict. Ref writes name an explicit scope, name, expected root, desired root
+and authorization root.
+
+The included pure memory adapter declares `:single-writer` consistency rather
+than pretending to coordinate concurrent hosts. PostgreSQL will implement the
+same block contract through the existing immutable `Cell`, ordered `CellRef` and
+HCP1 snapshot code. A separate scoped-ref adapter will provide atomic
+`:linearizable` compare-and-set without replacing account, contract or global
+chain heads.
+
+See [`docs/storage-contracts.md`](docs/storage-contracts.md) and
+[`hal/test/ignatius/storage_test.hal`](hal/test/ignatius/storage_test.hal).
+
 ## Convex-style accounts and actors
 
 New account roots use a backward-compatible v2 shape that separates the external
@@ -198,7 +238,7 @@ See [`docs/convex-actors.md`](docs/convex-actors.md) and
 ## Layout
 
 - `db/` — PostgreSQL ledger DSL, generated SQL and generated client contract
-- `hal/` — portable codec, runtime, record, transaction and client semantics
+- `hal/` — portable codec, runtime, records, storage, transactions and clients
 - `examples/` — Hara programs used to drive executable ledger demos
 - `extensions/` — optional chain cryptography and proof extensions
 - `docs/` — protocol notes, record specifications and integration contracts
@@ -248,8 +288,8 @@ generated SQL, or generated contracts.
 
 Ignatius includes generic controller registration, signed transaction admission,
 execution, receipts, integrity verification, snapshots, canonical process and
-artifact records, signed reviews, attestations, build-timeline provenance and
-workspace commit candidates.
+artifact records, signed reviews, attestations, build-timeline provenance,
+workspace commit candidates and provider-neutral storage contracts.
 
 It deliberately excludes:
 

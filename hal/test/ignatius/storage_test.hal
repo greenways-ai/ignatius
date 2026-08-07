@@ -1,0 +1,235 @@
+(ns ignatius.storage-test
+  (:require [std.lib.test :as test]
+            [ignatius.storage :as storage]))
+
+(defn fake-sha
+  [text]
+  (cond
+    (= text "HCV1:5:3:616263") "root-A"
+    (= text "HCV1:5:3:646566") "root-B"
+    :else "root-other"))
+
+(defn collision-sha
+  [text]
+  "collision-root")
+
+(def block-a
+  (storage/hcv1-block
+   fake-sha 5 3 "616263"
+   [(storage/block-reference 0 "child" "child-root")]))
+
+(def block-b
+  (storage/hcv1-block
+   fake-sha 5 3 "646566" []))
+
+(def backend-0
+  (storage/memory-backend "test-memory"))
+
+(def put-a
+  (storage/memory-put-block fake-sha backend-0 block-a))
+
+(def backend-a
+  (get put-a :ok))
+
+(def put-a-again
+  (storage/memory-put-block fake-sha backend-a block-a))
+
+(def missing-block
+  (storage/memory-get-block fake-sha backend-a "missing-root"))
+
+(def corrupt-block
+  (assoc block-a :block/payload-hex "626164"))
+
+(def corrupt-backend
+  (assoc backend-a :storage/blocks
+         {"root-A" corrupt-block}))
+
+(def corrupt-read
+  (storage/memory-get-block
+   fake-sha corrupt-backend "root-A"))
+
+(def unsupported-codec
+  (storage/verify-block
+   fake-sha
+   (assoc block-a :block/codec :future/codec)))
+
+(def collision-a
+  (storage/hcv1-block
+   collision-sha 5 3 "616263" []))
+
+(def collision-b
+  (storage/hcv1-block
+   collision-sha 5 3 "646566" []))
+
+(def collision-put-a
+  (storage/memory-put-block
+   collision-sha backend-0 collision-a))
+
+(def collision-put-b
+  (storage/memory-put-block
+   collision-sha (get collision-put-a :ok) collision-b))
+
+(def missing-ref
+  (storage/memory-get-ref
+   backend-0
+   (storage/ref-read-request
+    "workspace/orbital-station" "main" "authority/alice")))
+
+(def missing-authorization
+  (storage/memory-get-ref
+   backend-0
+   (storage/ref-read-request
+    "workspace/orbital-station" "main" nil)))
+
+(def create-main
+  (storage/memory-compare-and-set-ref
+   backend-0
+   (storage/ref-update-request
+    "workspace/orbital-station" "main"
+    nil "commit-A" "authority/alice")))
+
+(def backend-main-a
+  (get create-main :ok))
+
+(def read-main-a
+  (storage/memory-get-ref
+   backend-main-a
+   (storage/ref-read-request
+    "workspace/orbital-station" "main" "authority/alice")))
+
+(def advance-main
+  (storage/memory-compare-and-set-ref
+   backend-main-a
+   (storage/ref-update-request
+    "workspace/orbital-station" "main"
+    "commit-A" "commit-B" "authority/alice")))
+
+(def backend-main-b
+  (get advance-main :ok))
+
+(def stale-main
+  (storage/memory-compare-and-set-ref
+   backend-main-b
+   (storage/ref-update-request
+    "workspace/orbital-station" "main"
+    "commit-A" "commit-C" "authority/bob")))
+
+(def missing-desired-root
+  (storage/memory-compare-and-set-ref
+   backend-main-b
+   (storage/ref-update-request
+    "workspace/orbital-station" "release"
+    nil nil "authority/alice")))
+
+(def create-user-branch
+  (storage/memory-compare-and-set-ref
+   backend-main-b
+   (storage/ref-update-request
+    "workspace/orbital-station" "user/alice"
+    nil "commit-user-A" "authority/alice")))
+
+(def backend-user-branch
+  (get create-user-branch :ok))
+
+(def create-other-scope
+  (storage/memory-compare-and-set-ref
+   backend-user-branch
+   (storage/ref-update-request
+    "workspace/other" "main"
+    nil "other-commit-A" "authority/alice")))
+
+(def backend-two-scopes
+  (get create-other-scope :ok))
+
+(def results
+  [(test/check "the block-store interface is explicitly versioned"
+               (get storage/block-store-interface :interface/version)
+               1)
+   (test/check "the ref-store interface names compare-and-set"
+               (get-in storage/ref-store-interface
+                       [:interface/methods :compare-and-set-ref
+                        :returns])
+               :updated-backend-or-conflict)
+   (test/check "HCV1 construction pins the injected hash result"
+               (get block-a :block/root)
+               "root-A")
+   (test/check "HCV1 block references remain ordered envelopes"
+               (get block-a :block/references)
+               [{:position 0
+                 :role "child"
+                 :child-root "child-root"}])
+   (test/check "valid blocks are accepted once"
+               [(get put-a :block/created)
+                (get-in put-a [:block/value :block/root])]
+               [true "root-A"])
+   (test/check "exact duplicate block writes are idempotent"
+               [(get put-a-again :block/created)
+                (= backend-a (get put-a-again :ok))]
+               [false true])
+   (test/check "reads re-hash blocks before returning them"
+               (get
+                (storage/memory-get-block
+                 fake-sha backend-a "root-A")
+                :ok)
+               block-a)
+   (test/check "missing block roots are explicit"
+               (get missing-block :error)
+               :storage/block-not-found)
+   (test/check "corrupt fetched bytes are rejected"
+               (get corrupt-read :error)
+               :storage/block-root-mismatch)
+   (test/check "unsupported codecs cannot pass verification"
+               (get unsupported-codec :error)
+               :storage/unsupported-block-codec)
+   (test/check "same-root different envelopes are conflicts"
+               (get collision-put-b :error)
+               :storage/block-conflict)
+   (test/check "the memory backend declares its consistency honestly"
+               (get-in backend-0
+                       [:storage/capabilities :ref/consistency])
+               :single-writer)
+   (test/check "block verification is a required backend capability"
+               (get
+                (storage/backend-capabilities backend-0)
+                :block/verification)
+               :required)
+   (test/check "missing refs return a nil current root"
+               (get-in missing-ref [:ok :ref/root])
+               nil)
+   (test/check "ref authorization context is explicit"
+               (get missing-authorization :error)
+               :storage/missing-ref-authorization)
+   (test/check "compare-and-set creates a missing ref"
+               [(get-in create-main [:ref/value :ref/root])
+                (get create-main :ref/previous-root)]
+               ["commit-A" nil])
+   (test/check "scoped ref reads return the accepted root"
+               (get-in read-main-a [:ok :ref/root])
+               "commit-A")
+   (test/check "compare-and-set advances an exact current root"
+               [(get-in advance-main [:ref/value :ref/root])
+                (get advance-main :ref/previous-root)]
+               ["commit-B" "commit-A"])
+   (test/check "stale compare-and-set requests report actual state"
+               [(get stale-main :error)
+                (get stale-main :ref/actual-root)]
+               [:storage/ref-conflict "commit-B"])
+   (test/check "nil desired roots are not implicit deletion"
+               (get missing-desired-root :error)
+               :storage/missing-desired-ref-root)
+   (test/check "separate names in one scope remain independent"
+               (get-in backend-user-branch
+                       [:storage/refs
+                        "workspace/orbital-station"
+                        "user/alice"])
+               "commit-user-A")
+   (test/check "identical ref names in separate scopes remain independent"
+               [(get-in backend-two-scopes
+                        [:storage/refs
+                         "workspace/orbital-station" "main"])
+                (get-in backend-two-scopes
+                        [:storage/refs
+                         "workspace/other" "main"])]
+               ["commit-B" "other-commit-A"])])
+
+(test/print-results results)

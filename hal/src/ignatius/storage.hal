@@ -1,0 +1,267 @@
+(ns ignatius.storage
+  (:require [ignatius.codec :as codec]))
+
+(def storage-contract-version 1)
+(def hcv1-codec :hara/hcv1)
+(def sha256-algorithm :sha-256)
+
+(def block-store-interface
+  {:interface/name :ignatius/block-store
+   :interface/version storage-contract-version
+   :interface/methods
+   {:get-block
+    {:arguments [:backend :root :sha256]
+     :returns :verified-block-or-error}
+    :put-block
+    {:arguments [:backend :block :sha256]
+     :returns :updated-backend-or-error}}})
+
+(def ref-store-interface
+  {:interface/name :ignatius/ref-store
+   :interface/version storage-contract-version
+   :interface/methods
+   {:get-ref
+    {:arguments [:backend :ref-read-request]
+     :returns :ref-value-or-error}
+    :compare-and-set-ref
+    {:arguments [:backend :ref-update-request]
+     :returns :updated-backend-or-conflict}}})
+
+(def backend-capabilities-interface
+  {:interface/name :ignatius/backend-capabilities
+   :interface/version storage-contract-version
+   :interface/methods
+   {:backend-capabilities
+    {:arguments [:backend]
+     :returns :backend-capability-map}}})
+
+(defn block-reference
+  [position role child-root]
+  {:position position
+   :role role
+   :child-root child-root})
+
+(defn block-envelope
+  [root codec-name codec-version hash-algorithm type-tag
+   payload-byte-count payload-hex refs]
+  {:block/root root
+   :block/codec codec-name
+   :block/codec-version codec-version
+   :block/hash-algorithm hash-algorithm
+   :block/type-tag type-tag
+   :block/payload-byte-count payload-byte-count
+   :block/payload-hex payload-hex
+   :block/references refs})
+
+(defn hcv1-block
+  "Constructs one HCV1 block through an explicit SHA-256 capability."
+  [sha256 type-tag payload-byte-count payload-hex refs]
+  (let [root
+        (sha256
+         (codec/canonical-envelope
+          type-tag payload-byte-count payload-hex))]
+    (block-envelope
+     root hcv1-codec codec/codec-version sha256-algorithm
+     type-tag payload-byte-count payload-hex refs)))
+
+(defn hcv1-block-root
+  [sha256 block]
+  (sha256
+   (codec/canonical-envelope
+    (get block :block/type-tag)
+    (get block :block/payload-byte-count)
+    (get block :block/payload-hex))))
+
+(defn verify-block
+  "Re-hashes a fetched HCV1 block before it may be decoded or returned."
+  [sha256 block]
+  (cond
+    (= nil block)
+    {:error :storage/missing-block-envelope}
+
+    (= false (= hcv1-codec (get block :block/codec)))
+    {:error :storage/unsupported-block-codec
+     :block/codec (get block :block/codec)}
+
+    (= false
+       (= codec/codec-version
+          (get block :block/codec-version)))
+    {:error :storage/unsupported-codec-version
+     :block/codec-version (get block :block/codec-version)}
+
+    (= false
+       (= sha256-algorithm
+          (get block :block/hash-algorithm)))
+    {:error :storage/unsupported-hash-algorithm
+     :block/hash-algorithm (get block :block/hash-algorithm)}
+
+    (= false
+       (= (get block :block/root)
+          (hcv1-block-root sha256 block)))
+    {:error :storage/block-root-mismatch
+     :block/root (get block :block/root)
+     :block/computed-root (hcv1-block-root sha256 block)}
+
+    :else
+    {:ok block}))
+
+(defn ref-value
+  [scope name root]
+  {:ref/scope scope
+   :ref/name name
+   :ref/root root})
+
+(defn ref-read-request
+  [scope name authorization-root]
+  {:ref/scope scope
+   :ref/name name
+   :ref/authorization-root authorization-root})
+
+(defn ref-update-request
+  [scope name expected-root desired-root authorization-root]
+  {:ref/scope scope
+   :ref/name name
+   :ref/expected-root expected-root
+   :ref/desired-root desired-root
+   :ref/authorization-root authorization-root})
+
+(defn memory-backend
+  "Creates a deterministic single-writer backend for portable conformance tests."
+  [name]
+  {:storage/backend-type :memory
+   :storage/backend-name name
+   :storage/blocks {}
+   :storage/refs {}
+   :storage/capabilities
+   {:backend/type :memory
+    :backend/name name
+    :backend/durability :process
+    :block/immutable true
+    :block/verification :required
+    :block/hash-algorithm sha256-algorithm
+    :ref/compare-and-set true
+    :ref/consistency :single-writer
+    :ref/authorization :explicit}})
+
+(defn backend-capabilities
+  [backend]
+  (get backend :storage/capabilities))
+
+(defn memory-blocks
+  [backend]
+  (get backend :storage/blocks))
+
+(defn memory-refs
+  [backend]
+  (get backend :storage/refs))
+
+(defn memory-put-block
+  "Verifies then inserts an immutable block. Exact duplicate writes are idempotent."
+  [sha256 backend block]
+  (let [verification (verify-block sha256 block)]
+    (if (= nil (get verification :error))
+      (let [root (get block :block/root)
+            blocks (memory-blocks backend)
+            existing (get blocks root)]
+        (cond
+          (= nil existing)
+          {:ok
+           (assoc backend :storage/blocks
+                  (assoc blocks root block))
+           :block/value block
+           :block/created true}
+
+          (= existing block)
+          {:ok backend
+           :block/value block
+           :block/created false}
+
+          :else
+          {:error :storage/block-conflict
+           :block/root root
+           :block/existing existing
+           :block/proposed block}))
+      verification)))
+
+(defn memory-get-block
+  "Loads and re-verifies one block before returning it to a decoder."
+  [sha256 backend root]
+  (let [block (get (memory-blocks backend) root)]
+    (if (= nil block)
+      {:error :storage/block-not-found
+       :block/root root}
+      (verify-block sha256 block))))
+
+(defn memory-scope-refs
+  [backend scope]
+  (let [scope-refs (get (memory-refs backend) scope)]
+    (if (= nil scope-refs)
+      {}
+      scope-refs)))
+
+(defn validate-ref-request
+  [request]
+  (cond
+    (= nil (get request :ref/scope))
+    {:error :storage/missing-ref-scope}
+
+    (= nil (get request :ref/name))
+    {:error :storage/missing-ref-name}
+
+    (= nil (get request :ref/authorization-root))
+    {:error :storage/missing-ref-authorization}
+
+    :else
+    {:ok request}))
+
+(defn memory-get-ref
+  "Reads one scoped ref. A missing ref is represented by a nil root."
+  [backend request]
+  (let [validation (validate-ref-request request)]
+    (if (= nil (get validation :error))
+      (let [scope (get request :ref/scope)
+            name (get request :ref/name)
+            root (get (memory-scope-refs backend scope) name)]
+        {:ok (ref-value scope name root)
+         :ref/authorization-root
+         (get request :ref/authorization-root)})
+      validation)))
+
+(defn memory-compare-and-set-ref
+  "Conditionally advances one scoped ref against its exact current root."
+  [backend request]
+  (let [validation (validate-ref-request request)]
+    (if (= nil (get validation :error))
+      (let [scope (get request :ref/scope)
+            name (get request :ref/name)
+            expected-root (get request :ref/expected-root)
+            desired-root (get request :ref/desired-root)
+            scope-refs (memory-scope-refs backend scope)
+            actual-root (get scope-refs name)]
+        (cond
+          (= nil desired-root)
+          {:error :storage/missing-desired-ref-root
+           :ref/scope scope
+           :ref/name name}
+
+          (= false (= expected-root actual-root))
+          {:error :storage/ref-conflict
+           :ref/scope scope
+           :ref/name name
+           :ref/expected-root expected-root
+           :ref/actual-root actual-root
+           :ref/desired-root desired-root}
+
+          :else
+          (let [refs (memory-refs backend)
+                next-scope-refs
+                (assoc scope-refs name desired-root)
+                next-backend
+                (assoc backend :storage/refs
+                       (assoc refs scope next-scope-refs))]
+            {:ok next-backend
+             :ref/value (ref-value scope name desired-root)
+             :ref/previous-root actual-root
+             :ref/authorization-root
+             (get request :ref/authorization-root)})))
+      validation)))
