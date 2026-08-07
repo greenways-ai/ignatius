@@ -15755,7 +15755,24 @@ CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkspaceMainAcceptance" (
   "recorded_at" BIGINT NOT NULL
 );
 
--- gwdb.ledger.workspace-main/main-scope [54] 
+-- gwdb.ledger.workspace-main/WorkspaceMainSelection [54] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkspaceMainSelection" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkspaceMainSelection" (
+  "acceptance_root" BYTEA PRIMARY KEY,
+  "workspace_id_root" BYTEA NOT NULL,
+  "authority_root" BYTEA NOT NULL,
+  "expected_root" BYTEA,
+  "candidate_root" BYTEA NOT NULL,
+  "policy_root" BYTEA NOT NULL,
+  "ref_version" BIGINT NOT NULL,
+  "network" TEXT NOT NULL,
+  "transaction_root" BYTEA NOT NULL,
+  "receipt_root" BYTEA NOT NULL,
+  "block_root" BYTEA NOT NULL,
+  "recorded_at" BIGINT NOT NULL
+);
+
+-- gwdb.ledger.workspace-main/main-scope [70] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_scope(
   i_workspace_id_root BYTEA
 ) RETURNS TEXT AS $$
@@ -15764,14 +15781,14 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-ref-name [61] 
+-- gwdb.ledger.workspace-main/main-ref-name [77] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_ref_name() RETURNS TEXT AS $$
 
   SELECT RETURN 'main';
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.workspace-main/main-acceptance-id [69] 
+-- gwdb.ledger.workspace-main/main-acceptance-id [85] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_acceptance_id(
   i_workspace_id_root BYTEA,
   i_candidate_root BYTEA
@@ -15781,7 +15798,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-acceptance-extensions-value [79] 
+-- gwdb.ledger.workspace-main/main-acceptance-extensions-value [95] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_acceptance_extensions_value(
   i_workspace_id_root BYTEA,
   i_expected_root BYTEA,
@@ -15811,7 +15828,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".main_acceptance_extensions_value(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-value [102] 
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-value [118] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_value(
   i_workspace_id_root BYTEA,
   i_authority_root BYTEA,
@@ -15907,7 +15924,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_value(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-row [182] 
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-row [198] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_row(
   i_acceptance_root BYTEA
 ) RETURNS JSONB AS $$
@@ -15929,7 +15946,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/review-root-seen-before [189] 
+-- gwdb.ledger.workspace-main/review-root-seen-before [205] 
 CREATE OR REPLACE FUNCTION "gw_ledger".review_root_seen_before(
   i_review_roots_root BYTEA,
   i_position INTEGER,
@@ -15951,7 +15968,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/acceptance-review-vector-error-at [208] 
+-- gwdb.ledger.workspace-main/acceptance-review-vector-error-at [224] 
 CREATE OR REPLACE FUNCTION "gw_ledger".acceptance_review_vector_error_at(
   i_review_roots_root BYTEA,
   i_position INTEGER,
@@ -15981,7 +15998,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/acceptance-review-vector-error [237] 
+-- gwdb.ledger.workspace-main/acceptance-review-vector-error [253] 
 CREATE OR REPLACE FUNCTION "gw_ledger".acceptance_review_vector_error(
   i_review_roots_root BYTEA
 ) RETURNS TEXT AS $$
@@ -16010,7 +16027,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".acceptance_review_vector_error(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-error [260] 
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-error [276] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_error(
   i_acceptance_root BYTEA
 ) RETURNS TEXT AS $$
@@ -16171,7 +16188,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-valid [480] 
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-valid [496] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_valid(
   i_acceptance_root BYTEA
 ) RETURNS BOOLEAN AS $$
@@ -16213,7 +16230,188 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_valid(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-import [509] 
+-- gwdb.ledger.workspace-main/workspace-main-selection-row [525] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_selection_row(
+  i_acceptance_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "acceptance_root",
+      "workspace_id_root",
+      "authority_root",
+      "expected_root",
+      "candidate_root",
+      "policy_root",
+      "ref_version",
+      "network",
+      "transaction_root",
+      "receipt_root",
+      "block_root",
+      "recorded_at"
+    FROM "gw_ledger"."WorkspaceMainSelection"
+    WHERE "acceptance_root" = i_acceptance_root
+    LIMIT 1)
+  SELECT to_jsonb(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-selection-valid [532] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_selection_valid(
+  i_acceptance_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_acceptance JSONB;
+    o_binding JSONB;
+    o_block JSONB;
+    o_receipt JSONB;
+    o_selection JSONB;
+    o_transaction JSONB;
+    v_acceptance_expected_root BYTEA;
+    v_operation_root BYTEA;
+    v_selection_expected_root BYTEA;
+  BEGIN
+    o_selection := "gw_ledger".workspace_main_selection_row(i_acceptance_root);
+    o_acceptance := CASE WHEN o_selection IS NULL THEN null
+    ELSE "gw_ledger".workspace_main_acceptance_row(i_acceptance_root)
+    END;
+    v_selection_expected_root := CASE WHEN o_selection IS NULL THEN null
+    ELSE (o_selection ->> 'expected_root')::BYTEA
+    END;
+    v_acceptance_expected_root := CASE WHEN o_acceptance IS NULL THEN null
+    ELSE (o_acceptance ->> 'expected_root')::BYTEA
+    END;
+    o_transaction := CASE WHEN o_selection IS NULL THEN null
+    ELSE "gw_ledger".transaction_get((o_selection ->> 'transaction_root')::BYTEA)
+    END;
+    o_receipt := CASE WHEN o_selection IS NULL THEN null
+    ELSE "gw_ledger".transaction_receipt_get((o_selection ->> 'receipt_root')::BYTEA)
+    END;
+    o_block := CASE WHEN o_selection IS NULL THEN null
+    ELSE "gw_ledger".block_get((o_selection ->> 'block_root')::BYTEA)
+    END;
+    o_binding := CASE WHEN o_selection IS NULL THEN null
+    ELSE WITH j_ret AS (  
+      SELECT "block_root","position","transaction_root","receipt_root" FROM "gw_ledger"."BlockTransaction"
+      WHERE "block_root" = (o_selection ->> 'block_root')::BYTEA
+      AND "transaction_root" = (o_selection ->> 'transaction_root')::BYTEA
+      AND "receipt_root" = (o_selection ->> 'receipt_root')::BYTEA
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret
+    END;
+    v_operation_root := CASE WHEN o_selection IS NULL THEN null
+    ELSE "gw_ledger".constant(i_acceptance_root)
+    END;
+    RETURN o_selection IS NOT NULL AND o_acceptance IS NOT NULL AND o_transaction IS NOT NULL AND o_receipt IS NOT NULL AND o_block IS NOT NULL AND o_binding IS NOT NULL AND "gw_ledger".workspace_main_acceptance_valid(i_acceptance_root) AND ((o_selection ->> 'workspace_id_root')::BYTEA = (o_acceptance ->> 'workspace_id_root')::BYTEA) AND ((o_selection ->> 'authority_root')::BYTEA = (o_acceptance ->> 'authority_root')::BYTEA) AND ((v_selection_expected_root IS NULL AND v_acceptance_expected_root IS NULL) OR (v_selection_expected_root IS NOT NULL AND v_acceptance_expected_root IS NOT NULL AND (v_selection_expected_root = v_acceptance_expected_root))) AND ((o_selection ->> 'candidate_root')::BYTEA = (o_acceptance ->> 'candidate_root')::BYTEA) AND ((o_selection ->> 'policy_root')::BYTEA = (o_acceptance ->> 'policy_root')::BYTEA) AND ((o_selection ->> 'recorded_at')::BIGINT = (o_acceptance ->> 'recorded_at')::BIGINT) AND ((o_selection ->> 'ref_version')::BIGINT >= 1) AND ((o_transaction ->> 'network')::TEXT = (o_selection ->> 'network')::TEXT) AND ((o_transaction ->> 'origin')::BYTEA = (o_selection ->> 'authority_root')::BYTEA) AND ((o_transaction ->> 'op_root')::BYTEA = v_operation_root) AND ((o_receipt ->> 'transaction_root')::BYTEA = (o_selection ->> 'transaction_root')::BYTEA) AND ((o_receipt ->> 'status')::TEXT = 'ok') AND ((o_receipt ->> 'result_root')::BYTEA = i_acceptance_root) AND ((o_receipt ->> 'previous_state_root')::BYTEA = (o_block ->> 'previous_state_root')::BYTEA) AND ((o_receipt ->> 'state_root')::BYTEA = (o_block ->> 'state_root')::BYTEA) AND ((o_block ->> 'network')::TEXT = (o_selection ->> 'network')::TEXT) AND ((o_block ->> 'timestamp')::BIGINT = (o_selection ->> 'recorded_at')::BIGINT) AND "gw_ledger".block_valid((o_selection ->> 'block_root')::BYTEA) AND "gw_ledger".transaction_signed_valid(
+      (o_selection ->> 'transaction_root')::BYTEA,
+      (o_selection ->> 'network')::TEXT,
+      (o_block ->> 'previous_state_root')::BYTEA
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-selection-put [640] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_selection_put(
+  i_network TEXT,
+  i_acceptance_root BYTEA,
+  i_workspace_id_root BYTEA,
+  i_authority_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_ref_version BIGINT,
+  i_transaction_root BYTEA,
+  i_receipt_root BYTEA,
+  i_block_root BYTEA,
+  i_recorded_at BIGINT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_existing JSONB;
+  BEGIN
+    o_existing := "gw_ledger".workspace_main_selection_row(i_acceptance_root);
+    IF o_existing is not null  THEN
+      IF NOT   ("gw_ledger".workspace_main_selection_valid(i_acceptance_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+              'status',
+              'error',
+              'tag',
+              'ledger/workspace_main_selection_conflict',
+              'data',
+              null
+            ))::TEXT,
+          MESSAGE = 'ledger/workspace-main-selection-conflict'
+        ;
+      END IF;
+      RETURN i_acceptance_root;
+    END IF;
+    DECLARE
+      o_insert JSONB;
+    BEGIN
+      WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkspaceMainSelection" (
+          "acceptance_root",
+          "workspace_id_root",
+          "authority_root",
+          "expected_root",
+          "candidate_root",
+          "policy_root",
+          "ref_version",
+          "network",
+          "transaction_root",
+          "receipt_root",
+          "block_root",
+          "recorded_at"
+        ) VALUES (
+          (i_acceptance_root)::BYTEA,
+          (i_workspace_id_root)::BYTEA,
+          (i_authority_root)::BYTEA,
+          (i_expected_root)::BYTEA,
+          (i_candidate_root)::BYTEA,
+          (i_policy_root)::BYTEA,
+          (i_ref_version)::BIGINT,
+          (i_network)::TEXT,
+          (i_transaction_root)::BYTEA,
+          (i_receipt_root)::BYTEA,
+          (i_block_root)::BYTEA,
+          (i_recorded_at)::BIGINT
+        ) RETURNING
+          "acceptance_root",
+          "workspace_id_root",
+          "authority_root",
+          "expected_root",
+          "candidate_root",
+          "policy_root",
+          "ref_version",
+          "network",
+          "transaction_root",
+          "receipt_root",
+          "block_root",
+          "recorded_at")
+      SELECT to_jsonb(j_ret) FROM j_ret INTO o_insert;
+      IF NOT ("gw_ledger".workspace_main_selection_valid(i_acceptance_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/invalid_workspace_main_selection',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/invalid-workspace-main-selection'
+        ;
+      END IF;
+      RETURN i_acceptance_root;
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-import [681] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_import(
   i_acceptance_root BYTEA
 ) RETURNS BYTEA AS $$
@@ -16309,7 +16507,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_import(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-acceptance-put [554] 
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-put [726] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_put(
   i_workspace_id_root BYTEA,
   i_authority_root BYTEA,
@@ -16365,7 +16563,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_put(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-policy-selected [578] 
+-- gwdb.ledger.workspace-main/main-policy-selected [750] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_policy_selected(
   i_workspace_id_root BYTEA,
   i_policy_root BYTEA,
@@ -16384,7 +16582,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".main_policy_selected(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-review-evidence-error-at [594] 
+-- gwdb.ledger.workspace-main/main-review-evidence-error-at [766] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_review_evidence_error_at(
   i_workspace_id_root BYTEA,
   i_candidate_root BYTEA,
@@ -16443,7 +16641,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-review-evidence-error [665] 
+-- gwdb.ledger.workspace-main/main-review-evidence-error [837] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_review_evidence_error(
   i_workspace_id_root BYTEA,
   i_candidate_root BYTEA,
@@ -16486,7 +16684,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".main_review_evidence_error(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/main-transition-error [699] 
+-- gwdb.ledger.workspace-main/main-transition-error [871] 
 CREATE OR REPLACE FUNCTION "gw_ledger".main_transition_error(
   i_workspace_id_root BYTEA,
   i_authority_root BYTEA,
@@ -16548,7 +16746,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".main_transition_error(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-signing-request [791] 
+-- gwdb.ledger.workspace-main/workspace-main-signing-request [963] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_signing_request(
   i_network TEXT,
   i_public_key BYTEA,
@@ -16694,7 +16892,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_signing_request(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-main/workspace-main-submit [860] 
+-- gwdb.ledger.workspace-main/workspace-main-submit [1032] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_submit(
   i_network TEXT,
   i_public_key BYTEA,
@@ -16864,6 +17062,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_submit(
       o_receipt JSONB;
       v_block_root BYTEA;
       v_receipt_root BYTEA;
+      v_selection_root BYTEA;
       v_state_root BYTEA;
       v_transaction_root BYTEA;
     BEGIN
@@ -16919,6 +17118,20 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_submit(
         jsonb_build_array(encode(v_transaction_root,'hex'))
       );
       o_bound := "gw_ledger".block_transaction_bind(v_block_root,0,v_receipt_root);
+      v_selection_root := "gw_ledger".workspace_main_selection_put(
+        i_network,
+        v_acceptance_root,
+        i_workspace_id_root,
+        v_address_root,
+        i_expected_root,
+        i_candidate_root,
+        i_policy_root,
+        (o_cas ->> 'version')::BIGINT,
+        v_transaction_root,
+        v_receipt_root,
+        v_block_root,
+        i_recorded_at
+      );
       RETURN jsonb_build_object(
         'status',
         'ok',
@@ -18237,36 +18450,12 @@ $$ LANGUAGE 'plpgsql';
 CREATE OR REPLACE FUNCTION "gw_ledger".accepted_main_evidence_row(
   i_acceptance_root BYTEA
 ) RETURNS JSONB AS $$
-
-  DECLARE
-    o_receipt JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "receipt_root",
-        "transaction_root",
-        "status",
-        "result_root",
-        "previous_state_root",
-        "state_root",
-        "cost_used",
-        "error_code"
-      FROM "gw_ledger"."TransactionReceipt"
-      WHERE "status" = 'ok' AND "result_root" = i_acceptance_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_receipt;
-    RETURN CASE WHEN o_receipt IS NULL THEN null
-    ELSE WITH j_ret AS (  
-      SELECT "block_root","position","transaction_root","receipt_root" FROM "gw_ledger"."BlockTransaction"
-      WHERE "receipt_root" = (o_receipt ->> 'receipt_root')::BYTEA
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret
-    END;
-  END;
-
+BEGIN
+  RETURN "gw_ledger".workspace_main_selection_row(i_acceptance_root);
+END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/accepted-main-evidence-error [241] 
+-- gwdb.ledger.workspace-release/accepted-main-evidence-error [230] 
 CREATE OR REPLACE FUNCTION "gw_ledger".accepted_main_evidence_error(
   i_network TEXT,
   i_acceptance_root BYTEA
@@ -18274,80 +18463,29 @@ CREATE OR REPLACE FUNCTION "gw_ledger".accepted_main_evidence_error(
 
   DECLARE
     o_acceptance JSONB;
-    o_binding JSONB;
-    o_block JSONB;
     o_head JSONB;
-    o_receipt JSONB;
-    o_transaction JSONB;
+    o_selection JSONB;
   BEGIN
     o_acceptance := "gw_ledger".workspace_main_acceptance_row(i_acceptance_root);
-    WITH j_ret AS (  
-      SELECT
-        "receipt_root",
-        "transaction_root",
-        "status",
-        "result_root",
-        "previous_state_root",
-        "state_root",
-        "cost_used",
-        "error_code"
-      FROM "gw_ledger"."TransactionReceipt"
-      WHERE "status" = 'ok' AND "result_root" = i_acceptance_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_receipt;
-    o_binding := CASE WHEN o_receipt IS NULL THEN null
-    ELSE WITH j_ret AS (  
-      SELECT "block_root","position","transaction_root","receipt_root" FROM "gw_ledger"."BlockTransaction"
-      WHERE "receipt_root" = (o_receipt ->> 'receipt_root')::BYTEA
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret
-    END;
-    o_block := CASE WHEN o_binding IS NULL THEN null
-    ELSE "gw_ledger".block_get((o_binding ->> 'block_root')::BYTEA)
-    END;
-    o_transaction := CASE WHEN o_receipt IS NULL THEN null
-    ELSE "gw_ledger".transaction_get((o_receipt ->> 'transaction_root')::BYTEA)
-    END;
+    o_selection := "gw_ledger".workspace_main_selection_row(i_acceptance_root);
     o_head := "gw_ledger".head_get(i_network);
     IF o_acceptance is null  THEN
       RETURN 'workspace/release-acceptance-not-found';
     ELSIF NOT "gw_ledger".workspace_main_acceptance_valid(i_acceptance_root) THEN
       RETURN 'workspace/invalid-release-acceptance';
-    ELSIF o_receipt is null  THEN
-      RETURN 'workspace/release-acceptance-not-committed';
-    ELSIF o_binding is null  THEN
-      RETURN 'workspace/release-acceptance-receipt-not-bound';
-    ELSIF o_block is null  THEN
-      RETURN 'workspace/release-acceptance-block-not-found';
-    ELSIF o_transaction is null  THEN
-      RETURN 'workspace/release-acceptance-transaction-not-found';
+    ELSIF o_selection is null  THEN
+      RETURN 'workspace/release-acceptance-not-selected';
+    ELSIF NOT "gw_ledger".workspace_main_selection_valid(i_acceptance_root) THEN
+      RETURN 'workspace/invalid-release-acceptance-selection';
     ELSIF o_head is null  THEN
       RETURN 'workspace/release-network-not-found';
-    ELSIF NOT ((o_binding ->> 'transaction_root')::BYTEA = (o_receipt ->> 'transaction_root')::BYTEA) THEN
-      RETURN 'workspace/release-acceptance-transaction-mismatch';
-    ELSIF NOT ((o_binding ->> 'receipt_root')::BYTEA = (o_receipt ->> 'receipt_root')::BYTEA) THEN
-      RETURN 'workspace/release-acceptance-receipt-mismatch';
-    ELSIF NOT ((o_block ->> 'network')::TEXT = i_network) THEN
+    ELSIF NOT ((o_selection ->> 'network')::TEXT = i_network) THEN
       RETURN 'workspace/release-acceptance-network-mismatch';
-    ELSIF NOT "gw_ledger".block_valid((o_binding ->> 'block_root')::BYTEA) THEN
-      RETURN 'workspace/invalid-release-acceptance-block';
     ELSIF NOT "gw_ledger".block_ancestor(
-      (o_binding ->> 'block_root')::BYTEA,
+      (o_selection ->> 'block_root')::BYTEA,
       (o_head ->> 'block_root')::BYTEA
     ) THEN
       RETURN 'workspace/release-acceptance-not-canonical';
-    ELSIF NOT "gw_ledger".transaction_signed_valid(
-      (o_receipt ->> 'transaction_root')::BYTEA,
-      i_network,
-      (o_block ->> 'previous_state_root')::BYTEA
-    ) THEN
-      RETURN 'workspace/invalid-release-acceptance-transaction';
-    ELSIF NOT ((o_receipt ->> 'previous_state_root')::BYTEA = (o_block ->> 'previous_state_root')::BYTEA) THEN
-      RETURN 'workspace/release-acceptance-previous-state-mismatch';
-    ELSIF NOT ((o_receipt ->> 'state_root')::BYTEA = (o_block ->> 'state_root')::BYTEA) THEN
-      RETURN 'workspace/release-acceptance-state-mismatch';
-    ELSIF NOT ((o_transaction ->> 'origin')::BYTEA = (o_acceptance ->> 'authority_root')::BYTEA) THEN
-      RETURN 'workspace/release-acceptance-origin-mismatch';
     ELSE
       RETURN null;
     END IF;
@@ -18355,7 +18493,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".accepted_main_evidence_error(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/accepted-main-evidence-valid [347] 
+-- gwdb.ledger.workspace-release/accepted-main-evidence-valid [272] 
 CREATE OR REPLACE FUNCTION "gw_ledger".accepted_main_evidence_valid(
   i_network TEXT,
   i_acceptance_root BYTEA
@@ -18365,7 +18503,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-error [355] 
+-- gwdb.ledger.workspace-release/workspace-release-error [280] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_error(
   i_release_root BYTEA
 ) RETURNS TEXT AS $$
@@ -18575,7 +18713,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-valid [654] 
+-- gwdb.ledger.workspace-release/workspace-release-valid [579] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_valid(
   i_release_root BYTEA
 ) RETURNS BOOLEAN AS $$
@@ -18617,7 +18755,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_valid(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-import [682] 
+-- gwdb.ledger.workspace-release/workspace-release-import [607] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_import(
   i_release_root BYTEA
 ) RETURNS BYTEA AS $$
@@ -18718,7 +18856,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_import(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-put [730] 
+-- gwdb.ledger.workspace-release/workspace-release-put [655] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_put(
   i_workspace_id_root BYTEA,
   i_authority_root BYTEA,
@@ -18785,7 +18923,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_put(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/release-transition-error [755] 
+-- gwdb.ledger.workspace-release/release-transition-error [680] 
 CREATE OR REPLACE FUNCTION "gw_ledger".release_transition_error(
   i_network TEXT,
   i_workspace_id_root BYTEA,
@@ -18867,7 +19005,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".release_transition_error(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-signing-request [878] 
+-- gwdb.ledger.workspace-release/workspace-release-signing-request [803] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_signing_request(
   i_network TEXT,
   i_public_key BYTEA,
@@ -19003,7 +19141,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_signing_request(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.workspace-release/workspace-release-submit [946] 
+-- gwdb.ledger.workspace-release/workspace-release-submit [871] 
 CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_submit(
   i_network TEXT,
   i_public_key BYTEA,
