@@ -540,6 +540,16 @@
                  nil
                  :else
                  (-/workspace-main-acceptance-row i-acceptance-root))
+        (:bytea v-selection-expected-root)
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-selection "expected_root")))
+        (:bytea v-acceptance-expected-root)
+        (pg/case [o-acceptance :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-acceptance "expected_root")))
         o-transaction
         (pg/case [o-selection :is-null]
                  nil
@@ -588,8 +598,12 @@
               (:bytea (:->> o-acceptance "workspace_id_root")))
           (== (:bytea (:->> o-selection "authority_root"))
               (:bytea (:->> o-acceptance "authority_root")))
-          (== (:bytea (:->> o-selection "expected_root"))
-              (:bytea (:->> o-acceptance "expected_root")))
+          (or (and [v-selection-expected-root :is-null]
+                   [v-acceptance-expected-root :is-null])
+              (and [v-selection-expected-root :is-not-null]
+                   [v-acceptance-expected-root :is-not-null]
+                   (== v-selection-expected-root
+                       v-acceptance-expected-root)))
           (== (:bytea (:->> o-selection "candidate_root"))
               (:bytea (:->> o-acceptance "candidate_root")))
           (== (:bytea (:->> o-selection "policy_root"))
