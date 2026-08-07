@@ -181,7 +181,7 @@ C10 ──     CM
 The ancestry of `CM` contains four roots:
 
 ```clojure
-[CM CA C10 CB] ; traversal order is deterministic for one implementation
+[CM CA CB C10] ; indexed vector-queue traversal order
 ```
 
 Callers should rely on membership and parent order, not treat ancestry traversal
