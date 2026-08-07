@@ -255,6 +255,8 @@
          review-roots-root 7 20 main-signature)
         acceptance-root
         (hex-bytes (json-field main-result "acceptance_root"))
+        acceptance-selection-row
+        (workspace-main/workspace-main-selection-row acceptance-root)
 
         uncommitted-acceptance-root
         (workspace-main/workspace-main-acceptance-put
@@ -339,6 +341,9 @@
      (json-field alice-review "status")
      (json-field bob-review "status")
      (json-field main-result "status")
+     (workspace-main/workspace-main-selection-valid acceptance-root)
+     (= (:bytea (json-field acceptance-selection-row "candidate_root")) c0)
+     (= (:bytea (json-field acceptance-selection-row "policy_root")) policy-root)
      (workspace-release/accepted-main-evidence-valid
       network acceptance-root)
      (workspace-release/accepted-main-evidence-valid
@@ -375,7 +380,7 @@
      (= alice-address-hex (json-field result "address"))
      (= bob-address-hex (bytes-hex bob-address-root))])
   => ["ok" "ok" "ok" "ok" "ok"
-      true false :rejected :rejected :rejected
+      true true true true false :rejected :rejected :rejected
       "ok" 1 true true true
       true true true true true true true true
       true true true

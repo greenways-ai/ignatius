@@ -49,22 +49,18 @@ The fifth condition is stronger than structural validity. A stale main attempt
 may construct a perfectly valid immutable acceptance value before its ref CAS
 conflicts. Such a value must not authorize a release.
 
-## Proving committed acceptance
+## Proving the exact accepted transition
 
-For the cited acceptance root, the PostgreSQL adapter requires:
+`workspace-main-submit` records an append-only `WorkspaceMainSelection`
+binding only after the exact main CAS, signed transaction, receipt, block
+commit and receipt binding all succeed. The binding pins the workspace,
+authority, expected and desired roots, selected policy, ref version, network,
+transaction, receipt, block and recorded-at value.
 
-```text
-WorkspaceMainAcceptance projection is canonical
-  -> TransactionReceipt(status = ok, result_root = acceptance_root)
-  -> BlockTransaction binds that exact receipt and transaction
-  -> block and signed transaction are valid
-  -> receipt state roots match the block
-  -> block belongs to the parent chain ending at the current network head
-  -> transaction origin equals the acceptance authority
-```
-
-This proves that the acceptance was not merely built or projected; it entered a
-signed receipt in the canonical network history.
+Release admission reconstructs and validates that binding and requires its
+block to remain on the current network-head ancestry. A generic transaction
+that merely returns an acceptance-shaped root therefore cannot masquerade as
+the transition that advanced `main`.
 
 ## Create-only release ref
 

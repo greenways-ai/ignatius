@@ -221,55 +221,21 @@
                   (:bytea (:->> o-block "parent_root"))))))))
 
 (defn.pg accepted-main-evidence-row
-  "Finds the successful receipt and block binding for an acceptance root."
+  "Returns the exact append-only main-selection binding for an acceptance."
   {:added "0.17"}
   [:bytea i-acceptance-root]
-  (let [o-receipt
-        (pg/t:get
-         transaction/TransactionReceipt
-         {:where {:status "ok"
-                  :result-root i-acceptance-root}})]
-    (return
-     (pg/case [o-receipt :is-null]
-              nil
-              :else
-              (pg/t:get
-               block/BlockTransaction
-               {:where {:receipt-root
-                        (:bytea (:->> o-receipt "receipt_root"))}})))))
+  (return
+   (workspace-main/workspace-main-selection-row i-acceptance-root)))
 
 (defn.pg ^{:- [:text]}
   accepted-main-evidence-error
-  "Proves an acceptance has an ok receipt bound to the canonical network chain."
+  "Proves the acceptance caused a successful main CAS on the current chain."
   {:added "0.17"}
   [:text i-network :bytea i-acceptance-root]
   (let [o-acceptance
         (workspace-main/workspace-main-acceptance-row i-acceptance-root)
-        o-receipt
-        (pg/t:get
-         transaction/TransactionReceipt
-         {:where {:status "ok"
-                  :result-root i-acceptance-root}})
-        o-binding
-        (pg/case [o-receipt :is-null]
-                 nil
-                 :else
-                 (pg/t:get
-                  block/BlockTransaction
-                  {:where {:receipt-root
-                           (:bytea (:->> o-receipt "receipt_root"))}}))
-        o-block
-        (pg/case [o-binding :is-null]
-                 nil
-                 :else
-                 (block/block-get
-                  (:bytea (:->> o-binding "block_root"))))
-        o-transaction
-        (pg/case [o-receipt :is-null]
-                 nil
-                 :else
-                 (transaction/transaction-get
-                  (:bytea (:->> o-receipt "transaction_root"))))
+        o-selection
+        (workspace-main/workspace-main-selection-row i-acceptance-root)
         o-head (block/head-get i-network)]
     (cond [o-acceptance :is-null]
           (return "workspace/release-acceptance-not-found")
@@ -279,67 +245,26 @@
             i-acceptance-root))
           (return "workspace/invalid-release-acceptance")
 
-          [o-receipt :is-null]
-          (return "workspace/release-acceptance-not-committed")
+          [o-selection :is-null]
+          (return "workspace/release-acceptance-not-selected")
 
-          [o-binding :is-null]
-          (return "workspace/release-acceptance-receipt-not-bound")
-
-          [o-block :is-null]
-          (return "workspace/release-acceptance-block-not-found")
-
-          [o-transaction :is-null]
-          (return "workspace/release-acceptance-transaction-not-found")
+          (not
+           (workspace-main/workspace-main-selection-valid
+            i-acceptance-root))
+          (return "workspace/invalid-release-acceptance-selection")
 
           [o-head :is-null]
           (return "workspace/release-network-not-found")
 
           (not
-           (== (:bytea (:->> o-binding "transaction_root"))
-               (:bytea (:->> o-receipt "transaction_root"))))
-          (return "workspace/release-acceptance-transaction-mismatch")
-
-          (not
-           (== (:bytea (:->> o-binding "receipt_root"))
-               (:bytea (:->> o-receipt "receipt_root"))))
-          (return "workspace/release-acceptance-receipt-mismatch")
-
-          (not
-           (== (:text (:->> o-block "network")) i-network))
+           (== (:text (:->> o-selection "network")) i-network))
           (return "workspace/release-acceptance-network-mismatch")
 
           (not
-           (block/block-valid
-            (:bytea (:->> o-binding "block_root"))))
-          (return "workspace/invalid-release-acceptance-block")
-
-          (not
            (-/block-ancestor
-            (:bytea (:->> o-binding "block_root"))
+            (:bytea (:->> o-selection "block_root"))
             (:bytea (:->> o-head "block_root"))))
           (return "workspace/release-acceptance-not-canonical")
-
-          (not
-           (transaction/transaction-signed-valid
-            (:bytea (:->> o-receipt "transaction_root"))
-            i-network
-            (:bytea (:->> o-block "previous_state_root"))))
-          (return "workspace/invalid-release-acceptance-transaction")
-
-          (not
-           (== (:bytea (:->> o-receipt "previous_state_root"))
-               (:bytea (:->> o-block "previous_state_root"))))
-          (return "workspace/release-acceptance-previous-state-mismatch")
-
-          (not
-           (== (:bytea (:->> o-receipt "state_root"))
-               (:bytea (:->> o-block "state_root"))))
-          (return "workspace/release-acceptance-state-mismatch")
-
-          (not
-           (== (:bytea (:->> o-transaction "origin"))
-               (:bytea (:->> o-acceptance "authority_root"))))
-          (return "workspace/release-acceptance-origin-mismatch")
 
           :else
           (return nil))))
