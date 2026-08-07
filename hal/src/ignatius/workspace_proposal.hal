@@ -1,0 +1,122 @@
+(ns ignatius.workspace-proposal
+  (:require [ignatius.record :as record]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-admission :as admission]))
+
+(def proposal-publication-policy :proposal-publication-v1)
+
+(defn proposal-ref-name
+  "Derives one immutable proposal identity from the exact candidate root."
+  [desired-root]
+  (workspace/proposal-ref-name desired-root))
+
+(defn proposal-publication-intent
+  "Constructs the constrained one-shot proposal publication intent.
+
+  The proposal name is the desired commit root. Expected root is fixed to nil,
+  so publication can create but never replace a proposal ref."
+  [workspace-id origin-root desired-root]
+  (record/record-envelope
+   admission/intent-record-type
+   {:workspace/id workspace-id
+    :ref/scope (workspace/workspace-scope workspace-id)
+    :ref/name (proposal-ref-name desired-root)
+    :ref/expected-root nil
+    :ref/desired-root desired-root
+    :ref/authorization-root origin-root
+    :ref/policy proposal-publication-policy
+    :ref/metadata {}
+    :record/extensions {}}))
+
+(defn proposal-structure-error
+  "Validates fields that are fully derived by the proposal policy."
+  [origin-root intent]
+  (cond
+    (not (= admission/intent-record-type
+            (get intent :record/type)))
+    :workspace/invalid-ref-intent-record
+
+    (not (= admission/intent-record-version
+            (get intent :record/version)))
+    :workspace/unsupported-ref-intent-version
+
+    (= nil (get intent :workspace/id))
+    :workspace/missing-ref-workspace-id
+
+    (= nil origin-root)
+    :workspace/missing-ref-origin
+
+    (= nil (get intent :ref/desired-root))
+    :workspace/missing-desired-commit-root
+
+    (not (= nil (get intent :ref/expected-root)))
+    :workspace/proposal-expected-root-not-nil
+
+    (not
+     (= (workspace/workspace-scope
+         (get intent :workspace/id))
+        (get intent :ref/scope)))
+    :workspace/ref-scope-not-derived
+
+    (not
+     (= (proposal-ref-name
+         (get intent :ref/desired-root))
+        (get intent :ref/name)))
+    :workspace/ref-name-not-proposal
+
+    (not
+     (= origin-root
+        (get intent :ref/authorization-root)))
+    :workspace/ref-authorization-not-origin
+
+    (not
+     (= proposal-publication-policy
+        (get intent :ref/policy)))
+    :workspace/unsupported-ref-policy
+
+    (not (= {} (record/map-or-empty
+                (get intent :ref/metadata))))
+    :workspace/ref-metadata-not-supported
+
+    (not (= {} (record/map-or-empty
+                (get intent :record/extensions))))
+    :workspace/ref-extensions-not-supported
+
+    :else nil))
+
+(defn proposal-graph-error
+  "Requires one verified candidate from the named workspace.
+
+  Proposal publication deliberately does not require fast-forward ancestry:
+  sibling branches and merge alternatives are valid review subjects."
+  [store intent]
+  (let [workspace-id (get intent :workspace/id)
+        desired-root (get intent :ref/desired-root)
+        desired (workspace/commit-at store desired-root)]
+    (cond
+      (= nil desired)
+      :workspace/desired-commit-not-found
+
+      (not (= workspace-id
+              (get desired :workspace/id)))
+      :workspace/desired-commit-workspace-mismatch
+
+      :else nil)))
+
+(defn validate-proposal-publication
+  "Validates a verified origin's deterministic one-shot proposal intent."
+  [store origin-root intent]
+  (let [structure-error
+        (proposal-structure-error origin-root intent)]
+    (if (not (= nil structure-error))
+      {:error structure-error}
+      (let [graph-error (proposal-graph-error store intent)]
+        (if (not (= nil graph-error))
+          {:error graph-error}
+          {:ok intent
+           :ref/scope (get intent :ref/scope)
+           :ref/name (get intent :ref/name)
+           :ref/expected-root nil
+           :ref/desired-root (get intent :ref/desired-root)
+           :ref/authorization-root
+           (get intent :ref/authorization-root)})))))

@@ -240,6 +240,15 @@ export type WorkspaceRefSubmission =
       intent_root: LedgerRoot;
     };
 
+export interface WorkspaceProposalSigningRequest extends WorkspaceRefSigningRequest {
+  expected_root?: undefined;
+  policy: "proposal-publication-v1";
+}
+
+export type WorkspaceProposalSubmission = WorkspaceRefSubmission & {
+  policy: "proposal-publication-v1";
+};
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;
@@ -262,4 +271,6 @@ export interface LedgerSignedApi {
   submitOfflineTransaction(submission: OfflineTransactionSubmission): Promise<SignedSubmission & { result_root?: LedgerRoot; cost_used: number }>;
   workspaceRefSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, desiredRoot: LedgerRoot, costLimit?: number): Promise<WorkspaceRefSigningRequest>;
   submitWorkspaceRef(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceRefSubmission>;
+  workspaceProposalSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, desiredRoot: LedgerRoot, costLimit?: number): Promise<WorkspaceProposalSigningRequest>;
+  submitWorkspaceProposal(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceProposalSubmission>;
 }
