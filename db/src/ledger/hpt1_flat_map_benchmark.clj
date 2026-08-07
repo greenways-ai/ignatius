@@ -397,7 +397,6 @@
          (environment-value
           "HPT1_BENCHMARK_SAMPLES"
           (str default-sample-count)))]
-    (l/rt:teardown :postgres)
     (l/rt:setup :postgres)
     (try
       (let [evidence
