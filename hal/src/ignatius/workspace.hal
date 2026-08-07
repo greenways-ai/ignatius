@@ -195,13 +195,17 @@
          (parent-roots commit))))))
 
 (defn collect-ancestry
-  [store pending seen out]
-  (if (= 0 (count pending))
+  "Walks an append-only vector queue by index.
+
+  Hara's sequence `rest` value is not a valid target for `conj`, so traversal
+  retains one vector and advances an explicit position."
+  [store pending position seen out]
+  (if (>= position (count pending))
     out
-    (let [root (first pending)
-          remaining (rest pending)]
+    (let [root (get pending position)]
       (if (= true (get seen root))
-        (collect-ancestry store remaining seen out)
+        (collect-ancestry
+         store pending (+ position 1) seen out)
         (let [commit (commit-at store root)
               next-seen (assoc seen root true)
               next-out (conj out root)
@@ -209,10 +213,11 @@
               (reduce
                (fn [roots parent-root]
                  (conj roots parent-root))
-               remaining
+               pending
                (parent-roots commit))]
           (collect-ancestry
-           store next-pending next-seen next-out))))))
+           store next-pending (+ position 1)
+           next-seen next-out))))))
 
 (defn ancestry-roots
   "Returns each reachable commit root once, beginning with the supplied root."
@@ -220,7 +225,7 @@
   (if (= nil (commit-at store root))
     {:error :workspace/commit-not-found
      :commit/root root}
-    {:ok (collect-ancestry store [root] {} [])}))
+    {:ok (collect-ancestry store [root] 0 {} [])}))
 
 (defn register-commit
   "Adds one decoded commit after an injected canonical-root verifier succeeds.
