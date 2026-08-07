@@ -1,0 +1,34 @@
+name: Integrate exact workspace main selection binding
+
+on:
+  push:
+    branches: [agent/workspace-release-publication]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-release-publication
+
+      - name: Bind releases to the exact successful main CAS
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/integrate_workspace_main_selection_binding.py ]; then
+            exit 0
+          fi
+          python scripts/integrate_workspace_main_selection_binding.py
+          rm scripts/integrate_workspace_main_selection_binding.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/src/gwdb/ledger/workspace_main.clj \
+                  db/src/gwdb/ledger/workspace_release.clj \
+                  db/test/gwdb/ledger/workspace_release_test.clj \
+                  docs/workspace-release-admission.md \
+                  scripts/integrate_workspace_main_selection_binding.py
+          git commit -m "Bind releases to the exact accepted main transition"
+          git push origin HEAD:agent/workspace-release-publication
