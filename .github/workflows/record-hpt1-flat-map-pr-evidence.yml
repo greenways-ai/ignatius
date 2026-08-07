@@ -4,6 +4,10 @@ on:
   push:
     branches: [agent/hpt1-flat-map-measurements-pr]
 
+concurrency:
+  group: hpt1-flat-map-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -15,12 +19,17 @@ jobs:
         with:
           ref: agent/hpt1-flat-map-measurements-pr
 
-      - name: Skip an already recorded source snapshot
+      - name: Skip an already recorded complete snapshot
         id: existing
         run: |
-          if [ -f benchmarks/hpt1-flat-map/evidence.edn ]; then
+          set -euo pipefail
+          evidence=benchmarks/hpt1-flat-map/evidence.edn
+          if [ -f "$evidence" ] \
+             && [ "$(grep -c ':status :ok' "$evidence" || true)" -eq 5 ] \
+             && ! grep -q ':status :error' "$evidence"; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
+            rm -f "$evidence"
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -58,11 +67,24 @@ jobs:
             exit "$status"
           fi
 
+      - name: Validate measured evidence
+        if: steps.existing.outputs.present != 'true'
+        run: |
+          set -euo pipefail
+          evidence=benchmarks/hpt1-flat-map/evidence.edn
+          test -s "$evidence"
+          test "$(grep -c ':status :ok' "$evidence" || true)" -eq 5
+          ! grep -q ':status :error' "$evidence"
+          grep -q ':evidence/kind :hcv1-flat-map-jdbc-baseline' "$evidence"
+          grep -q ':timing/scope :jdbc-round-trip' "$evidence"
+          for entry_count in 16 64 256 1024 4096; do
+            grep -q ":entry-count $entry_count" "$evidence"
+          done
+
       - name: Commit measured evidence
         if: steps.existing.outputs.present != 'true'
         run: |
           set -euo pipefail
-          test -s benchmarks/hpt1-flat-map/evidence.edn
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add benchmarks/hpt1-flat-map/evidence.edn
