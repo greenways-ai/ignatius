@@ -1,0 +1,383 @@
+(ns gwdb.ledger.workspace-release-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.admission :as admission]
+            [gwdb.ledger.developer :as developer]
+            [gwdb.ledger.scoped-ref :as scoped-ref]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.workspace :as workspace]
+            [gwdb.ledger.workspace-proposal :as workspace-proposal]
+            [gwdb.ledger.workspace-review :as workspace-review]
+            [gwdb.ledger.workspace-acceptance :as workspace-acceptance]
+            [gwdb.ledger.workspace-main :as workspace-main]
+            [gwdb.ledger.workspace-release :as workspace-release]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :vendor :impossibl
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.admission :as admission]
+             [gwdb.ledger.developer :as developer]
+             [gwdb.ledger.scoped-ref :as scoped-ref]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.workspace :as workspace]
+             [gwdb.ledger.workspace-proposal :as workspace-proposal]
+             [gwdb.ledger.workspace-review :as workspace-review]
+             [gwdb.ledger.workspace-acceptance :as workspace-acceptance]
+             [gwdb.ledger.workspace-main :as workspace-main]
+             [gwdb.ledger.workspace-release :as workspace-release]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+(defn hex-bytes
+  [text]
+  (.parseHex (java.util.HexFormat/of) text))
+
+(defn bytes-hex
+  [bytes]
+  (.formatHex (java.util.HexFormat/of) bytes))
+
+(defn json-field
+  [value field]
+  (or (get value field)
+      (get value (keyword field))))
+
+(def +alice-private-seed+
+  "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+
+(def +alice-public-key+
+  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+
+(def +bob-private-seed+
+  "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+
+(def +bob-public-key+
+  "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+
+(defn sign-payload
+  [private-seed payload-hex]
+  (let [spec
+        (java.security.spec.EdECPrivateKeySpec.
+         java.security.spec.NamedParameterSpec/ED25519
+         (hex-bytes private-seed))
+        factory (java.security.KeyFactory/getInstance "Ed25519")
+        private-key (.generatePrivate factory spec)
+        signer (java.security.Signature/getInstance "Ed25519")]
+    (.initSign signer private-key)
+    (.update signer (hex-bytes payload-hex))
+    (bytes-hex (.sign signer))))
+
+(defn register-account
+  [network public-key private-seed timestamp]
+  (let [request
+        (admission/admission-registration-signing-request
+         network public-key)
+        signature
+        (hex-bytes
+         (sign-payload
+          private-seed
+          (json-field request "signing_payload")))]
+    (admission/admission-register-account
+     network public-key signature timestamp)))
+
+(defn.pg ^{:- [:bytea]}
+  root-vector
+  {:added "0.17"}
+  [:jsonb i-roots]
+  (return (value/put-vector i-roots)))
+
+(defn.pg ^{:- [:jsonb]}
+  release-fixture
+  {:added "0.17"}
+  [:bytea i-authority-root]
+  (let [(:bytea v-evidence)
+        (workspace-review/review-recorded-evidence-value
+         i-authority-root 1)
+        (:bytea v-workspace)
+        (value/put-string "world/orbital-station")
+        (:bytea v-empty-map)
+        (value/put-map (pg/jsonb-build-array))
+        (:bytea v-c0)
+        (workspace/workspace-commit-put
+         v-workspace nil
+         (-/root-vector (pg/jsonb-build-array))
+         (value/put-string "W0")
+         nil nil nil v-evidence nil v-empty-map v-empty-map)
+        (:bytea v-c1)
+        (workspace/workspace-commit-put
+         v-workspace nil
+         (-/root-vector
+          (pg/jsonb-build-array (pg/encode v-c0 "hex")))
+         (value/put-string "W1")
+         (value/put-string "edit-1")
+         nil nil v-evidence nil v-empty-map v-empty-map)]
+    (return
+     (pg/jsonb-build-object
+      "workspace_id_root" (pg/encode v-workspace "hex")
+      "c0" (pg/encode v-c0 "hex")
+      "c1" (pg/encode v-c1 "hex")))))
+
+(defn publish-proposal
+  [network public-key private-seed workspace-id-root candidate-root
+   timestamp]
+  (let [request
+        (workspace-proposal/workspace-proposal-signing-request
+         network public-key workspace-id-root candidate-root 20)
+        signature
+        (hex-bytes
+         (sign-payload
+          private-seed
+          (json-field request "signing_payload")))]
+    (workspace-proposal/workspace-proposal-submit
+     network public-key
+     (long (json-field request "sequence"))
+     workspace-id-root candidate-root 20 signature timestamp)))
+
+(defn publish-review
+  [network public-key private-seed workspace-id-root candidate-root
+   timestamp]
+  (let [request
+        (workspace-review/workspace-review-signing-request
+         network public-key workspace-id-root candidate-root
+         nil "approve" timestamp 20)
+        signature
+        (hex-bytes
+         (sign-payload
+          private-seed
+          (json-field request "signing_payload")))]
+    (workspace-review/workspace-review-submit
+     network public-key
+     (long (json-field request "sequence"))
+     workspace-id-root candidate-root nil
+     "approve" timestamp 20 signature)))
+
+^{:refer gwdb.ledger.workspace-release/workspace-release-submit :added "0.17"}
+(fact "signed release publication requires committed accepted-main evidence"
+  (let [network "workspace-releases"
+        alice-public-key (hex-bytes +alice-public-key+)
+        bob-public-key (hex-bytes +bob-public-key+)
+        _ (developer/developer-genesis network 0)
+        alice
+        (register-account
+         network alice-public-key +alice-private-seed+ 1)
+        bob
+        (register-account
+         network bob-public-key +bob-private-seed+ 2)
+        alice-address-hex (json-field alice "address")
+        bob-address-hex (json-field bob "address")
+        alice-address-root (hex-bytes alice-address-hex)
+        bob-address-root (hex-bytes bob-address-hex)
+        fixture (-/release-fixture alice-address-root)
+        workspace-id-root
+        (hex-bytes (json-field fixture "workspace_id_root"))
+        c0 (hex-bytes (json-field fixture "c0"))
+        c1 (hex-bytes (json-field fixture "c1"))
+        reviewer-roots-root
+        (-/root-vector
+         (pg/jsonb-build-array
+          alice-address-hex bob-address-hex))
+
+        policy-request
+        (workspace-acceptance/workspace-main-policy-signing-request
+         network alice-public-key workspace-id-root
+         reviewer-roots-root 3 20)
+        policy-signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field policy-request "signing_payload")))
+        policy-result
+        (workspace-acceptance/workspace-main-policy-submit
+         network alice-public-key
+         (long (json-field policy-request "sequence"))
+         workspace-id-root reviewer-roots-root
+         3 20 policy-signature)
+        policy-root
+        (hex-bytes (json-field policy-result "policy_root"))
+
+        proposal-result
+        (publish-proposal
+         network alice-public-key +alice-private-seed+
+         workspace-id-root c0 4)
+        alice-review
+        (publish-review
+         network alice-public-key +alice-private-seed+
+         workspace-id-root c0 5)
+        bob-review
+        (publish-review
+         network bob-public-key +bob-private-seed+
+         workspace-id-root c0 6)
+        alice-review-root
+        (hex-bytes (json-field alice-review "review_root"))
+        bob-review-root
+        (hex-bytes (json-field bob-review "review_root"))
+        review-roots-root
+        (-/root-vector
+         (pg/jsonb-build-array
+          (bytes-hex alice-review-root)
+          (bytes-hex bob-review-root)))
+
+        main-request
+        (workspace-main/workspace-main-signing-request
+         network alice-public-key workspace-id-root nil c0
+         policy-root review-roots-root 7 20)
+        main-signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field main-request "signing_payload")))
+        main-result
+        (workspace-main/workspace-main-submit
+         network alice-public-key
+         (long (json-field main-request "sequence"))
+         workspace-id-root nil c0 policy-root
+         review-roots-root 7 20 main-signature)
+        acceptance-root
+        (hex-bytes (json-field main-result "acceptance_root"))
+
+        uncommitted-acceptance-root
+        (workspace-main/workspace-main-acceptance-put
+         workspace-id-root alice-address-root nil c0
+         policy-root review-roots-root 70)
+        uncommitted-release
+        (try
+          (workspace-release/workspace-release-signing-request
+           network alice-public-key workspace-id-root "0.9.0"
+           c0 policy-root uncommitted-acceptance-root 71 20)
+          (catch Throwable _ :rejected))
+        non-current-candidate
+        (try
+          (workspace-release/workspace-release-signing-request
+           network alice-public-key workspace-id-root "2.0.0"
+           c1 policy-root acceptance-root 72 20)
+          (catch Throwable _ :rejected))
+        invalid-version
+        (try
+          (workspace-release/workspace-release-signing-request
+           network alice-public-key workspace-id-root "Bad Version"
+           c0 policy-root acceptance-root 73 20)
+          (catch Throwable _ :rejected))
+
+        request
+        (workspace-release/workspace-release-signing-request
+         network alice-public-key workspace-id-root "1.0.0"
+         c0 policy-root acceptance-root 8 20)
+        signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field request "signing_payload")))
+        result
+        (workspace-release/workspace-release-submit
+         network alice-public-key
+         (long (json-field request "sequence"))
+         workspace-id-root "1.0.0" c0 policy-root
+         acceptance-root 8 20 signature)
+        release-root
+        (hex-bytes (json-field result "release_root"))
+
+        duplicate-request
+        (workspace-release/workspace-release-signing-request
+         network alice-public-key workspace-id-root "1.0.0"
+         c0 policy-root acceptance-root 8 20)
+        duplicate-signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field duplicate-request "signing_payload")))
+        duplicate-result
+        (workspace-release/workspace-release-submit
+         network alice-public-key
+         (long (json-field duplicate-request "sequence"))
+         workspace-id-root "1.0.0" c0 policy-root
+         acceptance-root 8 20 duplicate-signature)
+        after-conflict-request
+        (workspace-release/workspace-release-signing-request
+         network alice-public-key workspace-id-root "1.0.1"
+         c0 policy-root acceptance-root 9 20)
+        replayed
+        (try
+          (workspace-release/workspace-release-submit
+           network alice-public-key
+           (long (json-field request "sequence"))
+           workspace-id-root "1.0.0" c0 policy-root
+           acceptance-root 8 20 signature)
+          (catch Throwable _ :rejected))
+
+        scope (json-field result "scope")
+        name (json-field result "name")
+        release-read
+        (scoped-ref/scoped-ref-read scope name policy-root)
+        release-row
+        (workspace-release/workspace-release-row release-root)
+        main-row (scoped-ref/scoped-ref-row scope "main")
+        policy-row (scoped-ref/scoped-ref-row scope "policy/main")
+        head (developer/developer-head network)]
+    [(json-field policy-result "status")
+     (json-field proposal-result "status")
+     (json-field alice-review "status")
+     (json-field bob-review "status")
+     (json-field main-result "status")
+     (workspace-release/accepted-main-evidence-valid
+      network acceptance-root)
+     (workspace-release/accepted-main-evidence-valid
+      network uncommitted-acceptance-root)
+     uncommitted-release
+     non-current-candidate
+     invalid-version
+     (json-field result "status")
+     (json-field result "ref_version")
+     (= (json-field result "release_root")
+        (json-field result "result_root"))
+     (= name "release/1.0.0")
+     (= (json-field release-read "root") (bytes-hex c0))
+     (= (:bytea (json-field release-row "workspace_id_root"))
+        workspace-id-root)
+     (= (:bytea (json-field release-row "authority_root"))
+        alice-address-root)
+     (= (:text (json-field release-row "version")) "1.0.0")
+     (= (:bytea (json-field release-row "candidate_root")) c0)
+     (= (:bytea (json-field release-row "policy_root")) policy-root)
+     (= (:bytea (json-field release-row "acceptance_root"))
+        acceptance-root)
+     (= (:bigint (json-field release-row "recorded_at")) 8)
+     (workspace-release/workspace-release-valid release-root)
+     (= (:bytea (json-field main-row "root")) c0)
+     (= (:bytea (json-field main-row "authorization_root")) policy-root)
+     (= (:bytea (json-field policy-row "root")) policy-root)
+     (json-field duplicate-result "status")
+     (json-field duplicate-result "error")
+     (= (json-field duplicate-result "actual_root") (bytes-hex c0))
+     (json-field after-conflict-request "sequence")
+     replayed
+     (json-field head "height")
+     (= alice-address-hex (json-field result "address"))
+     (= bob-address-hex (bytes-hex bob-address-root))])
+  => ["ok" "ok" "ok" "ok" "ok"
+      true false :rejected :rejected :rejected
+      "ok" 1 true true true
+      true true true true true true true true
+      true true true
+      "conflict" "storage/ref-conflict" true
+      5 :rejected 8 true true])
