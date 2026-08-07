@@ -37,6 +37,7 @@
             [gwdb.ledger.admission]
             [gwdb.ledger.workspace-admission]
             [gwdb.ledger.workspace-proposal]
+            [gwdb.ledger.workspace-review]
             [gwdb.ledger.developer]))
 
 ;; The ledger is deliberately a plain PostgreSQL project. Supabase transforms,
@@ -78,6 +79,7 @@
              [gwdb.ledger.admission]
              [gwdb.ledger.workspace-admission]
              [gwdb.ledger.workspace-proposal]
+             [gwdb.ledger.workspace-review]
              [gwdb.ledger.developer]]
    :config {:dbname "gw-ledger-test"}
    :import [["pgcrypto"]]

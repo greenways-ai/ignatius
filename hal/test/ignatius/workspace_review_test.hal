@@ -1,0 +1,276 @@
+(ns ignatius.workspace-review-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-proposal :as proposal]
+            [ignatius.workspace-review :as review]))
+
+(def workspace-id "world/orbital-station")
+(def candidate-root "C1")
+(def reviewer-root "account/alice")
+(def other-reviewer-root "account/bob")
+
+(def author-evidence
+  (record/ledger-evidence
+   {:ledger/signer reviewer-root
+    :ledger/transaction-root "transaction/root"
+    :ledger/timestamp 1
+    :ledger/previous-head-root nil
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil}))
+
+(defn commit-root-valid?
+  [root commit]
+  (= root (get-in commit [:record/extensions :test/root])))
+
+(def c0
+  (workspace/commit-candidate
+   {:workspace/id workspace-id
+    :workspace/root nil
+    :commit/parent-roots []
+    :commit/state-root "W0"
+    :commit/operation-root nil
+    :commit/merge-base-root nil
+    :commit/merge-policy-root nil
+    :commit/author-evidence author-evidence
+    :commit/execution-provenance nil
+    :commit/metadata {}
+    :record/extensions {:test/root "C0"}}))
+
+(def c1
+  (workspace/commit-candidate
+   {:workspace/id workspace-id
+    :workspace/root nil
+    :commit/parent-roots ["C0"]
+    :commit/state-root "W1"
+    :commit/operation-root "operation/C1"
+    :commit/merge-base-root nil
+    :commit/merge-policy-root nil
+    :commit/author-evidence author-evidence
+    :commit/execution-provenance nil
+    :commit/metadata {}
+    :record/extensions {:test/root "C1"}}))
+
+(def commit-store-0 (workspace/commit-store))
+(def commit-store-c0
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-0 "C0" c0)
+   :ok))
+(def commit-store
+  (get
+   (workspace/register-commit
+    commit-root-valid? commit-store-c0 "C1" c1)
+   :ok))
+
+(def proposal-backend-0 (storage/memory-backend "proposals"))
+(def proposal-result
+  (storage/memory-compare-and-set-ref
+   proposal-backend-0
+   (storage/ref-update-request
+    (workspace/workspace-scope workspace-id)
+    (proposal/proposal-ref-name candidate-root)
+    nil candidate-root reviewer-root)))
+(def proposal-backend (get proposal-result :ok))
+
+(def approve
+  (review/review-decision-value
+   candidate-root reviewer-root "approve" 10))
+(def reject
+  (review/review-decision-value
+   candidate-root reviewer-root "reject" 20))
+(def withdraw
+  (review/review-decision-value
+   candidate-root reviewer-root "withdraw" 30))
+(def bob-approve
+  (review/review-decision-value
+   candidate-root other-reviewer-root "approve" 40))
+
+(defn review-root-valid?
+  [root value]
+  (or (and (= root "R1") (= value approve))
+      (and (= root "R2") (= value reject))
+      (and (= root "R3") (= value withdraw))
+      (and (= root "RB") (= value bob-approve))))
+
+(def review-store-0 (review/review-store))
+(def review-store-r1
+  (get
+   (review/register-review
+    review-root-valid? review-store-0 "R1"
+    candidate-root reviewer-root approve)
+   :ok))
+(def review-store-r2
+  (get
+   (review/register-review
+    review-root-valid? review-store-r1 "R2"
+    candidate-root reviewer-root reject)
+   :ok))
+(def review-store-r3
+  (get
+   (review/register-review
+    review-root-valid? review-store-r2 "R3"
+    candidate-root reviewer-root withdraw)
+   :ok))
+(def review-store
+  (get
+   (review/register-review
+    review-root-valid? review-store-r3 "RB"
+    candidate-root other-reviewer-root bob-approve)
+   :ok))
+
+(def initial-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root nil "R1"))
+(def update-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root "R1" "R2"))
+(def withdraw-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root "R2" "R3"))
+(def stale-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root nil "R2"))
+
+(def review-backend-0 (storage/memory-backend "reviews"))
+(def initial-selection
+  (review/select-memory-review
+   commit-store review-store proposal-backend review-backend-0
+   workspace-id candidate-root reviewer-root initial-intent))
+(def review-backend-1 (get initial-selection :ok))
+(def stale-selection
+  (review/select-memory-review
+   commit-store review-store proposal-backend review-backend-1
+   workspace-id candidate-root reviewer-root stale-intent))
+(def update-selection
+  (review/select-memory-review
+   commit-store review-store proposal-backend review-backend-1
+   workspace-id candidate-root reviewer-root update-intent))
+(def review-backend-2 (get update-selection :ok))
+(def withdraw-selection
+  (review/select-memory-review
+   commit-store review-store proposal-backend review-backend-2
+   workspace-id candidate-root reviewer-root withdraw-intent))
+(def review-backend-3 (get withdraw-selection :ok))
+
+(def unpublished-backend (storage/memory-backend "unpublished"))
+(def unknown-review-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root nil "UNKNOWN"))
+(def wrong-reviewer-intent
+  (review/review-update-intent
+   workspace-id candidate-root reviewer-root nil "RB"))
+(def tampered-name
+  (assoc initial-intent :ref/name "main"))
+(def tampered-policy
+  (assoc initial-intent :ref/policy :proposal-publication-v1))
+(def tampered-authority
+  (assoc initial-intent :ref/authorization-root other-reviewer-root))
+(def tampered-metadata
+  (assoc initial-intent :ref/metadata {:note "extra"}))
+
+(def final-read
+  (storage/memory-get-ref
+   review-backend-3
+   (storage/ref-read-request
+    (workspace/workspace-scope workspace-id)
+    (review/review-ref-name candidate-root reviewer-root)
+    reviewer-root)))
+
+(def results
+  [(test/check "review identity pins candidate and reviewer"
+               (get approve :review/id)
+               "review/C1/account/alice")
+   (test/check "review subject pins the immutable proposal candidate"
+               [(get approve :review/subject-id)
+                (get approve :review/subject-root)]
+               ["proposal/C1" "C1"])
+   (test/check "public text inputs lower to canonical decision keywords"
+               [(get approve :review/decision)
+                (get reject :review/decision)
+                (get withdraw :review/decision)]
+               [:approve :reject :withdraw])
+   (test/check "review evidence pins signer and recorded-at"
+               [(get-in approve
+                        [:review/recorded-evidence :ledger/signer])
+                (get-in approve
+                        [:review/recorded-evidence :ledger/timestamp])]
+               [reviewer-root 10])
+   (test/check "initial review selection succeeds"
+               [(get initial-selection :error)
+                (get-in initial-selection [:ref/value :ref/root])]
+               [nil "R1"])
+   (test/check "stale initial review reports the accepted root"
+               [(get stale-selection :error)
+                (get stale-selection :ref/actual-root)]
+               [:storage/ref-conflict "R1"])
+   (test/check "exact previous review may be replaced"
+               [(get update-selection :error)
+                (get-in update-selection [:ref/value :ref/root])]
+               [nil "R2"])
+   (test/check "a reviewer may explicitly withdraw its latest decision"
+               [(get withdraw-selection :error)
+                (get-in withdraw-selection [:ref/value :ref/root])]
+               [nil "R3"])
+   (test/check "the review ref selects the latest immutable decision"
+               (get-in final-read [:ok :ref/root])
+               "R3")
+   (test/check "review refs cannot target main"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root tampered-name)
+                :error)
+               :workspace/ref-name-not-review)
+   (test/check "review policy is fixed"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root tampered-policy)
+                :error)
+               :workspace/unsupported-ref-policy)
+   (test/check "review authority must be the reviewer origin"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root tampered-authority)
+                :error)
+               :workspace/ref-authorization-not-origin)
+   (test/check "review metadata is constrained in v1"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root tampered-metadata)
+                :error)
+               :workspace/ref-metadata-not-supported)
+   (test/check "unknown review roots cannot be selected"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root unknown-review-intent)
+                :error)
+               :workspace/desired-review-not-found)
+   (test/check "another reviewer's decision cannot be selected"
+               (get
+                (review/validate-review-update
+                 commit-store review-store proposal-backend
+                 workspace-id candidate-root reviewer-root wrong-reviewer-intent)
+                :error)
+               :workspace/invalid-desired-review)
+   (test/check "reviews require a published proposal"
+               (get
+                (review/validate-review-update
+                 commit-store review-store unpublished-backend
+                 workspace-id candidate-root reviewer-root initial-intent)
+                :error)
+               :workspace/review-proposal-not-published)
+   (test/check "all constrained decision texts are accepted"
+               [(review/decision-valid? "approve")
+                (review/decision-valid? "reject")
+                (review/decision-valid? "withdraw")
+                (review/decision-valid? "maybe")]
+               [true true true false])])
+
+(test/print-results results)
