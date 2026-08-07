@@ -1,0 +1,353 @@
+(ns ignatius.workspace-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]))
+
+(def workspace-id "world/orbital-station")
+
+(def author-evidence
+  (record/ledger-evidence
+   {:ledger/signer "account/alice"
+    :ledger/transaction-root "transaction-root"
+    :ledger/timestamp 1700000000
+    :ledger/previous-head-root "head-root"
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil}))
+
+(defn test-root-valid?
+  [root commit]
+  (= root
+     (get-in commit [:record/extensions :test/root])))
+
+(defn candidate
+  [root commit-workspace-id parents state-root
+   merge-base-root merge-policy-root]
+  (workspace/commit-candidate
+   {:workspace/id commit-workspace-id
+    :workspace/root nil
+    :commit/parent-roots parents
+    :commit/state-root state-root
+    :commit/operation-root
+    (if (= 0 (count parents))
+      nil
+      (str "operation/" root))
+    :commit/merge-base-root merge-base-root
+    :commit/merge-policy-root merge-policy-root
+    :commit/author-evidence author-evidence
+    :commit/execution-provenance nil
+    :commit/metadata {:label root}
+    :record/extensions {:test/root root}}))
+
+(def c10
+  (candidate "C10" workspace-id [] "W47" nil nil))
+
+(def ca
+  (candidate "CA" workspace-id ["C10"] "WA" nil nil))
+
+(def cb
+  (candidate "CB" workspace-id ["C10"] "WB" nil nil))
+
+(def unrelated
+  (candidate "O1" workspace-id [] "WO" nil nil))
+
+(def other-workspace
+  (candidate "X0" "world/other" [] "WX" nil nil))
+
+(def cm
+  (candidate
+   "CM" workspace-id ["CA" "CB"] "WM"
+   "C10" "merge-policy/scene-v1"))
+
+(def store-0 (workspace/commit-store))
+(def registered-c10
+  (workspace/register-commit
+   test-root-valid? store-0 "C10" c10))
+(def store-c10 (get registered-c10 :ok))
+
+(def registered-ca
+  (workspace/register-commit
+   test-root-valid? store-c10 "CA" ca))
+(def store-ca (get registered-ca :ok))
+
+(def registered-cb
+  (workspace/register-commit
+   test-root-valid? store-ca "CB" cb))
+(def store-cb (get registered-cb :ok))
+
+(def registered-unrelated
+  (workspace/register-commit
+   test-root-valid? store-cb "O1" unrelated))
+(def store-unrelated (get registered-unrelated :ok))
+
+(def registered-other-workspace
+  (workspace/register-commit
+   test-root-valid? store-unrelated "X0" other-workspace))
+(def store-other-workspace (get registered-other-workspace :ok))
+
+(def registered-cm
+  (workspace/register-commit
+   test-root-valid? store-other-workspace "CM" cm))
+(def store-all (get registered-cm :ok))
+
+(def cm-ancestry
+  (get (workspace/ancestry-roots store-all "CM") :ok))
+
+(def idempotent-ca
+  (workspace/register-commit
+   test-root-valid? store-all "CA" ca))
+
+(def conflicting-ca
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "CA"
+   (assoc ca :commit/state-root "WA-conflict")))
+
+(def wrong-root
+  (workspace/register-commit
+   test-root-valid? store-all "not-CA" ca))
+
+(def missing-parent
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "MISSING"
+   (candidate
+    "MISSING" workspace-id ["unknown-parent"]
+    "W-missing" nil nil)))
+
+(def self-parent
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "SELF"
+   (candidate "SELF" workspace-id ["SELF"] "W-self" nil nil)))
+
+(def duplicate-parent
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "DUP"
+   (candidate
+    "DUP" workspace-id ["CA" "CA"]
+    "W-duplicate" "C10" "merge-policy/scene-v1")))
+
+(def missing-author
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "NO-AUTHOR"
+   (assoc
+    (candidate
+     "NO-AUTHOR" workspace-id ["C10"]
+     "W-no-author" nil nil)
+    :commit/author-evidence nil)))
+
+(def edit-with-merge-fields
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "EDIT-MERGE"
+   (candidate
+    "EDIT-MERGE" workspace-id ["C10"]
+    "W-edit-merge" "C10" "merge-policy/scene-v1")))
+
+(def merge-without-policy
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "NO-POLICY"
+   (candidate
+    "NO-POLICY" workspace-id ["CA" "CB"]
+    "W-no-policy" "C10" nil)))
+
+(def invalid-merge-base
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "BAD-BASE"
+   (candidate
+    "BAD-BASE" workspace-id ["CA" "CB"]
+    "W-bad-base" "O1" "merge-policy/scene-v1")))
+
+(def cross-workspace-parent
+  (workspace/register-commit
+   test-root-valid?
+   store-all
+   "CROSS"
+   (candidate
+    "CROSS" workspace-id ["X0"]
+    "W-cross" nil nil)))
+
+(def backend-0
+  (storage/memory-backend "workspace-dag"))
+
+(def main-created
+  (workspace/select-memory-ref
+   store-all backend-0 workspace-id workspace/main-ref-name
+   nil "C10" "authority/alice"))
+(def backend-main-c10 (get main-created :ok))
+
+(def alice-created
+  (workspace/select-memory-ref
+   store-all backend-main-c10 workspace-id
+   (workspace/user-ref-name "alice")
+   nil "CA" "authority/alice"))
+(def backend-alice (get alice-created :ok))
+
+(def bob-created
+  (workspace/select-memory-ref
+   store-all backend-alice workspace-id
+   (workspace/user-ref-name "bob")
+   nil "CB" "authority/bob"))
+(def backend-bob (get bob-created :ok))
+
+(def proposal-created
+  (workspace/select-memory-ref
+   store-all backend-bob workspace-id
+   (workspace/proposal-ref-name "merge-51")
+   nil "CM" "authority/alice"))
+(def backend-proposal (get proposal-created :ok))
+
+(def main-merged
+  (workspace/fast-forward-memory-ref
+   store-all backend-proposal workspace-id workspace/main-ref-name
+   "C10" "CM" "authority/alice"))
+(def backend-main-cm (get main-merged :ok))
+
+(def stale-main
+  (workspace/fast-forward-memory-ref
+   store-all backend-main-cm workspace-id workspace/main-ref-name
+   "C10" "CA" "authority/alice"))
+
+(def non-fast-forward-main
+  (workspace/fast-forward-memory-ref
+   store-all backend-main-cm workspace-id workspace/main-ref-name
+   "CM" "CA" "authority/alice"))
+
+(def release-created
+  (workspace/select-memory-ref
+   store-all backend-main-cm workspace-id
+   (workspace/release-ref-name "1.0.0")
+   nil "CM" "authority/alice"))
+(def backend-release (get release-created :ok))
+
+(def unknown-desired
+  (workspace/select-memory-ref
+   store-all backend-release workspace-id
+   (workspace/proposal-ref-name "unknown")
+   nil "UNKNOWN" "authority/alice"))
+
+(def results
+  [(test/check "genesis commits have no parents"
+               (workspace/commit-kind c10)
+               :genesis)
+   (test/check "ordinary edits have exactly one parent"
+               (workspace/commit-kind ca)
+               :edit)
+   (test/check "merge commits have two or more parents"
+               (workspace/commit-kind cm)
+               :merge)
+   (test/check "verified commits are admitted in topological order"
+               (workspace/commit-count store-all)
+               6)
+   (test/check "exact reinsertion is idempotent"
+               [(get idempotent-ca :commit/created)
+                (= store-all (get idempotent-ca :ok))]
+               [false true])
+   (test/check "one root cannot name two decoded commit values"
+               (get conflicting-ca :error)
+               :workspace/commit-root-conflict)
+   (test/check "the injected verifier protects commit identity"
+               (get wrong-root :error)
+               :workspace/commit-root-mismatch)
+   (test/check "children cannot be admitted before their parents"
+               [(get missing-parent :error)
+                (get missing-parent :commit/missing-parent-roots)]
+               [:workspace/missing-parent-commits
+                ["unknown-parent"]])
+   (test/check "a commit cannot directly parent itself"
+               (get self-parent :error)
+               :workspace/self-parent)
+   (test/check "duplicate merge parents are rejected"
+               (get duplicate-parent :error)
+               :workspace/duplicate-parent-root)
+   (test/check "author evidence is required for commit admission"
+               (get missing-author :error)
+               :workspace/missing-author-evidence)
+   (test/check "ordinary edits cannot carry merge-only fields"
+               (get edit-with-merge-fields :error)
+               :workspace/non-merge-has-merge-fields)
+   (test/check "multi-parent commits require an explicit merge policy"
+               (get merge-without-policy :error)
+               :workspace/missing-merge-policy)
+   (test/check "merge bases must be ancestors of every parent"
+               (get invalid-merge-base :error)
+               :workspace/invalid-merge-base)
+   (test/check "parents from another workspace are rejected"
+               (get cross-workspace-parent :error)
+               :workspace/parent-workspace-mismatch)
+   (test/check "the merge base reaches both branch tips"
+               [(workspace/ancestor? store-all "C10" "CA")
+                (workspace/ancestor? store-all "C10" "CB")]
+               [true true])
+   (test/check "sibling branch tips are not ancestors of one another"
+               [(workspace/ancestor? store-all "CA" "CB")
+                (workspace/ancestor? store-all "CB" "CA")]
+               [false false])
+   (test/check "merge ancestry includes shared parents only once"
+               [(count cm-ancestry)
+                (workspace/contains-root? cm-ancestry "CM")
+                (workspace/contains-root? cm-ancestry "C10")]
+               [4 true true])
+   (test/check "workspace scopes are explicit and stable"
+               (workspace/workspace-scope workspace-id)
+               "workspace/world/orbital-station")
+   (test/check "branch, proposal and release names are separate"
+               [(workspace/user-ref-name "alice")
+                (workspace/proposal-ref-name "merge-51")
+                (workspace/release-ref-name "1.0.0")]
+               ["user/alice" "proposal/merge-51" "release/1.0.0"])
+   (test/check "main can select the genesis commit"
+               (get-in main-created [:ref/value :ref/root])
+               "C10")
+   (test/check "Alice and Bob retain independent branch tips"
+               [(get-in backend-bob
+                        [:storage/refs
+                         "workspace/world/orbital-station"
+                         "user/alice"])
+                (get-in backend-bob
+                        [:storage/refs
+                         "workspace/world/orbital-station"
+                         "user/bob"])]
+               ["CA" "CB"])
+   (test/check "proposal refs may select an unaccepted merge candidate"
+               (get-in proposal-created [:ref/value :ref/root])
+               "CM")
+   (test/check "main fast-forwards from the base to the merge commit"
+               [(get-in main-merged [:ref/value :ref/root])
+                (get main-merged :ref/previous-root)]
+               ["CM" "C10"])
+   (test/check "stale main updates report the accepted merge root"
+               [(get stale-main :error)
+                (get stale-main :ref/actual-root)]
+               [:storage/ref-conflict "CM"])
+   (test/check "policy helpers reject non-fast-forward rewinds"
+               (get non-fast-forward-main :error)
+               :workspace/non-fast-forward-ref-update)
+   (test/check "release refs pin one exact accepted commit"
+               (get-in release-created [:ref/value :ref/root])
+               "CM")
+   (test/check "mutable refs cannot select unknown commit roots"
+               (get unknown-desired :error)
+               :workspace/desired-commit-not-found)
+   (test/check "stale ref failure does not discard branch candidates"
+               [(get-in (workspace/commit-at store-all "CA")
+                        [:commit/state-root])
+                (get-in (workspace/commit-at store-all "CB")
+                        [:commit/state-root])]
+               ["WA" "WB"])])
+
+(test/print-results results)
