@@ -1,0 +1,33 @@
+name: Integrate workspace main policy admission
+
+on:
+  push:
+    branches: [agent/workspace-main-acceptance-admission]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-main-acceptance-admission
+
+      - name: Wire policy admission into generators and verification
+        run: |
+          set -euo pipefail
+          python scripts/integrate_workspace_main_policy_admission.py
+          rm .github/workflows/integrate-workspace-main-policy-admission.yml
+          rm scripts/integrate_workspace_main_policy_admission.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md \
+                  db/src/gwdb/ledger/base.clj \
+                  db/src/ledger/build_contract.clj \
+                  .github/workflows/verify.yml \
+                  .github/workflows/integrate-workspace-main-policy-admission.yml \
+                  scripts/integrate_workspace_main_policy_admission.py
+          git commit -m "Integrate signed workspace main policy admission"
+          git push origin HEAD:agent/workspace-main-acceptance-admission
