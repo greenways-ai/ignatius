@@ -215,7 +215,7 @@ export interface WorkspaceRefSigningRequest {
 
 export type WorkspaceRefSubmission =
   | {
-      status: "ok";
+      status: \"ok\";
       address: LedgerRoot;
       sequence: number;
       scope: string;
@@ -231,8 +231,8 @@ export type WorkspaceRefSubmission =
       block_root: LedgerRoot;
     }
   | {
-      status: "conflict";
-      error: "storage/ref-conflict";
+      status: \"conflict\";
+      error: \"storage/ref-conflict\";
       address: LedgerRoot;
       sequence: number;
       scope: string;
