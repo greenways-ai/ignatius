@@ -309,10 +309,10 @@
      (workspace-review/workspace-review-valid approve-root)
      (workspace-review/workspace-review-valid reject-root)
      (workspace-review/workspace-review-valid withdraw-root)
-     (= (:text (json-field approve-row "decision")) "approve")
-     (= (:text (json-field reject-row "decision")) "reject")
-     (= (:text (json-field withdraw-row "decision")) "withdraw")
-     (= (:bigint (json-field withdraw-row "recorded_at")) 6)
+     (= (json-field approve-row "decision") "approve")
+     (= (json-field reject-row "decision") "reject")
+     (= (json-field withdraw-row "decision") "withdraw")
+     (= (long (json-field withdraw-row "recorded_at")) 6)
      (json-field head "height")
      replayed
      no-op
