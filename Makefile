@@ -30,6 +30,8 @@ hpt1-flat-map-benchmark: setup
 	  POSTGRES_IMAGE="gw-ledger-postgres:15-pgsodium" \
 	  lein update-in :dependencies conj \
 	    '[org.clojure/core.rrb-vector "0.1.2"]' \
-	    '[org.apache.commons/commons-math3 "3.6.1"]' -- \
+	    '[org.apache.commons/commons-math3 "3.6.1"]' \
+	    '[com.impossibl.pgjdbc-ng/pgjdbc-ng "0.8.9" :exclusions [io.netty/netty-common io.netty/netty-buffer io.netty/netty-transport io.netty/netty-codec io.netty/netty-handler io.netty/netty-transport-native-unix-common]]' \
+	    '[io.netty/netty-all "4.1.118.Final"]' -- \
 	    run -m ledger.hpt1-flat-map-benchmark \
 	    ../benchmarks/hpt1-flat-map/evidence.edn
