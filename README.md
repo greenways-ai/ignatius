@@ -251,10 +251,14 @@ roots, and exact previous `main` root.
 
 V1 requires every listed reviewer to have a current `:approve` decision.
 Superseded approvals, rejects, withdrawals, unpublished candidates, non-genesis
-bootstrap attempts and non-fast-forward updates are rejected before ref CAS. The
-portable adapter proves the policy algebra; signed PostgreSQL admission is the
-next delivery slice. See
-[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md).
+bootstrap attempts and non-fast-forward updates are rejected before ref CAS.
+
+The first signed PostgreSQL slice publishes the immutable policy at `policy/main`
+through account sequencing, Ed25519 verification, exact create-only CAS, a
+receipt whose result is the policy root, and one linear block. It does not yet
+advance `main`. See
+[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md) and
+[`docs/workspace-main-policy-admission.md`](docs/workspace-main-policy-admission.md).
 
 ## Convex-style accounts and actors
 
