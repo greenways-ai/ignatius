@@ -45,7 +45,7 @@
      :artifact/kind :scene
      :artifact/root "scene-A"
      :artifact/previous-root nil
-     :artifact/parent-roots []
+     :artifact/source-roots []
      :artifact/schema-root "scene-schema-root"
      :artifact/metadata {:label "First scene"}
      :process/id "run-1"
@@ -63,6 +63,7 @@
     :artifact/kind :scene
     :artifact/root "scene-B"
     :artifact/previous-root "scene-before-A"
+    :artifact/source-roots ["texture-root"]
     :process/id "run-1"
     :signer "bob"
     :transaction "tx-stale"
@@ -78,7 +79,7 @@
      :artifact/kind :scene
      :artifact/root "scene-B"
      :artifact/previous-root "scene-A"
-     :artifact/parent-roots ["scene-A"]
+     :artifact/source-roots ["texture-root"]
      :artifact/schema-root "scene-schema-root"
      :artifact/metadata {:label "Lighting pass"}
      :process/id "run-1"
@@ -87,6 +88,21 @@
      :timestamp 5
      :previous-head "head-2"})
    :ok))
+
+(def rejected-version-reuse
+  (timeline/apply-event
+   published-b
+   {:action :artifact/publish
+    :artifact/id "scene/main"
+    :artifact/kind :scene
+    :artifact/root "scene-A"
+    :artifact/previous-root "scene-B"
+    :artifact/source-roots []
+    :process/id "run-1"
+    :signer "alice"
+    :transaction "tx-reuse"
+    :timestamp 6
+    :previous-head "head-3"}))
 
 (def rejected-stale-review
   (timeline/apply-event
@@ -99,7 +115,7 @@
     :artifact/root "scene-A"
     :signer "alice"
     :transaction "tx-review-stale"
-    :timestamp 6
+    :timestamp 7
     :previous-head "head-3"}))
 
 (def reviewed
@@ -114,7 +130,7 @@
      :artifact/root "scene-B"
      :signer "alice"
      :transaction "tx-review"
-     :timestamp 7
+     :timestamp 8
      :previous-head "head-3"})
    :ok))
 
@@ -129,7 +145,7 @@
      :process/receipt-root "receipt-root"
      :signer "alice"
      :transaction "tx-complete"
-     :timestamp 8
+     :timestamp 9
      :previous-head "head-4"})
    :ok))
 
@@ -148,13 +164,28 @@
                (get-in (timeline/artifacts published-a)
                        ["scene/main" :artifact/root])
                "scene-A")
+   (test/check "a first artifact version has no synthetic parent"
+               (get-in (timeline/artifact-versions published-a)
+                       ["scene/main" "scene-A" :artifact/previous-root])
+               nil)
    (test/check "artifact advancement requires the exact previous root"
                (get rejected-stale-publish :error)
                :timeline/stale-artifact-root)
-   (test/check "a later artifact version retains its parent root"
-               (get-in (timeline/artifacts published-b)
-                       ["scene/main" :artifact/parent-roots])
-               ["scene-A"])
+   (test/check "artifact lineage is derived from accepted state"
+               (get-in (timeline/artifact-versions published-b)
+                       ["scene/main" "scene-B" :artifact/previous-root])
+               "scene-A")
+   (test/check "artifact source roots remain explicit domain provenance"
+               (get-in (timeline/artifact-versions published-b)
+                       ["scene/main" "scene-B" :artifact/source-roots])
+               ["texture-root"])
+   (test/check "previous artifact versions remain directly queryable"
+               (get-in (timeline/artifact-versions published-b)
+                       ["scene/main" "scene-A" :artifact/root])
+               "scene-A")
+   (test/check "an artifact root cannot overwrite an earlier version record"
+               (get rejected-version-reuse :error)
+               :timeline/artifact-version-already-exists)
    (test/check "reviews are pinned to the current exact artifact root"
                (get rejected-stale-review :error)
                :timeline/stale-review-subject)
@@ -162,6 +193,13 @@
                (get-in (timeline/reviews reviewed)
                        ["review-1" :review/recorded :timeline/signer])
                "alice")
+   (test/check "accepted transitions form a queryable linked timeline"
+               (get-in (timeline/entries completed)
+                       ["tx-complete" :timeline/previous-entry-id])
+               "tx-review")
+   (test/check "the latest timeline entry is the completed process"
+               (get (timeline/latest-entry completed) :record/type)
+               :timeline/process-completed)
    (test/check "completed processes retain their execution receipt"
                (get-in (timeline/processes completed)
                        ["run-1" :process/receipt-root])
@@ -174,7 +212,7 @@
                   :process/id "run-1"
                   :signer "alice"
                   :transaction "tx-complete-again"
-                  :timestamp 9
+                  :timestamp 10
                   :previous-head "head-5"})
                 :error)
                :timeline/process-not-running)])

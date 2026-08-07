@@ -46,6 +46,14 @@ jobs:
       - name: Materialize pinned source dependencies
         run: make setup
 
+      - name: Report pinned generator toolchain
+        run: |
+          set -euo pipefail
+          java -version
+          lein version
+          printf 'Hara:       %s\n' "$(git -C .local/hara.lang rev-parse HEAD)"
+          printf 'Foundation: %s\n' "$(git -C db/checkouts/foundation rev-parse HEAD)"
+
       - name: Keep protocol intrinsics at the top-level adapter
         env:
           TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -84,17 +92,62 @@ jobs:
           git commit -m "Keep protocol intrinsics at the signed adapter"
           git push origin "HEAD:${TARGET_BRANCH}"
 
-      - name: Generate SQL and contracts
+      - name: Generate SQL
         run: |
           set +e
-          make db-sql db-contracts
-          status=$?
+          set -o pipefail
+          rm -f /tmp/clojure-*.edn /tmp/db-sql.log
+          make db-sql 2>&1 | tee /tmp/db-sql.log
+          status=${PIPESTATUS[0]}
+          set -e
           if [ "$status" -ne 0 ]; then
+            echo "::group::SQL generator output"
+            tail -n 400 /tmp/db-sql.log
             for report in /tmp/clojure-*.edn; do
               [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
             done
+            echo "::endgroup::"
+            message="$(tail -n 35 /tmp/db-sql.log | tr '\n' ' ' | sed 's/%/%25/g')"
+            echo "::error title=SQL generation failed::${message}"
             exit "$status"
           fi
+
+      - name: Generate client contracts
+        run: |
+          set +e
+          set -o pipefail
+          rm -f /tmp/clojure-*.edn /tmp/db-contracts.log
+          make db-contracts 2>&1 | tee /tmp/db-contracts.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Contract generator output"
+            tail -n 400 /tmp/db-contracts.log
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            echo "::endgroup::"
+            message="$(tail -n 35 /tmp/db-contracts.log | tr '\n' ' ' | sed 's/%/%25/g')"
+            echo "::error title=Client contract generation failed::${message}"
+            exit "$status"
+          fi
+
+      - name: Build pinned Hara CLI
+        run: |
+          set -euo pipefail
+          cargo build \
+            --locked \
+            --release \
+            --bin hara \
+            --manifest-path .local/hara.lang/rust/Cargo.toml
+
+      - name: Check and test portable HAL
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.local/hara.lang/rust/target/release:$PATH"
+          hara --version
+          make hal-check
+          make hal-test
 
       - name: Commit regenerated runtime artefacts
         env:

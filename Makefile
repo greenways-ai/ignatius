@@ -3,7 +3,7 @@
 setup:
 	bash scripts/setup-dependencies
 
-verify: setup db-sql db-contracts extension-sha-test
+verify: setup hal-check hal-test db-sql db-contracts extension-sha-test
 	git diff --exit-code -- db/sql/full.sql db/contracts/ledger-client/generated.ts
 
 db-sql:
@@ -13,10 +13,10 @@ db-contracts:
 	cd db && lein contracts
 
 hal-check:
-	hara check hal
+	hara --project hal check
 
 hal-test:
-	hara test hal
+	hara --project hal test
 
 extension-sha-test:
 	cargo test --locked --manifest-path extensions/sha/rust/Cargo.toml
