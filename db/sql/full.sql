@@ -11860,6 +11860,8 @@ CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_module_export_projection(
 
 $$ LANGUAGE 'plpgsql';
 
+
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- gwdb.ledger.developer/developer-address-root [27] 
@@ -12148,6 +12150,383 @@ CREATE OR REPLACE FUNCTION "gw_ledger".developer_head(
       'state_root',
       encode((o_head ->> 'state_root')::BYTEA,'hex')
     );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/ScopedRef [17] 
+DROP TABLE IF EXISTS "gw_ledger"."ScopedRef" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."ScopedRef" (
+  "scope" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "root" BYTEA NOT NULL,
+  "authorization_root" BYTEA NOT NULL,
+  "version" BIGINT NOT NULL,
+  "created_at" BIGINT NOT NULL,
+  "updated_at" BIGINT NOT NULL,
+  PRIMARY KEY (scope,name)
+);
+
+-- gwdb.ledger.scoped-ref/root-hex [31] 
+CREATE OR REPLACE FUNCTION "gw_ledger".root_hex(
+  i_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN CASE WHEN i_root IS NULL THEN null
+  ELSE encode(i_root,'hex')
+  END;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/ref-part-valid [39] 
+CREATE OR REPLACE FUNCTION "gw_ledger".ref_part_valid(
+  i_value TEXT
+) RETURNS BOOLEAN AS $$
+
+  SELECT RETURN i_value IS NOT NULL AND regexp_match(i_value,'^[a-z0-9][a-z0-9._:/-]{0,255}$') IS NOT NULL;
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.scoped-ref/scoped-ref-lock-key [53] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_lock_key(
+  i_scope TEXT,
+  i_name TEXT
+) RETURNS BIGINT AS $$
+
+  SELECT RETURN hash_text_extended((length(i_scope))::TEXT || ':' || i_scope || ':' || i_name,0);
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.scoped-ref/scoped-ref-row [65] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_row(
+  i_scope TEXT,
+  i_name TEXT
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "scope",
+      "name",
+      "root",
+      "authorization_root",
+      "version",
+      "created_at",
+      "updated_at"
+    FROM "gw_ledger"."ScopedRef"
+    WHERE "scope" = i_scope AND "name" = i_name
+    LIMIT 1)
+  SELECT to_jsonb(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-capabilities [73] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_capabilities() RETURNS JSONB AS $$
+BEGIN
+  RETURN jsonb_build_object(
+    'backend_type',
+    'postgresql',
+    'backend_name',
+    'ignatius-ledger',
+    'backend_durability',
+    'durable',
+    'block_immutable',
+    true,
+    'block_verification',
+    'required',
+    'block_hash_algorithm',
+    'sha-256',
+    'ref_compare_and_set',
+    true,
+    'ref_consistency',
+    'linearizable',
+    'ref_authorization',
+    'explicit'
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-read-error [90] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_read_error(
+  i_scope TEXT,
+  i_name TEXT,
+  i_authorization_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  IF NOT "gw_ledger".ref_part_valid(i_scope) THEN
+    RETURN 'storage/invalid-ref-scope';
+  ELSIF NOT "gw_ledger".ref_part_valid(i_name) THEN
+    RETURN 'storage/invalid-ref-name';
+  ELSIF i_authorization_root is null  THEN
+    RETURN 'storage/missing-ref-authorization';
+  ELSIF "gw_ledger".cell_by_hash(i_authorization_root) is null  THEN
+    RETURN 'storage/unknown-ref-authorization';
+  ELSE
+    RETURN null;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-update-error [109] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_update_error(
+  i_scope TEXT,
+  i_name TEXT,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA,
+  i_authorization_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    v_read_error TEXT;
+  BEGIN
+    v_read_error := "gw_ledger".scoped_ref_read_error(i_scope,i_name,i_authorization_root);
+    IF v_read_error is not null  THEN
+      RETURN v_read_error;
+    ELSIF i_desired_root is null  THEN
+      RETURN 'storage/missing-desired-ref-root';
+    ELSIF "gw_ledger".cell_by_hash(i_desired_root) is null  THEN
+      RETURN 'storage/unknown-desired-ref-root';
+    ELSIF i_expected_root IS NOT NULL AND "gw_ledger".cell_by_hash(i_expected_root) IS NULL THEN
+      RETURN 'storage/unknown-expected-ref-root';
+    ELSE
+      RETURN null;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-error-result [136] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_error_result(
+  i_error TEXT,
+  i_scope TEXT,
+  i_name TEXT
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN jsonb_build_object('status','error','error',i_error,'scope',i_scope,'name',i_name);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-value-result [147] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_value_result(
+  i_status TEXT,
+  i_scope TEXT,
+  i_name TEXT,
+  i_root BYTEA,
+  i_version BIGINT,
+  i_authorization_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN jsonb_build_object(
+    'status',
+    i_status,
+    'scope',
+    i_scope,
+    'name',
+    i_name,
+    'root',
+    "gw_ledger".root_hex(i_root),
+    'version',
+    i_version,
+    'authorization_root',
+    "gw_ledger".root_hex(i_authorization_root)
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-read [165] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_read(
+  i_scope TEXT,
+  i_name TEXT,
+  i_authorization_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    v_error TEXT;
+  BEGIN
+    v_error := "gw_ledger".scoped_ref_read_error(i_scope,i_name,i_authorization_root);
+    IF v_error is not null  THEN
+      RETURN "gw_ledger".scoped_ref_error_result(v_error,i_scope,i_name);
+    END IF;
+    DECLARE
+      o_row JSONB;
+    BEGIN
+      o_row := "gw_ledger".scoped_ref_row(i_scope,i_name);
+      RETURN CASE WHEN o_row IS NULL THEN "gw_ledger".scoped_ref_value_result('ok',i_scope,i_name,null,0,i_authorization_root)
+      ELSE "gw_ledger".scoped_ref_value_result(
+        'ok',
+        i_scope,
+        i_name,
+        (o_row ->> 'root')::BYTEA,
+        (o_row ->> 'version')::BIGINT,
+        i_authorization_root
+      )
+      END;
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-conflict-result [190] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_conflict_result(
+  i_scope TEXT,
+  i_name TEXT,
+  i_expected_root BYTEA,
+  i_actual_root BYTEA,
+  i_desired_root BYTEA,
+  i_version BIGINT
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN jsonb_build_object(
+    'status',
+    'conflict',
+    'error',
+    'storage/ref-conflict',
+    'scope',
+    i_scope,
+    'name',
+    i_name,
+    'expected_root',
+    "gw_ledger".root_hex(i_expected_root),
+    'actual_root',
+    "gw_ledger".root_hex(i_actual_root),
+    'desired_root',
+    "gw_ledger".root_hex(i_desired_root),
+    'version',
+    i_version
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.scoped-ref/scoped-ref-compare-and-set [210] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_compare_and_set(
+  i_scope TEXT,
+  i_name TEXT,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA,
+  i_authorization_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    v_error TEXT;
+  BEGIN
+    v_error := "gw_ledger".scoped_ref_update_error(
+      i_scope,
+      i_name,
+      i_expected_root,
+      i_desired_root,
+      i_authorization_root
+    );
+    IF v_error is not null  THEN
+      RETURN "gw_ledger".scoped_ref_error_result(v_error,i_scope,i_name);
+    END IF;
+    DECLARE
+      o_current JSONB;
+      v_actual_root BYTEA;
+      v_actual_version BIGINT;
+      v_lock_key BIGINT;
+      v_matches BOOLEAN;
+    BEGIN
+      v_lock_key := "gw_ledger".scoped_ref_lock_key(i_scope,i_name);
+      pg_advisory_xact_lock(v_lock_key);
+      o_current := "gw_ledger".scoped_ref_row(i_scope,i_name);
+      v_actual_root := CASE WHEN o_current IS NULL THEN null
+      ELSE (o_current ->> 'root')::BYTEA
+      END;
+      v_actual_version := CASE WHEN o_current IS NULL THEN 0
+      ELSE (o_current ->> 'version')::BIGINT
+      END;
+      v_matches := CASE WHEN i_expected_root IS NULL THEN v_actual_root IS NULL
+      ELSE i_expected_root = v_actual_root
+      END;
+      IF NOT v_matches THEN
+        RETURN "gw_ledger".scoped_ref_conflict_result(
+          i_scope,
+          i_name,
+          i_expected_root,
+          v_actual_root,
+          i_desired_root,
+          v_actual_version
+        );
+      END IF;
+      IF o_current is null  THEN
+        DECLARE
+        o_created JSONB;
+          v_now BIGINT;
+      BEGIN
+        v_now := (1000000 * extract(epoch FROM now()))::BIGINT;
+          WITH j_ret AS (  
+            INSERT INTO "gw_ledger"."ScopedRef" (
+              "scope",
+              "name",
+              "root",
+              "authorization_root",
+              "version",
+              "created_at",
+              "updated_at"
+            ) VALUES (
+              (i_scope)::TEXT,
+              (i_name)::TEXT,
+              (i_desired_root)::BYTEA,
+              (i_authorization_root)::BYTEA,
+              (1)::BIGINT,
+              (v_now)::BIGINT,
+              (v_now)::BIGINT
+            ) RETURNING
+              "scope",
+              "name",
+              "root",
+              "authorization_root",
+              "version",
+              "created_at",
+              "updated_at")
+          SELECT to_jsonb(j_ret) FROM j_ret INTO o_created;
+          RETURN "gw_ledger".scoped_ref_value_result('ok',i_scope,i_name,i_desired_root,1,i_authorization_root);
+      END;
+      ELSE
+        DECLARE
+        o_updated JSONB;
+          v_next_version BIGINT;
+      BEGIN
+        v_next_version := (v_actual_version + 1);
+          WITH j_ret AS (  
+            UPDATE "gw_ledger"."ScopedRef" SET
+              "root" = (i_desired_root)::BYTEA,
+              "authorization_root" = (i_authorization_root)::BYTEA,
+              "version" = (v_next_version)::BIGINT,
+              "updated_at" = ((1000000 * extract(epoch FROM now()))::BIGINT)::BIGINT
+            WHERE "scope" = i_scope AND "name" = i_name AND "root" = i_expected_root
+            RETURNING
+              "scope",
+              "name",
+              "root",
+              "authorization_root",
+              "version",
+              "created_at",
+              "updated_at")
+          SELECT to_jsonb(j_ret) FROM j_ret INTO o_updated;
+          IF NOT (o_updated IS NOT NULL) THEN
+            RAISE EXCEPTION USING
+              DETAIL = (jsonb_build_object(
+                'status',
+                'error',
+                'tag',
+                'ledger/scoped_ref_update_lost',
+                'data',
+                null
+              ))::TEXT,
+              MESSAGE = 'ledger/scoped-ref-update-lost'
+            ;
+          END IF;
+          RETURN "gw_ledger".scoped_ref_value_result(
+            'ok',
+            i_scope,
+            i_name,
+            i_desired_root,
+            v_next_version,
+            i_authorization_root
+          );
+      END;
+      END IF;
+    END;
   END;
 
 $$ LANGUAGE 'plpgsql';

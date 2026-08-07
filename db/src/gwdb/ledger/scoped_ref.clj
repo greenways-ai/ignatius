@@ -1,0 +1,285 @@
+(ns gwdb.ledger.scoped-ref
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [postgres.core.system :as system]
+            [gwdb.ledger.cell :as cell]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [postgres.core.system :as system]
+             [gwdb.ledger.cell :as cell]]
+   :config {:dbname "gw-ledger-test"}
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(def$.pg hash-text-extended hashtextextended)
+
+(deftype.pg ScopedRef
+  "Current root selected by one explicit scope and name.
+
+  This table is intentionally separate from account, contract and global chain
+  heads. Historical state remains in immutable cells, commits and receipts."
+  {:added "0.10"}
+  [:scope              {:type :text :required true :primary true}
+   :name               {:type :text :required true :primary true}
+   :root               {:type :bytea :required true}
+   :authorization-root {:type :bytea :required true}
+   :version            {:type :long :required true}
+   :created-at         {:type :time :required true}
+   :updated-at         {:type :time :required true}])
+
+(defn.pg ^{:- [:text]}
+  root-hex
+  {:added "0.10"}
+  [:bytea i-root]
+  (return
+   (pg/case [i-root :is-null] nil
+            :else (pg/encode i-root "hex"))))
+
+(defn.pg ^{:- [:boolean]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  ref-part-valid
+  "Accepts bounded lowercase path-like scope and ref names."
+  {:added "0.10"}
+  [:text i-value]
+  (return
+   (and [i-value :is-not-null]
+        [(pg/regexp-match
+          i-value
+          "^[a-z0-9][a-z0-9._:/-]{0,255}$")
+         :is-not-null])))
+
+(defn.pg ^{:- [:bigint]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  scoped-ref-lock-key
+  "Derives one stable transaction-lock key from a length-framed scope/name pair."
+  {:added "0.10"}
+  [:text i-scope :text i-name]
+  (return
+   (hash-text-extended
+    (|| (:text (pg/length i-scope)) ":" i-scope ":" i-name)
+    0)))
+
+(defn.pg scoped-ref-row
+  {:added "0.10"}
+  [:text i-scope :text i-name]
+  (return
+   (pg/t:get -/ScopedRef
+             {:where {:scope i-scope
+                      :name i-name}})))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-capabilities
+  "Declares the guarantees of the PostgreSQL adapter."
+  {:added "0.10"}
+  []
+  (return
+   (pg/jsonb-build-object
+    "backend_type" "postgresql"
+    "backend_name" "ignatius-ledger"
+    "backend_durability" "durable"
+    "block_immutable" true
+    "block_verification" "required"
+    "block_hash_algorithm" "sha-256"
+    "ref_compare_and_set" true
+    "ref_consistency" "linearizable"
+    "ref_authorization" "explicit")))
+
+(defn.pg ^{:- [:text]}
+  scoped-ref-read-error
+  {:added "0.10"}
+  [:text i-scope :text i-name :bytea i-authorization-root]
+  (cond (not (-/ref-part-valid i-scope))
+        (return "storage/invalid-ref-scope")
+
+        (not (-/ref-part-valid i-name))
+        (return "storage/invalid-ref-name")
+
+        [i-authorization-root :is-null]
+        (return "storage/missing-ref-authorization")
+
+        [(cell/cell-by-hash i-authorization-root) :is-null]
+        (return "storage/unknown-ref-authorization")
+
+        :else
+        (return nil)))
+
+(defn.pg ^{:- [:text]}
+  scoped-ref-update-error
+  {:added "0.10"}
+  [:text i-scope
+   :text i-name
+   :bytea i-expected-root
+   :bytea i-desired-root
+   :bytea i-authorization-root]
+  (let [(:text v-read-error)
+        (-/scoped-ref-read-error
+         i-scope i-name i-authorization-root)]
+    (cond [v-read-error :is-not-null]
+          (return v-read-error)
+
+          [i-desired-root :is-null]
+          (return "storage/missing-desired-ref-root")
+
+          [(cell/cell-by-hash i-desired-root) :is-null]
+          (return "storage/unknown-desired-ref-root")
+
+          (and [i-expected-root :is-not-null]
+               [(cell/cell-by-hash i-expected-root) :is-null])
+          (return "storage/unknown-expected-ref-root")
+
+          :else
+          (return nil))))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-error-result
+  {:added "0.10"}
+  [:text i-error :text i-scope :text i-name]
+  (return
+   (pg/jsonb-build-object
+    "status" "error"
+    "error" i-error
+    "scope" i-scope
+    "name" i-name)))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-value-result
+  {:added "0.10"}
+  [:text i-status
+   :text i-scope
+   :text i-name
+   :bytea i-root
+   :bigint i-version
+   :bytea i-authorization-root]
+  (return
+   (pg/jsonb-build-object
+    "status" i-status
+    "scope" i-scope
+    "name" i-name
+    "root" (-/root-hex i-root)
+    "version" i-version
+    "authorization_root" (-/root-hex i-authorization-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-read
+  "Reads one scoped ref through an explicit authorization context."
+  {:added "0.10"}
+  [:text i-scope :text i-name :bytea i-authorization-root]
+  (let [(:text v-error)
+        (-/scoped-ref-read-error
+         i-scope i-name i-authorization-root)]
+    (when [v-error :is-not-null]
+      (return (-/scoped-ref-error-result
+               v-error i-scope i-name)))
+    (let [o-row (-/scoped-ref-row i-scope i-name)]
+      (return
+       (pg/case [o-row :is-null]
+                (-/scoped-ref-value-result
+                 "ok" i-scope i-name nil 0 i-authorization-root)
+                :else
+                (-/scoped-ref-value-result
+                 "ok"
+                 i-scope
+                 i-name
+                 (:bytea (:->> o-row "root"))
+                 (:bigint (:->> o-row "version"))
+                 i-authorization-root))))))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-conflict-result
+  {:added "0.10"}
+  [:text i-scope
+   :text i-name
+   :bytea i-expected-root
+   :bytea i-actual-root
+   :bytea i-desired-root
+   :bigint i-version]
+  (return
+   (pg/jsonb-build-object
+    "status" "conflict"
+    "error" "storage/ref-conflict"
+    "scope" i-scope
+    "name" i-name
+    "expected_root" (-/root-hex i-expected-root)
+    "actual_root" (-/root-hex i-actual-root)
+    "desired_root" (-/root-hex i-desired-root)
+    "version" i-version)))
+
+(defn.pg ^{:- [:jsonb]}
+  scoped-ref-compare-and-set
+  "Atomically creates or advances one scoped ref against its exact current root.
+
+  A transaction-scoped advisory lock serializes the complete read/check/write
+  sequence for one length-framed scope/name pair. Hash collisions only reduce
+  concurrency; they cannot permit an invalid update."
+  {:added "0.10"}
+  [:text i-scope
+   :text i-name
+   :bytea i-expected-root
+   :bytea i-desired-root
+   :bytea i-authorization-root]
+  (let [(:text v-error)
+        (-/scoped-ref-update-error
+         i-scope i-name i-expected-root i-desired-root
+         i-authorization-root)]
+    (when [v-error :is-not-null]
+      (return (-/scoped-ref-error-result
+               v-error i-scope i-name)))
+    (let [(:bigint v-lock-key)
+          (-/scoped-ref-lock-key i-scope i-name)
+          _ (system/advisory-xact-lock v-lock-key)
+          o-current (-/scoped-ref-row i-scope i-name)
+          (:bytea v-actual-root)
+          (pg/case [o-current :is-null] nil
+                   :else (:bytea (:->> o-current "root")))
+          (:bigint v-actual-version)
+          (pg/case [o-current :is-null] 0
+                   :else (:bigint (:->> o-current "version")))
+          (:boolean v-matches)
+          (pg/case [i-expected-root :is-null]
+                   [v-actual-root :is-null]
+                   :else (== i-expected-root v-actual-root))]
+      (when (not v-matches)
+        (return
+         (-/scoped-ref-conflict-result
+          i-scope i-name i-expected-root v-actual-root
+          i-desired-root v-actual-version)))
+      (cond [o-current :is-null]
+            (let [(:bigint v-now) (pg/time-us)
+                  o-created
+                  (pg/t:insert
+                   -/ScopedRef
+                   {:scope i-scope
+                    :name i-name
+                    :root i-desired-root
+                    :authorization-root i-authorization-root
+                    :version 1
+                    :created-at v-now
+                    :updated-at v-now})]
+              (return
+               (-/scoped-ref-value-result
+                "ok" i-scope i-name i-desired-root 1
+                i-authorization-root)))
+
+            :else
+            (let [(:bigint v-next-version)
+                  (+ v-actual-version 1)
+                  o-updated
+                  (pg/t:update
+                   -/ScopedRef
+                   {:where {:scope i-scope
+                            :name i-name
+                            :root i-expected-root}
+                    :set {:root i-desired-root
+                          :authorization-root i-authorization-root
+                          :version v-next-version
+                          :updated-at (pg/time-us)}
+                    :single true})
+                  _ (pg/assert [o-updated :is-not-null]
+                               [:ledger/scoped-ref-update-lost])]
+              (return
+               (-/scoped-ref-value-result
+                "ok" i-scope i-name i-desired-root
+                v-next-version i-authorization-root)))))))

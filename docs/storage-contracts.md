@@ -328,28 +328,126 @@ form, and invoke `verify-block` before decoding outside the database.
 
 ## PostgreSQL scoped refs
 
-Ignatius already uses exact-head checks in several specialised places:
+The generic PostgreSQL adapter is `gwdb.ledger.scoped-ref`. It is intentionally
+separate from existing account sequences, contract heads and the global chain
+head. Those specialised acceptance mechanisms remain authoritative and are not
+migrated into a generic table.
 
-- account transaction sequences;
-- contract expected-head transitions;
-- global block/state advancement; and
-- immutable publication aliases pinned through account state.
+The current ref row is:
 
-Those mechanisms remain authoritative and unchanged. They are not silently
-relabelled as a generic ref table.
+```text
+ScopedRef
+  scope               text       composite primary key
+  name                text       composite primary key
+  root                bytea      exact immutable Cell root
+  authorization_root  bytea      latest admitted authority evidence
+  version             bigint     monotonic successful-update count
+  created_at          bigint     microsecond timestamp
+  updated_at          bigint     microsecond timestamp
+```
 
-The next #12 slice adds an isolated PostgreSQL scoped-ref adapter with atomic
-compare-and-set semantics. It will:
+Scopes and names use bounded lowercase path syntax. The adapter validates that:
 
-- use explicit scope and name columns;
-- store only exact immutable roots;
-- declare `:linearizable` consistency;
-- require verified authorization/admission context at the call boundary;
-- preserve stale candidate commits and blocks; and
-- avoid renaming or replacing existing chain, account or contract heads.
+- the authorization root exists as an immutable `Cell`;
+- the desired root exists as an immutable `Cell`;
+- a non-nil expected root exists as an immutable `Cell`; and
+- a nil desired root is rejected rather than interpreted as deletion.
 
-Keeping this as a separate PR makes the storage seam reviewable and prevents a
-portable interface change from being coupled to an SQL migration.
+The low-level adapter verifies evidence existence, not application permission.
+Signed Ignatius admission, a workspace policy or Hestia mandate logic must decide
+whether the supplied authorization root permits the requested ref mutation.
+
+### Read
+
+```clojure
+(scoped-ref/scoped-ref-read
+  "workspace/orbital-station"
+  "main"
+  authority-root)
+```
+
+A missing ref is a successful read with a nil root and version zero. Validation
+errors are structured results rather than ambiguous missing rows.
+
+### Atomic compare-and-set
+
+```clojure
+(scoped-ref/scoped-ref-compare-and-set
+  "workspace/orbital-station"
+  "main"
+  expected-root
+  desired-root
+  authority-root)
+```
+
+The complete read, comparison and write is serialized by a transaction-scoped
+PostgreSQL advisory lock. The lock key is derived from a length-framed pair:
+
+```text
+hashtextextended(length(scope) + ":" + scope + ":" + name, 0)
+```
+
+Length framing prevents simple concatenation ambiguities such as `a/bc` versus
+`ab/c`. A 64-bit hash collision can reduce concurrency by making unrelated refs
+share a lock, but it cannot permit an invalid update because the actual table
+row is still selected and compared by the full scope and name.
+
+Creation requires:
+
+```text
+actual root   nil
+expected root nil
+```
+
+Advancement requires:
+
+```text
+actual root   commit-A
+expected root commit-A
+```
+
+A stale writer receives the exact accepted root and version:
+
+```json
+{
+  "status": "conflict",
+  "error": "storage/ref-conflict",
+  "scope": "workspace/orbital-station",
+  "name": "main",
+  "expected_root": "...commit-A...",
+  "actual_root": "...commit-B...",
+  "desired_root": "...commit-C...",
+  "version": 2
+}
+```
+
+The failed request does not change the root, authorization root or version.
+Candidate commits and blocks remain immutable in the block store and can be
+rebased or merged.
+
+The PostgreSQL capability descriptor reports:
+
+```json
+{
+  "backend_type": "postgresql",
+  "backend_durability": "durable",
+  "block_immutable": true,
+  "block_verification": "required",
+  "block_hash_algorithm": "sha-256",
+  "ref_compare_and_set": true,
+  "ref_consistency": "linearizable",
+  "ref_authorization": "explicit"
+}
+```
+
+The regression suite covers missing refs, validation, create, exact advance,
+stale conflict, retained authority, monotonic versions, independent names and
+independent scopes. A two-writer race starts separate JDBC calls against the same
+missing ref and requires exactly one `ok` result and one `conflict` result.
+
+There is no generic ref deletion API in this phase. Deletion needs explicit
+retention, reachability and authorization semantics and belongs with the later
+retention/garbage-collection work.
 
 ## Other providers
 
