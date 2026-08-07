@@ -1,0 +1,137 @@
+(ns ignatius.record-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.record-vectors :as vectors]))
+
+(def spoofed-workspace
+  (record/workspace-build
+   {:record/type :spoofed/type
+    :record/version 99
+    :record/extensions {:example/color :blue}
+    :workspace/id "workspace/demo"
+    :workspace/kind :document}))
+
+(def future-workspace
+  (assoc vectors/workspace-v1 :future/field "preserved"))
+
+(def validated-future
+  (record/validate-record future-workspace))
+
+(def missing-workspace-id
+  (record/validate-record
+   (assoc vectors/workspace-v1 :workspace/id nil)))
+
+(def unsupported-version
+  (record/validate-record
+   (assoc vectors/workspace-v1 :record/version 2)))
+
+(def unsupported-type
+  (record/validate-record
+   (assoc vectors/workspace-v1 :record/type :future/record)))
+
+(def evidence-from-event
+  (record/ledger-evidence-from-event
+   {:signer "account/alice"
+    :transaction "transaction-root"
+    :timestamp 42
+    :previous-head "head-root"
+    :contract "contract-root"
+    :template "template-root"
+    :ledger/signer "payload-spoof"}))
+
+(def empty-run
+  (record/process-run
+   {:run/id "run/empty"
+    :run/definition-root "definition-root"
+    :run/status :running}))
+
+(def all-vectors-valid
+  (reduce
+   (fn [valid vector]
+     (if valid
+       (record/record-valid? (get vector :vector/record))
+       false))
+   true
+   vectors/vectors))
+
+(def results
+  [(test/check "writers pin the canonical record type"
+               (get spoofed-workspace :record/type)
+               :workspace/build)
+   (test/check "writers pin the canonical record version"
+               (get spoofed-workspace :record/version)
+               1)
+   (test/check "namespaced writer extensions are retained"
+               (get-in spoofed-workspace
+                       [:record/extensions :example/color])
+               :blue)
+   (test/check "generic validation preserves unknown fields"
+               (get (get validated-future :ok) :future/field)
+               "preserved")
+   (test/check "missing required fields are explicit"
+               (get missing-workspace-id :error)
+               :record/missing-required-fields)
+   (test/check "the missing field list identifies workspace identity"
+               (get missing-workspace-id :fields)
+               [:workspace/id])
+   (test/check "unknown record versions are rejected"
+               (get unsupported-version :error)
+               :record/unsupported-version)
+   (test/check "unknown record families are rejected"
+               (get unsupported-type :error)
+               :record/unsupported-type)
+   (test/check "verified ledger fields override payload namespaces"
+               (get evidence-from-event :ledger/signer)
+               "account/alice")
+   (test/check "contract and template evidence are retained"
+               [(get evidence-from-event :ledger/contract-root)
+                (get evidence-from-event :ledger/template-root)]
+               ["contract-root" "template-root"])
+   (test/check "all reserved contract event fields are declared"
+               (count record/reserved-event-fields)
+               6)
+   (test/check "optional root vectors have one canonical empty value"
+               (get empty-run :run/input-roots)
+               [])
+   (test/check "optional metadata maps have one canonical empty value"
+               (get empty-run :run/metadata)
+               {})
+   (test/check "stable IDs and exact roots remain distinct field kinds"
+               [(record/field-kind :artifact/id)
+                (record/field-kind :artifact/content-root)]
+               [:stable-id :content-root])
+   (test/check "logical cycles can remain unpinned"
+               (get vectors/parent-run-reference-v1 :reference/root)
+               nil)
+   (test/check "artifact production retains stable and exact run references"
+               [(get vectors/artifact-version-v1
+                     :artifact/producer-run-id)
+                (get vectors/artifact-version-v1
+                     :artifact/producer-run-root)]
+               ["run/lighting-17" nil])
+   (test/check "artifact ancestry is separate from derivation inputs"
+               [(get vectors/artifact-version-v1
+                     :artifact/previous-content-root)
+                (get vectors/artifact-version-v1
+                     :artifact/source-roots)]
+               ["scene-root-A"
+                ["scene-root-A" "texture-root" "prompt-root"]])
+   (test/check "execution provenance pins compiler and runtime identity"
+               [(get vectors/execution-provenance-v1
+                     :provenance/compiler-root)
+                (get vectors/execution-provenance-v1
+                     :provenance/runtime-root)]
+               ["compiler-root" "runtime-root"])
+   (test/check "commit candidates support multiple parents"
+               (get vectors/commit-candidate-v1
+                    :commit/parent-roots)
+               ["workspace-commit-alice"
+                "workspace-commit-bob"])
+   (test/check "the v1 catalog contains every published record family"
+               (count record/schema-catalog)
+               14)
+   (test/check "all checked-in conformance vectors satisfy their schema"
+               all-vectors-valid
+               true)])
+
+(test/print-results results)
