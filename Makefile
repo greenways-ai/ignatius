@@ -1,3 +1,5 @@
+HPT1_BENCHMARK_OUT ?= ../benchmarks/hpt1-flat-map/evidence.edn
+
 .PHONY: setup verify db-sql db-contracts hal-check hal-test extension-sha-test hpt1-flat-map-benchmark
 
 setup:
@@ -34,4 +36,4 @@ hpt1-flat-map-benchmark: setup
 	    '[com.impossibl.pgjdbc-ng/pgjdbc-ng "0.8.9" :exclusions [io.netty/netty-common io.netty/netty-buffer io.netty/netty-transport io.netty/netty-codec io.netty/netty-handler io.netty/netty-transport-native-unix-common]]' \
 	    '[io.netty/netty-all "4.1.118.Final"]' -- \
 	    run -m ledger.hpt1-flat-map-benchmark-runner \
-	    ../benchmarks/hpt1-flat-map/evidence.edn
+	    "$(HPT1_BENCHMARK_OUT)"

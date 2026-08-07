@@ -1,9 +1,16 @@
 (ns ledger.hpt1-flat-map-benchmark-runner
-  (:require [ledger.hpt1-flat-map-benchmark :as benchmark]
+  (:require [clojure.java.io :as io]
+            [ledger.hpt1-flat-map-benchmark :as benchmark]
             [tahto.core :as l]
             [postgres.core :as pg]
             [gwdb.ledger.cell :as cell]
-            [gwdb.ledger.value :as value]))
+            [gwdb.ledger.value :as value])
+  (:import [java.nio.file
+            AtomicMoveNotSupportedException
+            CopyOption
+            Files
+            StandardCopyOption]
+           [java.nio.file.attribute FileAttribute]))
 
 (l/script- :postgres
   {:runtime :jdbc.client
@@ -56,8 +63,143 @@
 (def benchmark-module
   'ledger.hpt1-flat-map-benchmark-runner)
 
-(defn -main
-  [& [output-path]]
+(def teardown-timeout-ms 10000)
+
+(def measured-sample-paths
+  [[:get :first]
+   [:get :middle]
+   [:get :last]
+   [:get :missing-before]
+   [:get :missing-after]
+   [:assoc-existing :first]
+   [:assoc-existing :middle]
+   [:assoc-existing :last]
+   [:assoc-new :append]
+   [:assoc-new :interior]])
+
+(defn validate-evidence!
+  "Fails before publication unless every requested case and timing sample exists."
+  [evidence entry-counts sample-count]
+  (let [results (:results evidence)
+        actual-counts (mapv :entry-count results)]
+    (when-not (= :hcv1-flat-map-jdbc-baseline
+                 (:evidence/kind evidence))
+      (throw
+       (ex-info
+        "unexpected benchmark evidence kind"
+        {:expected :hcv1-flat-map-jdbc-baseline
+         :observed (:evidence/kind evidence)})))
+    (when-not (= entry-counts actual-counts)
+      (throw
+       (ex-info
+        "benchmark evidence does not contain the requested entry counts"
+        {:expected entry-counts
+         :observed actual-counts})))
+    (doseq [result results]
+      (when-not (= :ok (:status result))
+        (throw
+         (ex-info
+          "benchmark entry-count case failed"
+          {:entry-count (:entry-count result)
+           :result result})))
+      (doseq [path measured-sample-paths]
+        (let [summary (get-in result path)]
+          (when-not (= sample-count (:sample-count summary))
+            (throw
+             (ex-info
+              "benchmark summary has the wrong sample count"
+              {:entry-count (:entry-count result)
+               :path path
+               :expected sample-count
+               :observed (:sample-count summary)})))
+          (when-not (= sample-count (count (:samples-ns summary)))
+            (throw
+             (ex-info
+              "benchmark summary is missing raw samples"
+              {:entry-count (:entry-count result)
+               :path path
+               :expected sample-count
+               :observed (count (:samples-ns summary))}))))))
+    evidence))
+
+(defn atomic-move!
+  [source target]
+  (try
+    (Files/move
+     source target
+     (into-array
+      CopyOption
+      [StandardCopyOption/ATOMIC_MOVE
+       StandardCopyOption/REPLACE_EXISTING]))
+    (catch AtomicMoveNotSupportedException _
+      (Files/move
+       source target
+       (into-array
+        CopyOption
+        [StandardCopyOption/REPLACE_EXISTING])))))
+
+(defn write-evidence-atomically!
+  "Writes and validates a complete file before replacing the public evidence path."
+  [path evidence]
+  (let [target-file (.getAbsoluteFile (io/file path))
+        _ (io/make-parents target-file)
+        target (.toPath target-file)
+        parent (.getParent target)
+        temporary
+        (Files/createTempFile
+         parent
+         (str "." (.getName target-file) ".")
+         ".tmp"
+         (make-array FileAttribute 0))]
+    (try
+      (benchmark/write-evidence! (.toString temporary) evidence)
+      (atomic-move! temporary target)
+      (.getPath target-file)
+      (finally
+        (Files/deleteIfExists temporary)))))
+
+(defn bounded-teardown!
+  "Attempts normal runtime cleanup without allowing a lingering JDBC thread to
+  keep the evidence process alive indefinitely. The worker is daemonised so the
+  explicit JVM exit remains authoritative after the timeout."
+  [runtime module]
+  (let [failure (atom nil)
+        worker
+        (doto
+         (Thread.
+          (fn []
+            (binding [*ns* (the-ns benchmark-namespace)]
+              (try
+                (l/rt:teardown runtime module)
+                (catch Throwable error
+                  (reset! failure error)))))
+          "hpt1-flat-map-benchmark-teardown")
+          (.setDaemon true)
+          (.start))]
+    (.join worker teardown-timeout-ms)
+    (cond
+      (.isAlive worker)
+      (do
+        (.interrupt worker)
+        (binding [*out* *err*]
+          (println
+           "PostgreSQL benchmark cleanup warning: teardown exceeded"
+           teardown-timeout-ms
+           "milliseconds; the workflow container trap will remove leftovers."))
+        false)
+
+      @failure
+      (do
+        (binding [*out* *err*]
+          (println "PostgreSQL benchmark cleanup warning:"
+                   (.getMessage ^Throwable @failure)))
+        false)
+
+      :else
+      true)))
+
+(defn run-benchmark!
+  [output-path]
   ;; The normal ledger primary module is an aggregate root that installs every
   ;; protocol function. This runner owns a minimal SQL module so the flat-map
   ;; evidence depends only on the real cell/value implementation and its closure.
@@ -91,13 +233,30 @@
                [benchmark/benchmark-put-map put-map-pointer
                 benchmark/benchmark-map-shape map-shape-pointer]
                 (benchmark/benchmark-evidence
-                 entry-counts warmup-count sample-count))]
-          (println "Wrote"
-                   (benchmark/write-evidence! path evidence)))
+                 entry-counts warmup-count sample-count))
+              _ (validate-evidence!
+                 evidence entry-counts sample-count)
+              written
+              (write-evidence-atomically! path evidence)]
+          (println "Wrote" written)
+          written)
         (finally
-          (try
-            (l/rt:teardown runtime benchmark-module)
-            (catch Throwable cleanup-error
-              (binding [*out* *err*]
-                (println "PostgreSQL benchmark cleanup warning:"
-                         (.getMessage cleanup-error))))))))))
+          (bounded-teardown! runtime benchmark-module))))))
+
+(defn -main
+  [& [output-path]]
+  (let [exit-code
+        (try
+          (run-benchmark! output-path)
+          0
+          (catch Throwable error
+            (binding [*out* *err*]
+              (println "HPT1 flat-map benchmark failed:"
+                       (.getMessage error))
+              (.printStackTrace error))
+            1))]
+    (shutdown-agents)
+    (flush)
+    (binding [*out* *err*]
+      (flush))
+    (System/exit exit-code)))
