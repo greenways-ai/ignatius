@@ -1,0 +1,67 @@
+name: Integrate workspace main policy admission v2
+
+on:
+  push:
+    branches: [agent/workspace-main-acceptance-admission]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-main-acceptance-admission
+
+      - name: Correct and apply the policy integration patch
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/integrate_workspace_main_policy_admission.py")
+          text = path.read_text()
+          old = '''base_marker = "            [gwdb.ledger.workspace-review]\\n            [gwdb.ledger.developer]"
+          base_replacement = (
+              "            [gwdb.ledger.workspace-review]\\n"
+              "            [gwdb.ledger.workspace-acceptance]\\n"
+              "            [gwdb.ledger.developer]"
+          )
+          base = replace_once(base, base_marker, base_replacement, "base require")
+          base = replace_once(base, base_marker, base_replacement, "base script require")'''
+          new = '''base_marker = "            [gwdb.ledger.workspace-review]\\n            [gwdb.ledger.developer]"
+          base_replacement = (
+              "            [gwdb.ledger.workspace-review]\\n"
+              "            [gwdb.ledger.workspace-acceptance]\\n"
+              "            [gwdb.ledger.developer]"
+          )
+          script_marker = "             [gwdb.ledger.workspace-review]\\n             [gwdb.ledger.developer]"
+          script_replacement = (
+              "             [gwdb.ledger.workspace-review]\\n"
+              "             [gwdb.ledger.workspace-acceptance]\\n"
+              "             [gwdb.ledger.developer]"
+          )
+          base = replace_once(base, base_marker, base_replacement, "base require")
+          base = replace_once(base, script_marker, script_replacement, "base script require")'''
+          if old not in text:
+              raise SystemExit("base integration marker not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          python scripts/integrate_workspace_main_policy_admission.py
+          rm .github/workflows/integrate-workspace-main-policy-admission.yml
+          rm .github/workflows/integrate-workspace-main-policy-admission-v2.yml
+          rm scripts/integrate_workspace_main_policy_admission.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md \
+                  db/src/gwdb/ledger/base.clj \
+                  db/src/ledger/build_contract.clj \
+                  .github/workflows/verify.yml \
+                  .github/workflows/integrate-workspace-main-policy-admission.yml \
+                  .github/workflows/integrate-workspace-main-policy-admission-v2.yml \
+                  scripts/integrate_workspace_main_policy_admission.py
+          git commit -m "Integrate signed workspace main policy admission"
+          git push origin HEAD:agent/workspace-main-acceptance-admission
