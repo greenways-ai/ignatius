@@ -97,6 +97,9 @@
       (= nil version)
       :workspace/missing-release-version
 
+      (= 0 (count version))
+      :workspace/missing-release-version
+
       (= nil candidate-root)
       :workspace/missing-release-candidate-root
 

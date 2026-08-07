@@ -224,8 +224,9 @@ selection through the ordinary signed transaction, receipt and linear block
 chain. Stale selections do not consume the account sequence or advance the
 network head.
 
-Proposal publication and reviewer decisions are separate signed policies; shared
-`main` and release refs remain policy-gated follow-up work. See
+Proposal publication and reviewer decisions are separate signed policies.
+Shared `main` and release refs are admitted only through explicit selected policy
+and evidence roots. See
 [`docs/workspace-ref-admission.md`](docs/workspace-ref-admission.md).
 
 ## Signed workspace proposals and reviews
@@ -262,6 +263,20 @@ root; stale main updates consume neither sequence nor block height. See
 [`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md),
 [`docs/workspace-main-policy-admission.md`](docs/workspace-main-policy-admission.md),
 and [`docs/workspace-main-admission.md`](docs/workspace-main-admission.md).
+
+## Immutable workspace releases
+
+[`ignatius.workspace-release`](hal/src/ignatius/workspace_release.hal) publishes
+create-only `release/<version>` selections for the candidate currently accepted
+at `main`. The canonical release attestation pins workspace, version, candidate,
+selected policy and the exact accepted-main evidence root.
+
+PostgreSQL proves that the acceptance has an `ok` receipt bound to a valid block
+on the current linear network chain. A structurally valid acceptance created by
+a stale main attempt is therefore insufficient. Successful release publication
+returns the immutable release claim root while the release ref selects the
+candidate; duplicate versions consume neither sequence nor block height. See
+[`docs/workspace-release-admission.md`](docs/workspace-release-admission.md).
 
 ## Convex-style accounts and actors
 
