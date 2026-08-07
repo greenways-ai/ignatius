@@ -12,12 +12,12 @@
   (workspace/user-ref-name origin-root))
 
 (defn personal-ref-update-intent
-  "Constructs a canonical personal-branch update intent.
+  "Constructs the exact constrained personal-branch update intent.
 
   Scope, name, authorization and policy are derived rather than accepted as
-  ambient client choices. Shared main, proposal and release authority remain
-  separate policy layers."
-  [workspace-id origin-root expected-root desired-root metadata extensions]
+  ambient client choices. Metadata and extensions are fixed to empty maps so
+  portable and PostgreSQL constructors produce the same v1 value."
+  [workspace-id origin-root expected-root desired-root]
   (record/record-envelope
    intent-record-type
    {:workspace/id workspace-id
@@ -27,8 +27,8 @@
     :ref/desired-root desired-root
     :ref/authorization-root origin-root
     :ref/policy personal-fast-forward-policy
-    :ref/metadata (record/map-or-empty metadata)
-    :record/extensions (record/map-or-empty extensions)}))
+    :ref/metadata {}
+    :record/extensions {}}))
 
 (defn personal-intent-structure-error
   "Validates fields whose meaning does not require a commit graph."
@@ -68,6 +68,12 @@
      (= personal-fast-forward-policy
         (get intent :ref/policy)))
     :workspace/unsupported-ref-policy
+
+    (not (= {} (record/map-or-empty (get intent :ref/metadata))))
+    :workspace/ref-metadata-not-supported
+
+    (not (= {} (record/map-or-empty (get intent :record/extensions))))
+    :workspace/ref-extensions-not-supported
 
     (= (get intent :ref/expected-root)
        (get intent :ref/desired-root))
