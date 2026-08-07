@@ -11121,139 +11121,6 @@ CREATE OR REPLACE FUNCTION "gw_ledger".block_commit_one(
 
 $$ LANGUAGE 'plpgsql';
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.syntax/Syntax [18] 
-DROP TABLE IF EXISTS "gw_ledger"."Syntax" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."Syntax" (
-  "syntax_root" BYTEA PRIMARY KEY,
-  "value_root" BYTEA NOT NULL,
-  "metadata_root" BYTEA NOT NULL
-);
-
--- gwdb.ledger.syntax/put-syntax [25] 
-CREATE OR REPLACE FUNCTION "gw_ledger".put_syntax(
-  i_value_root BYTEA,
-  i_metadata_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_metadata JSONB;
-    o_metadata_ref JSONB;
-    o_root BYTEA;
-    o_upsert JSONB;
-    o_value JSONB;
-    o_value_ref JSONB;
-    v_payload BYTEA;
-  BEGIN
-    o_value := "gw_ledger".cell_by_hash(i_value_root);
-    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
-    IF NOT (o_value IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_syntax_value','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-syntax-value'
-      ;
-    END IF;
-    IF NOT (o_metadata IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/missing_syntax_metadata',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/missing-syntax-metadata'
-      ;
-    END IF;
-    IF NOT ((o_metadata ->> 'type_tag')::SMALLINT = 11) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/syntax_metadata_not_map',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/syntax-metadata-not-map'
-      ;
-    END IF;
-    v_payload := "gw_ledger".syntax_payload(i_value_root,i_metadata_root);
-    o_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(13,v_payload),1,13,v_payload);
-    o_value_ref := "gw_ledger".cell_ref_put(o_root,0,'value',i_value_root);
-    o_metadata_ref := "gw_ledger".cell_ref_put(o_root,1,'metadata',i_metadata_root);
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."Syntax" ("syntax_root","value_root","metadata_root") VALUES (
-        (o_root)::BYTEA,
-        (i_value_root)::BYTEA,
-        (i_metadata_root)::BYTEA
-      ) ON CONFLICT ("syntax_root") DO UPDATE SET ("syntax_root","value_root","metadata_root") = row(
-        EXCLUDED."syntax_root",
-        EXCLUDED."value_root",
-        EXCLUDED."metadata_root"
-      ) RETURNING "syntax_root","value_root","metadata_root")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
-    RETURN o_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/syntax-value-root [50] 
-CREATE OR REPLACE FUNCTION "gw_ledger".syntax_value_root(
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
-      WHERE "syntax_root" = i_syntax_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN (o_row ->> 'value_root')::BYTEA;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/syntax-metadata-root [58] 
-CREATE OR REPLACE FUNCTION "gw_ledger".syntax_metadata_root(
-  i_syntax_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
-      WHERE "syntax_root" = i_syntax_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN (o_row ->> 'metadata_root')::BYTEA;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.syntax/semantic-root [66] 
-CREATE OR REPLACE FUNCTION "gw_ledger".semantic_root(
-  i_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_cell JSONB;
-  BEGIN
-    o_cell := "gw_ledger".cell_by_hash(i_root);
-    IF o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 13) THEN
-      RETURN "gw_ledger".syntax_value_root(i_root);
-    ELSE
-      RETURN i_root;
-    END IF;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
 
 
 -- gwdb.ledger.scoped-ref/ScopedRef [17] 
@@ -13946,612 +13813,6 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_proposal_submit(
 $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.module/Module [18] 
-DROP TABLE IF EXISTS "gw_ledger"."Module" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."Module" (
-  "module_root" BYTEA PRIMARY KEY,
-  "module_name" TEXT NOT NULL,
-  "module_version" TEXT NOT NULL,
-  "environment_root" BYTEA NOT NULL,
-  "exports_root" BYTEA NOT NULL,
-  "dependencies_root" BYTEA NOT NULL,
-  "source_root" BYTEA,
-  "compiled_root" BYTEA,
-  "metadata_root" BYTEA NOT NULL,
-  "publisher" BYTEA NOT NULL,
-  "signature" BYTEA,
-  UNIQUE ("module_name","module_version")
-);
-
--- gwdb.ledger.module/ModuleAlias [33] 
-DROP TABLE IF EXISTS "gw_ledger"."ModuleAlias" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."ModuleAlias" (
-  "module_name" TEXT,
-  "alias" TEXT,
-  "module_root" BYTEA NOT NULL,
-  PRIMARY KEY (module_name,alias)
-);
-
--- gwdb.ledger.module/ModuleExport [40] 
-DROP TABLE IF EXISTS "gw_ledger"."ModuleExport" CASCADE;
-CREATE TABLE IF NOT EXISTS "gw_ledger"."ModuleExport" (
-  "module_root" BYTEA,
-  "symbol_root" BYTEA,
-  "value_root" BYTEA NOT NULL,
-  PRIMARY KEY (module_root,symbol_root)
-);
-
--- gwdb.ledger.module/module-root-hex [47] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_root_hex(
-  i_root BYTEA
-) RETURNS TEXT AS $$
-BEGIN
-  RETURN CASE WHEN i_root IS NULL THEN '-'
-  ELSE encode(i_root,'hex')
-  END;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-payload [52] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_payload(
-  i_module_name TEXT,
-  i_module_version TEXT,
-  i_environment_root BYTEA,
-  i_exports_root BYTEA,
-  i_dependencies_root BYTEA,
-  i_source_root BYTEA,
-  i_compiled_root BYTEA,
-  i_metadata_root BYTEA,
-  i_publisher BYTEA,
-  i_signature BYTEA
-) RETURNS BYTEA AS $$
-BEGIN
-  RETURN decode(
-    'R:module:1:11:' || i_module_name || ':' || i_module_version || ':' || "gw_ledger".module_root_hex(i_environment_root) || "gw_ledger".module_root_hex(i_exports_root) || "gw_ledger".module_root_hex(i_dependencies_root) || "gw_ledger".module_root_hex(i_source_root) || "gw_ledger".module_root_hex(i_compiled_root) || "gw_ledger".module_root_hex(i_metadata_root) || "gw_ledger".module_root_hex(i_publisher) || "gw_ledger".module_root_hex(i_signature),
-    'escape'
-  );
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-publish [71] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_publish(
-  i_module_name TEXT,
-  i_module_version TEXT,
-  i_environment_root BYTEA,
-  i_exports_root BYTEA,
-  i_dependencies_root BYTEA,
-  i_source_root BYTEA,
-  i_compiled_root BYTEA,
-  i_metadata_root BYTEA,
-  i_publisher BYTEA,
-  i_signature BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_dependencies JSONB;
-    o_dependencies_ref JSONB;
-    o_environment JSONB;
-    o_environment_ref JSONB;
-    o_exports JSONB;
-    o_exports_ref JSONB;
-    o_metadata JSONB;
-    o_metadata_ref JSONB;
-    o_publisher JSONB;
-    o_publisher_ref JSONB;
-    o_upsert JSONB;
-    v_payload BYTEA;
-    v_root BYTEA;
-  BEGIN
-    o_environment := "gw_ledger".cell_by_hash(i_environment_root);
-    o_exports := "gw_ledger".cell_by_hash(i_exports_root);
-    o_dependencies := "gw_ledger".cell_by_hash(i_dependencies_root);
-    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
-    o_publisher := "gw_ledger".cell_by_hash(i_publisher);
-    IF NOT (regexp_match(i_module_name,'^[a-z][a-z0-9.]*$') IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_module_name','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-module-name'
-      ;
-    END IF;
-    IF NOT (regexp_match(i_module_version,'^[0-9]+[.][0-9]+[.][0-9]+$') IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_module_version',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-module-version'
-      ;
-    END IF;
-    IF NOT (o_environment IS NOT NULL AND ((o_environment ->> 'type_tag')::SMALLINT = 11)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/module_environment_not_map',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/module-environment-not-map'
-      ;
-    END IF;
-    IF NOT (o_exports IS NOT NULL AND ((o_exports ->> 'type_tag')::SMALLINT = 12)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/module_exports_not_set',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/module-exports-not-set'
-      ;
-    END IF;
-    IF NOT (o_dependencies IS NOT NULL AND ((o_dependencies ->> 'type_tag')::SMALLINT = 11)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/module_dependencies_not_map',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/module-dependencies-not-map'
-      ;
-    END IF;
-    IF NOT (o_metadata IS NOT NULL AND ((o_metadata ->> 'type_tag')::SMALLINT = 11)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/module_metadata_not_map',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/module-metadata-not-map'
-      ;
-    END IF;
-    IF NOT (o_publisher IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/missing_module_publisher',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/missing-module-publisher'
-      ;
-    END IF;
-    v_payload := "gw_ledger".module_payload(
-      i_module_name,
-      i_module_version,
-      i_environment_root,
-      i_exports_root,
-      i_dependencies_root,
-      i_source_root,
-      i_compiled_root,
-      i_metadata_root,
-      i_publisher,
-      i_signature
-    );
-    v_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(14,v_payload),1,14,v_payload);
-    o_environment_ref := "gw_ledger".cell_ref_put(v_root,0,'environment',i_environment_root);
-    o_exports_ref := "gw_ledger".cell_ref_put(v_root,1,'exports',i_exports_root);
-    o_dependencies_ref := "gw_ledger".cell_ref_put(v_root,2,'dependencies',i_dependencies_root);
-    o_metadata_ref := "gw_ledger".cell_ref_put(v_root,3,'metadata',i_metadata_root);
-    o_publisher_ref := "gw_ledger".cell_ref_put(v_root,4,'publisher',i_publisher);
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."Module" (
-        "module_root",
-        "module_name",
-        "module_version",
-        "environment_root",
-        "exports_root",
-        "dependencies_root",
-        "source_root",
-        "compiled_root",
-        "metadata_root",
-        "publisher",
-        "signature"
-      ) VALUES (
-        (v_root)::BYTEA,
-        (i_module_name)::TEXT,
-        (i_module_version)::TEXT,
-        (i_environment_root)::BYTEA,
-        (i_exports_root)::BYTEA,
-        (i_dependencies_root)::BYTEA,
-        (i_source_root)::BYTEA,
-        (i_compiled_root)::BYTEA,
-        (i_metadata_root)::BYTEA,
-        (i_publisher)::BYTEA,
-        (i_signature)::BYTEA
-      ) ON CONFLICT ("module_root") DO UPDATE SET ("module_root",
-        "module_name",
-        "module_version",
-        "environment_root",
-        "exports_root",
-        "dependencies_root",
-        "source_root",
-        "compiled_root",
-        "metadata_root",
-        "publisher",
-        "signature") = row(
-        EXCLUDED."module_root",
-        EXCLUDED."module_name",
-        EXCLUDED."module_version",
-        EXCLUDED."environment_root",
-        EXCLUDED."exports_root",
-        EXCLUDED."dependencies_root",
-        EXCLUDED."source_root",
-        EXCLUDED."compiled_root",
-        EXCLUDED."metadata_root",
-        EXCLUDED."publisher",
-        EXCLUDED."signature"
-      ) RETURNING
-        "module_root",
-        "module_name",
-        "module_version",
-        "environment_root",
-        "exports_root",
-        "dependencies_root",
-        "source_root",
-        "compiled_root",
-        "metadata_root",
-        "publisher",
-        "signature")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
-    RETURN v_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-get [122] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_get(
-  i_module_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT
-        "module_root",
-        "module_name",
-        "module_version",
-        "environment_root",
-        "exports_root",
-        "dependencies_root",
-        "source_root",
-        "compiled_root",
-        "metadata_root",
-        "publisher",
-        "signature"
-      FROM "gw_ledger"."Module"
-      WHERE "module_root" = i_module_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN o_row;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-valid [128] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_valid(
-  i_module_root BYTEA
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_cell JSONB;
-    o_module JSONB;
-    v_payload BYTEA;
-  BEGIN
-    o_cell := "gw_ledger".cell_by_hash(i_module_root);
-    o_module := "gw_ledger".module_get(i_module_root);
-    IF o_cell IS NULL OR o_module IS NULL THEN
-      RETURN false;
-    END IF;
-    v_payload := "gw_ledger".module_payload(
-      (o_module ->> 'module_name')::TEXT,
-      (o_module ->> 'module_version')::TEXT,
-      (o_module ->> 'environment_root')::BYTEA,
-      (o_module ->> 'exports_root')::BYTEA,
-      (o_module ->> 'dependencies_root')::BYTEA,
-      (o_module ->> 'source_root')::BYTEA,
-      (o_module ->> 'compiled_root')::BYTEA,
-      (o_module ->> 'metadata_root')::BYTEA,
-      (o_module ->> 'publisher')::BYTEA,
-      (o_module ->> 'signature')::BYTEA
-    );
-    RETURN ((o_cell ->> 'type_tag')::SMALLINT = 14) AND ((o_cell ->> 'payload')::BYTEA = v_payload) AND "gw_ledger".verify(i_module_root,14,v_payload);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-set-alias [150] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_set_alias(
-  i_module_name TEXT,
-  i_alias TEXT,
-  i_module_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    IF NOT ("gw_ledger".module_valid(i_module_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_module','data',null))::TEXT,
-        MESSAGE = 'ledger/invalid-module'
-      ;
-    END IF;
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."ModuleAlias" ("module_name","alias","module_root") VALUES ((i_module_name)::TEXT,(i_alias)::TEXT,(i_module_root)::BYTEA) ON CONFLICT ("module_name","alias") DO UPDATE SET ("module_name","alias","module_root") = row(
-        EXCLUDED."module_name",
-        EXCLUDED."alias",
-        EXCLUDED."module_root"
-      ) RETURNING "module_name","alias","module_root")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN o_row;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-resolve-alias [159] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_resolve_alias(
-  i_module_name TEXT,
-  i_alias TEXT
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "module_name","alias","module_root" FROM "gw_ledger"."ModuleAlias"
-      WHERE "module_name" = i_module_name AND "alias" = i_alias
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN (o_row ->> 'module_root')::BYTEA;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-export [166] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_export(
-  i_module_root BYTEA,
-  i_symbol_root BYTEA
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_module JSONB;
-  BEGIN
-    o_module := "gw_ledger".module_get(i_module_root);
-    IF NOT (o_module IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_module','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-module'
-      ;
-    END IF;
-    IF NOT ("gw_ledger".set_contains((o_module ->> 'exports_root')::BYTEA,i_symbol_root)) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/non_exported_symbol','data',null))::TEXT,
-        MESSAGE = 'ledger/non-exported-symbol'
-      ;
-    END IF;
-    RETURN "gw_ledger".map_get((o_module ->> 'environment_root')::BYTEA,i_symbol_root);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-export-put [178] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_export_put(
-  i_module_root BYTEA,
-  i_symbol_root BYTEA,
-  i_value_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_row JSONB;
-    v_authoritative BYTEA;
-  BEGIN
-    v_authoritative := "gw_ledger".module_export(i_module_root,i_symbol_root);
-    IF NOT (v_authoritative = i_value_root) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/module_export_projection_mismatch',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/module-export-projection-mismatch'
-      ;
-    END IF;
-    WITH j_ret AS (  
-      INSERT INTO "gw_ledger"."ModuleExport" ("module_root","symbol_root","value_root") VALUES (
-        (i_module_root)::BYTEA,
-        (i_symbol_root)::BYTEA,
-        (i_value_root)::BYTEA
-      ) ON CONFLICT ("module_root","symbol_root") DO UPDATE SET ("module_root","symbol_root","value_root") = row(
-        EXCLUDED."module_root",
-        EXCLUDED."symbol_root",
-        EXCLUDED."value_root"
-      ) RETURNING "module_root","symbol_root","value_root")
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN o_row;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.module/module-export-projection-get [190] 
-CREATE OR REPLACE FUNCTION "gw_ledger".module_export_projection_get(
-  i_module_root BYTEA,
-  i_symbol_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_row JSONB;
-  BEGIN
-    WITH j_ret AS (  
-      SELECT "module_root","symbol_root","value_root" FROM "gw_ledger"."ModuleExport"
-      WHERE "module_root" = i_module_root AND "symbol_root" = i_symbol_root
-      LIMIT 1)
-    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
-    RETURN o_row;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.integrity/cell-integrity [26] 
-CREATE OR REPLACE FUNCTION "gw_ledger".cell_integrity(
-  i_root BYTEA
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_cell JSONB;
-  BEGIN
-    o_cell := "gw_ledger".cell_by_hash(i_root);
-    RETURN o_cell IS NOT NULL AND ((o_cell ->> 'codec_version')::INTEGER = 1) AND "gw_ledger".verify(
-      i_root,
-      (o_cell ->> 'type_tag')::INTEGER,
-      (o_cell ->> 'payload')::BYTEA
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/state-integrity [38] 
-CREATE OR REPLACE FUNCTION "gw_ledger".state_integrity(
-  i_state_root BYTEA
-) RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN "gw_ledger".cell_integrity(i_state_root) AND "gw_ledger".state_root_valid(i_state_root) AND "gw_ledger".cell_integrity("gw_ledger".state_version_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_accounts_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_modules_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_module_aliases_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_validators_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_settings_root(i_state_root));
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/block-integrity [52] 
-CREATE OR REPLACE FUNCTION "gw_ledger".block_integrity(
-  i_block_root BYTEA
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_block JSONB;
-  BEGIN
-    o_block := "gw_ledger".block_get(i_block_root);
-    RETURN o_block IS NOT NULL AND "gw_ledger".cell_integrity(i_block_root) AND "gw_ledger".block_valid(i_block_root) AND "gw_ledger".state_integrity((o_block ->> 'previous_state_root')::BYTEA) AND "gw_ledger".state_integrity((o_block ->> 'state_root')::BYTEA);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/head-integrity [66] 
-CREATE OR REPLACE FUNCTION "gw_ledger".head_integrity(
-  i_network TEXT
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_block JSONB;
-    o_head JSONB;
-  BEGIN
-    o_head := "gw_ledger".head_get(i_network);
-    o_block := "gw_ledger".block_get((o_head ->> 'block_root')::BYTEA);
-    RETURN o_head IS NOT NULL AND o_block IS NOT NULL AND "gw_ledger".block_integrity((o_head ->> 'block_root')::BYTEA) AND ((o_head ->> 'height')::BIGINT = (o_block ->> 'height')::BIGINT) AND ((o_head ->> 'state_root')::BYTEA = (o_block ->> 'state_root')::BYTEA);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/rebuild-account-projection [81] 
-CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_account_projection(
-  i_state_root BYTEA,
-  i_address_root BYTEA
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_row JSONB;
-    v_account_root BYTEA;
-    v_sequence BIGINT;
-  BEGIN
-    v_account_root := "gw_ledger".state_account_root(i_state_root,i_address_root);
-    IF NOT (v_account_root IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-account'
-      ;
-    END IF;
-    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
-    o_row := "gw_ledger".account_put(
-      i_address_root,
-      v_sequence,
-      i_state_root,
-      "gw_ledger".account_value_environment_root(v_account_root),
-      "gw_ledger".account_value_metadata_root(v_account_root),
-      "gw_ledger".account_value_controller_root(v_account_root)
-    );
-    RETURN o_row;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/rebuild-module-export-projection-at [97] 
-CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_module_export_projection_at(
-  i_module_root BYTEA,
-  i_exports_root BYTEA,
-  i_position INTEGER,
-  i_count INTEGER
-) RETURNS BOOLEAN AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN true;
-  ELSE
-    DECLARE
-    o_projection JSONB;
-      v_symbol_root BYTEA;
-      v_value_root BYTEA;
-  BEGIN
-    v_symbol_root := "gw_ledger".cell_ref_child(i_exports_root,i_position,'element');
-      v_value_root := "gw_ledger".module_export(i_module_root,v_symbol_root);
-      o_projection := "gw_ledger".module_export_put(i_module_root,v_symbol_root,v_value_root);
-      RETURN "gw_ledger".rebuild_module_export_projection_at(i_module_root,i_exports_root,i_position + 1,i_count);
-  END;
-  END IF;
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.integrity/rebuild-module-export-projection [112] 
-CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_module_export_projection(
-  i_module_root BYTEA
-) RETURNS BOOLEAN AS $$
-
-  DECLARE
-    o_module JSONB;
-    v_count INTEGER;
-    v_exports_root BYTEA;
-  BEGIN
-    o_module := "gw_ledger".module_get(i_module_root);
-    IF NOT (o_module IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_module','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-module'
-      ;
-    END IF;
-    v_exports_root := (o_module ->> 'exports_root')::BYTEA;
-    v_count := "gw_ledger".cell_ref_count(v_exports_root,'element');
-    RETURN "gw_ledger".rebuild_module_export_projection_at(i_module_root,v_exports_root,0,v_count);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pgsodium";
 
 -- gwdb.ledger.workspace-review/WorkspaceReview [38] 
@@ -16474,6 +15735,1970 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_policy_submit(
         encode(v_block_root,'hex')
       );
     END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pgsodium";
+
+-- gwdb.ledger.workspace-main/WorkspaceMainAcceptance [42] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkspaceMainAcceptance" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkspaceMainAcceptance" (
+  "acceptance_root" BYTEA PRIMARY KEY,
+  "workspace_id_root" BYTEA NOT NULL,
+  "authority_root" BYTEA NOT NULL,
+  "expected_root" BYTEA,
+  "candidate_root" BYTEA NOT NULL,
+  "policy_root" BYTEA NOT NULL,
+  "review_roots_root" BYTEA NOT NULL,
+  "recorded_at" BIGINT NOT NULL
+);
+
+-- gwdb.ledger.workspace-main/main-scope [54] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_scope(
+  i_workspace_id_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN "gw_ledger".personal_scope(i_workspace_id_root);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-ref-name [61] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_ref_name() RETURNS TEXT AS $$
+
+  SELECT RETURN 'main';
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.workspace-main/main-acceptance-id [69] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_acceptance_id(
+  i_workspace_id_root BYTEA,
+  i_candidate_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN 'main-acceptance/' || "gw_ledger".workspace_id_text(i_workspace_id_root) || '/' || encode(i_candidate_root,'hex');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-acceptance-extensions-value [79] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_acceptance_extensions_value(
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_desired BYTEA;
+    v_empty_map BYTEA;
+    v_expected BYTEA;
+    v_workspace BYTEA;
+  BEGIN
+    v_empty_map := "gw_ledger".put_map(jsonb_build_array());
+    v_workspace := "gw_ledger".record_assoc(v_empty_map,'workspace/id',i_workspace_id_root);
+    v_expected := "gw_ledger".record_assoc(
+      v_workspace,
+      'ref/expected-root',
+      "gw_ledger".optional_root(i_expected_root)
+    );
+    v_desired := "gw_ledger".record_assoc(v_expected,'ref/desired-root',i_candidate_root);
+    RETURN "gw_ledger".record_assoc(
+      v_desired,
+      'ref/policy',
+      "gw_ledger".put_keyword('main-acceptance-v1')
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-value [102] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_value(
+  i_workspace_id_root BYTEA,
+  i_authority_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_review_roots_root BYTEA,
+  i_recorded_at BIGINT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_audience BYTEA;
+    v_claim BYTEA;
+    v_context BYTEA;
+    v_empty_map BYTEA;
+    v_evidence_roots BYTEA;
+    v_extensions BYTEA;
+    v_id BYTEA;
+    v_issuer BYTEA;
+    v_process_id BYTEA;
+    v_process_root BYTEA;
+    v_record BYTEA;
+    v_revokes BYTEA;
+    v_scope BYTEA;
+    v_subject_id BYTEA;
+    v_subject_root BYTEA;
+    v_valid_from BYTEA;
+    v_valid_until BYTEA;
+    v_version BYTEA;
+  BEGIN
+    v_empty_map := "gw_ledger".put_map(jsonb_build_array());
+    v_record := "gw_ledger".record_start('attestation/claim');
+    v_version := "gw_ledger".record_assoc(v_record,'record/version',"gw_ledger".put_integer_number(1));
+    v_extensions := "gw_ledger".record_assoc(
+      v_version,
+      'record/extensions',
+      "gw_ledger".main_acceptance_extensions_value(i_workspace_id_root,i_expected_root,i_candidate_root)
+    );
+    v_id := "gw_ledger".record_assoc(v_extensions,'attestation/id',"gw_ledger".put_string(
+      "gw_ledger".main_acceptance_id(i_workspace_id_root,i_candidate_root)
+    ));
+    v_claim := "gw_ledger".record_assoc(
+      v_id,
+      'attestation/claim',
+      "gw_ledger".put_keyword('workspace/main-accepted-v1')
+    );
+    v_subject_id := "gw_ledger".record_assoc(
+      v_claim,
+      'attestation/subject-id',
+      "gw_ledger".put_string("gw_ledger".proposal_name(i_candidate_root))
+    );
+    v_subject_root := "gw_ledger".record_assoc(v_subject_id,'attestation/subject-root',i_candidate_root);
+    v_context := "gw_ledger".record_assoc(v_subject_root,'attestation/context-root',i_policy_root);
+    v_evidence_roots := "gw_ledger".record_assoc(v_context,'attestation/evidence-roots',i_review_roots_root);
+    v_process_id := "gw_ledger".record_assoc(
+      v_evidence_roots,
+      'attestation/process-run-id',
+      "gw_ledger".put_nil()
+    );
+    v_process_root := "gw_ledger".record_assoc(
+      v_process_id,
+      'attestation/process-run-root',
+      "gw_ledger".put_nil()
+    );
+    v_issuer := "gw_ledger".record_assoc(
+      v_process_root,
+      'attestation/issuer-evidence',
+      "gw_ledger".review_recorded_evidence_value(i_authority_root,i_recorded_at)
+    );
+    v_scope := "gw_ledger".record_assoc(
+      v_issuer,
+      'attestation/scope',
+      "gw_ledger".put_keyword('workspace/main')
+    );
+    v_audience := "gw_ledger".record_assoc(
+      v_scope,
+      'attestation/audience',
+      "gw_ledger".put_keyword('workspace/members')
+    );
+    v_valid_from := "gw_ledger".record_assoc(
+      v_audience,
+      'attestation/valid-from',
+      "gw_ledger".put_integer_number(i_recorded_at)
+    );
+    v_valid_until := "gw_ledger".record_assoc(v_valid_from,'attestation/valid-until',"gw_ledger".put_nil());
+    v_revokes := "gw_ledger".record_assoc(
+      v_valid_until,
+      'attestation/revokes-root',
+      "gw_ledger".put_nil()
+    );
+    RETURN "gw_ledger".record_assoc(v_revokes,'attestation/metadata',v_empty_map);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-row [182] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_row(
+  i_acceptance_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "acceptance_root",
+      "workspace_id_root",
+      "authority_root",
+      "expected_root",
+      "candidate_root",
+      "policy_root",
+      "review_roots_root",
+      "recorded_at"
+    FROM "gw_ledger"."WorkspaceMainAcceptance"
+    WHERE "acceptance_root" = i_acceptance_root
+    LIMIT 1)
+  SELECT to_jsonb(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/review-root-seen-before [189] 
+CREATE OR REPLACE FUNCTION "gw_ledger".review_root_seen_before(
+  i_review_roots_root BYTEA,
+  i_position INTEGER,
+  i_review_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position <= 0 THEN
+    RETURN false;
+  ELSE
+    DECLARE
+    v_previous INTEGER;
+      v_root BYTEA;
+  BEGIN
+    v_previous := (i_position - 1);
+      v_root := "gw_ledger".cell_ref_child(i_review_roots_root,v_previous,'element');
+      RETURN (v_root = i_review_root) OR "gw_ledger".review_root_seen_before(i_review_roots_root,v_previous,i_review_root);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/acceptance-review-vector-error-at [208] 
+CREATE OR REPLACE FUNCTION "gw_ledger".acceptance_review_vector_error_at(
+  i_review_roots_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS TEXT AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN null;
+  ELSE
+    DECLARE
+    o_review_cell JSONB;
+      v_review_root BYTEA;
+  BEGIN
+    v_review_root := "gw_ledger".cell_ref_child(i_review_roots_root,i_position,'element');
+      o_review_cell := "gw_ledger".cell_by_hash(v_review_root);
+      IF o_review_cell is null  THEN
+        RETURN 'workspace/main-acceptance-review-not-found';
+      ELSIF (o_review_cell ->> 'type_tag')::SMALLINT = 0 THEN
+        RETURN 'workspace/main-acceptance-nil-review-root';
+      ELSIF "gw_ledger".review_root_seen_before(i_review_roots_root,i_position,v_review_root) THEN
+        RETURN 'workspace/main-acceptance-duplicate-review-root';
+      ELSE
+        RETURN "gw_ledger".acceptance_review_vector_error_at(i_review_roots_root,i_position + 1,i_count);
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/acceptance-review-vector-error [237] 
+CREATE OR REPLACE FUNCTION "gw_ledger".acceptance_review_vector_error(
+  i_review_roots_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    o_vector JSONB;
+  BEGIN
+    o_vector := "gw_ledger".cell_by_hash(i_review_roots_root);
+    IF o_vector is null  THEN
+      RETURN 'workspace/main-acceptance-reviews-not-found';
+    ELSIF NOT ((o_vector ->> 'type_tag')::SMALLINT = 10) THEN
+      RETURN 'workspace/main-acceptance-reviews-not-vector';
+    ELSE
+      DECLARE
+      v_count INTEGER;
+    BEGIN
+      v_count := "gw_ledger".cell_ref_count(i_review_roots_root,'element');
+        IF _eq(v_count,0) THEN
+          RETURN 'workspace/main-acceptance-missing-reviews';
+        ELSE
+          RETURN "gw_ledger".acceptance_review_vector_error_at(i_review_roots_root,0,v_count);
+        END IF;
+    END;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-error [260] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_error(
+  i_acceptance_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  IF NOT "gw_ledger".record_kind(i_acceptance_root,'attestation/claim') THEN
+    RETURN 'workspace/invalid-main-acceptance-record';
+  ELSIF NOT "gw_ledger".record_version_one(i_acceptance_root) THEN
+    RETURN 'workspace/unsupported-main-acceptance-version';
+  ELSE
+    DECLARE
+    o_candidate JSONB;
+      o_policy JSONB;
+      o_recorded_at JSONB;
+      o_workspace JSONB;
+      v_audience_root BYTEA;
+      v_authority_root BYTEA;
+      v_candidate_root BYTEA;
+      v_claim_root BYTEA;
+      v_desired_root BYTEA;
+      v_empty_map BYTEA;
+      v_expected_root BYTEA;
+      v_extensions_root BYTEA;
+      v_id_root BYTEA;
+      v_issuer_root BYTEA;
+      v_metadata_root BYTEA;
+      v_policy_root BYTEA;
+      v_process_id_root BYTEA;
+      v_process_root BYTEA;
+      v_recorded_at_root BYTEA;
+      v_ref_policy_root BYTEA;
+      v_review_roots_root BYTEA;
+      v_revokes_root BYTEA;
+      v_scope_root BYTEA;
+      v_subject_id_root BYTEA;
+      v_valid_from_root BYTEA;
+      v_valid_until_root BYTEA;
+      v_workspace_id_root BYTEA;
+  BEGIN
+    v_id_root := "gw_ledger".field(i_acceptance_root,'attestation/id');
+      v_claim_root := "gw_ledger".field(i_acceptance_root,'attestation/claim');
+      v_subject_id_root := "gw_ledger".field(i_acceptance_root,'attestation/subject-id');
+      v_candidate_root := "gw_ledger".field(i_acceptance_root,'attestation/subject-root');
+      v_policy_root := "gw_ledger".optional_field(i_acceptance_root,'attestation/context-root');
+      v_review_roots_root := "gw_ledger".field(i_acceptance_root,'attestation/evidence-roots');
+      v_process_id_root := "gw_ledger".optional_field(i_acceptance_root,'attestation/process-run-id');
+      v_process_root := "gw_ledger".optional_field(i_acceptance_root,'attestation/process-run-root');
+      v_issuer_root := "gw_ledger".field(i_acceptance_root,'attestation/issuer-evidence');
+      v_authority_root := "gw_ledger".field(v_issuer_root,'ledger/signer');
+      v_recorded_at_root := "gw_ledger".field(v_issuer_root,'ledger/timestamp');
+      v_scope_root := "gw_ledger".field(i_acceptance_root,'attestation/scope');
+      v_audience_root := "gw_ledger".field(i_acceptance_root,'attestation/audience');
+      v_valid_from_root := "gw_ledger".field(i_acceptance_root,'attestation/valid-from');
+      v_valid_until_root := "gw_ledger".optional_field(i_acceptance_root,'attestation/valid-until');
+      v_revokes_root := "gw_ledger".optional_field(i_acceptance_root,'attestation/revokes-root');
+      v_metadata_root := "gw_ledger".field(i_acceptance_root,'attestation/metadata');
+      v_extensions_root := "gw_ledger".field(i_acceptance_root,'record/extensions');
+      v_workspace_id_root := "gw_ledger".field(v_extensions_root,'workspace/id');
+      v_expected_root := "gw_ledger".optional_field(v_extensions_root,'ref/expected-root');
+      v_desired_root := "gw_ledger".field(v_extensions_root,'ref/desired-root');
+      v_ref_policy_root := "gw_ledger".field(v_extensions_root,'ref/policy');
+      v_empty_map := "gw_ledger".put_map(jsonb_build_array());
+      o_workspace := "gw_ledger".cell_by_hash(v_workspace_id_root);
+      o_candidate := "gw_ledger".workspace_commit_row(v_candidate_root);
+      o_policy := "gw_ledger".workspace_main_policy_row(v_policy_root);
+      o_recorded_at := "gw_ledger".cell_by_hash(v_recorded_at_root);
+      IF o_workspace IS NULL OR NOT ((o_workspace ->> 'type_tag')::SMALLINT = 5) THEN
+        RETURN 'workspace/invalid-main-acceptance-workspace-id';
+      ELSIF o_candidate is null  THEN
+        RETURN 'workspace/main-candidate-not-found';
+      ELSIF NOT "gw_ledger".workspace_commit_valid(v_candidate_root) THEN
+        RETURN 'workspace/invalid-main-candidate';
+      ELSIF o_policy is null  THEN
+        RETURN 'workspace/main-policy-not-found';
+      ELSIF NOT "gw_ledger".workspace_main_policy_valid(v_policy_root) THEN
+        RETURN 'workspace/invalid-main-policy';
+      ELSIF NOT (v_desired_root = v_candidate_root) THEN
+        RETURN 'workspace/main-acceptance-desired-root-mismatch';
+      ELSIF NOT (v_ref_policy_root = "gw_ledger".put_keyword('main-acceptance-v1')) THEN
+        RETURN 'workspace/unsupported-main-acceptance-policy';
+      ELSIF v_expected_root = v_candidate_root THEN
+        RETURN 'workspace/noop-main-acceptance';
+      ELSIF v_process_id_root is not null  THEN
+        RETURN 'workspace/main-acceptance-process-not-supported';
+      ELSIF v_process_root is not null  THEN
+        RETURN 'workspace/main-acceptance-process-not-supported';
+      ELSIF NOT "gw_ledger".record_kind(v_issuer_root,'ledger/evidence') THEN
+        RETURN 'workspace/invalid-main-acceptance-evidence';
+      ELSIF NOT "gw_ledger".record_version_one(v_issuer_root) THEN
+        RETURN 'workspace/unsupported-main-acceptance-evidence';
+      ELSIF "gw_ledger".cell_by_hash(v_authority_root) is null  THEN
+        RETURN 'workspace/main-acceptance-authority-not-found';
+      ELSIF o_recorded_at IS NULL OR NOT ((o_recorded_at ->> 'type_tag')::SMALLINT = 2) THEN
+        RETURN 'workspace/invalid-main-acceptance-recorded-at';
+      ELSIF "gw_ledger".optional_field(v_issuer_root,'ledger/transaction-root') is not null  THEN
+        RETURN 'workspace/main-acceptance-transaction-evidence-not-supported';
+      ELSIF "gw_ledger".optional_field(v_issuer_root,'ledger/previous-head-root') is not null  THEN
+        RETURN 'workspace/main-acceptance-head-evidence-not-supported';
+      ELSIF "gw_ledger".optional_field(v_issuer_root,'ledger/contract-root') is not null  THEN
+        RETURN 'workspace/main-acceptance-contract-evidence-not-supported';
+      ELSIF "gw_ledger".optional_field(v_issuer_root,'ledger/template-root') is not null  THEN
+        RETURN 'workspace/main-acceptance-template-evidence-not-supported';
+      ELSIF "gw_ledger".optional_field(v_issuer_root,'ledger/global-state-root') is not null  THEN
+        RETURN 'workspace/main-acceptance-state-evidence-not-supported';
+      ELSIF NOT (v_scope_root = "gw_ledger".put_keyword('workspace/main')) THEN
+        RETURN 'workspace/main-acceptance-scope-mismatch';
+      ELSIF NOT (v_audience_root = "gw_ledger".put_keyword('workspace/members')) THEN
+        RETURN 'workspace/main-acceptance-audience-mismatch';
+      ELSIF NOT (v_valid_from_root = v_recorded_at_root) THEN
+        RETURN 'workspace/main-acceptance-valid-from-mismatch';
+      ELSIF v_valid_until_root is not null  THEN
+        RETURN 'workspace/main-acceptance-expiry-not-supported';
+      ELSIF v_revokes_root is not null  THEN
+        RETURN 'workspace/main-acceptance-revocation-not-supported';
+      ELSIF NOT (v_metadata_root = v_empty_map) THEN
+        RETURN 'workspace/main-acceptance-metadata-not-supported';
+      ELSE
+        DECLARE
+        v_reconstructed BYTEA;
+          v_recorded_at BIGINT;
+          v_review_vector_error TEXT;
+      BEGIN
+        v_review_vector_error := "gw_ledger".acceptance_review_vector_error(v_review_roots_root);
+          v_recorded_at := "gw_ledger".integer_bigint(v_recorded_at_root);
+          v_reconstructed := "gw_ledger".workspace_main_acceptance_value(
+            v_workspace_id_root,
+            v_authority_root,
+            v_expected_root,
+            v_candidate_root,
+            v_policy_root,
+            v_review_roots_root,
+            v_recorded_at
+          );
+          IF v_review_vector_error is not null  THEN
+            RETURN v_review_vector_error;
+          ELSIF v_recorded_at < 0 THEN
+            RETURN 'workspace/invalid-main-acceptance-recorded-at';
+          ELSIF NOT (v_id_root = "gw_ledger".put_string(
+            "gw_ledger".main_acceptance_id(v_workspace_id_root,v_candidate_root)
+          )) THEN
+            RETURN 'workspace/main-acceptance-id-not-derived';
+          ELSIF NOT (v_claim_root = "gw_ledger".put_keyword('workspace/main-accepted-v1')) THEN
+            RETURN 'workspace/unsupported-main-acceptance-claim';
+          ELSIF NOT (v_subject_id_root = "gw_ledger".put_string("gw_ledger".proposal_name(v_candidate_root))) THEN
+            RETURN 'workspace/main-acceptance-subject-id-mismatch';
+          ELSIF NOT (v_issuer_root = "gw_ledger".review_recorded_evidence_value(v_authority_root,v_recorded_at)) THEN
+            RETURN 'workspace/noncanonical-main-acceptance-evidence';
+          ELSIF NOT (v_extensions_root = "gw_ledger".main_acceptance_extensions_value(v_workspace_id_root,v_expected_root,v_candidate_root)) THEN
+            RETURN 'workspace/noncanonical-main-acceptance-extensions';
+          ELSIF NOT (i_acceptance_root = v_reconstructed) THEN
+            RETURN 'workspace/noncanonical-main-acceptance';
+          ELSE
+            RETURN null;
+          END IF;
+      END;
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-valid [480] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_valid(
+  i_acceptance_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    o_row := "gw_ledger".workspace_main_acceptance_row(i_acceptance_root);
+    IF o_row is null  THEN
+      RETURN false;
+    END IF;
+    DECLARE
+      v_authority_root BYTEA;
+      v_candidate_root BYTEA;
+      v_expected_root BYTEA;
+      v_policy_root BYTEA;
+      v_recorded_at BIGINT;
+      v_review_roots_root BYTEA;
+      v_workspace_id_root BYTEA;
+    BEGIN
+      v_workspace_id_root := (o_row ->> 'workspace_id_root')::BYTEA;
+      v_authority_root := (o_row ->> 'authority_root')::BYTEA;
+      v_expected_root := (o_row ->> 'expected_root')::BYTEA;
+      v_candidate_root := (o_row ->> 'candidate_root')::BYTEA;
+      v_policy_root := (o_row ->> 'policy_root')::BYTEA;
+      v_review_roots_root := (o_row ->> 'review_roots_root')::BYTEA;
+      v_recorded_at := (o_row ->> 'recorded_at')::BIGINT;
+      RETURN "gw_ledger".workspace_main_acceptance_error(i_acceptance_root) IS NULL AND (i_acceptance_root = "gw_ledger".workspace_main_acceptance_value(
+        v_workspace_id_root,
+        v_authority_root,
+        v_expected_root,
+        v_candidate_root,
+        v_policy_root,
+        v_review_roots_root,
+        v_recorded_at
+      ));
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-import [509] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_import(
+  i_acceptance_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_existing JSONB;
+  BEGIN
+    o_existing := "gw_ledger".workspace_main_acceptance_row(i_acceptance_root);
+    IF o_existing is not null  THEN
+      IF NOT   ("gw_ledger".workspace_main_acceptance_valid(i_acceptance_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+              'status',
+              'error',
+              'tag',
+              'ledger/workspace_main_acceptance_projection_conflict',
+              'data',
+              null
+            ))::TEXT,
+          MESSAGE = 'ledger/workspace-main-acceptance-projection-conflict'
+        ;
+      END IF;
+      RETURN i_acceptance_root;
+    END IF;
+    DECLARE
+      o_insert JSONB;
+      v_authority_root BYTEA;
+      v_candidate_root BYTEA;
+      v_error TEXT;
+      v_expected_root BYTEA;
+      v_extensions_root BYTEA;
+      v_issuer_root BYTEA;
+      v_policy_root BYTEA;
+      v_recorded_at BIGINT;
+      v_review_roots_root BYTEA;
+      v_workspace_id_root BYTEA;
+    BEGIN
+      v_error := "gw_ledger".workspace_main_acceptance_error(i_acceptance_root);
+      IF NOT (v_error IS NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/invalid_workspace_main_acceptance',
+            'data',
+            v_error
+          ))::TEXT,
+          MESSAGE = 'ledger/invalid-workspace-main-acceptance'
+        ;
+      END IF;
+      v_extensions_root := "gw_ledger".field(i_acceptance_root,'record/extensions');
+      v_workspace_id_root := "gw_ledger".field(v_extensions_root,'workspace/id');
+      v_expected_root := "gw_ledger".optional_field(v_extensions_root,'ref/expected-root');
+      v_candidate_root := "gw_ledger".field(i_acceptance_root,'attestation/subject-root');
+      v_policy_root := "gw_ledger".field(i_acceptance_root,'attestation/context-root');
+      v_review_roots_root := "gw_ledger".field(i_acceptance_root,'attestation/evidence-roots');
+      v_issuer_root := "gw_ledger".field(i_acceptance_root,'attestation/issuer-evidence');
+      v_authority_root := "gw_ledger".field(v_issuer_root,'ledger/signer');
+      v_recorded_at := "gw_ledger".integer_bigint("gw_ledger".field(v_issuer_root,'ledger/timestamp'));
+      WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkspaceMainAcceptance" (
+          "acceptance_root",
+          "workspace_id_root",
+          "authority_root",
+          "expected_root",
+          "candidate_root",
+          "policy_root",
+          "review_roots_root",
+          "recorded_at"
+        ) VALUES (
+          (i_acceptance_root)::BYTEA,
+          (v_workspace_id_root)::BYTEA,
+          (v_authority_root)::BYTEA,
+          (v_expected_root)::BYTEA,
+          (v_candidate_root)::BYTEA,
+          (v_policy_root)::BYTEA,
+          (v_review_roots_root)::BYTEA,
+          (v_recorded_at)::BIGINT
+        ) RETURNING
+          "acceptance_root",
+          "workspace_id_root",
+          "authority_root",
+          "expected_root",
+          "candidate_root",
+          "policy_root",
+          "review_roots_root",
+          "recorded_at")
+      SELECT to_jsonb(j_ret) FROM j_ret INTO o_insert;
+      RETURN i_acceptance_root;
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-acceptance-put [554] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_acceptance_put(
+  i_workspace_id_root BYTEA,
+  i_authority_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_review_roots_root BYTEA,
+  i_recorded_at BIGINT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_review_vector_error TEXT;
+    v_root BYTEA;
+  BEGIN
+    v_review_vector_error := "gw_ledger".acceptance_review_vector_error(i_review_roots_root);
+    IF NOT (v_review_vector_error IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_main_acceptance_reviews',
+          'data',
+          v_review_vector_error
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-main-acceptance-reviews'
+      ;
+    END IF;
+    IF NOT (i_recorded_at >= 0) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_main_acceptance_recorded_at',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-main-acceptance-recorded-at'
+      ;
+    END IF;
+    v_root := "gw_ledger".workspace_main_acceptance_value(
+      i_workspace_id_root,
+      i_authority_root,
+      i_expected_root,
+      i_candidate_root,
+      i_policy_root,
+      i_review_roots_root,
+      i_recorded_at
+    );
+    RETURN "gw_ledger".workspace_main_acceptance_import(v_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-policy-selected [578] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_policy_selected(
+  i_workspace_id_root BYTEA,
+  i_policy_root BYTEA,
+  i_authority_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    o_row := "gw_ledger".scoped_ref_row(
+      "gw_ledger".main_scope(i_workspace_id_root),
+      "gw_ledger".main_policy_ref_name()
+    );
+    RETURN o_row IS NOT NULL AND ((o_row ->> 'root')::BYTEA = i_policy_root) AND ((o_row ->> 'authorization_root')::BYTEA = i_authority_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-review-evidence-error-at [594] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_review_evidence_error_at(
+  i_workspace_id_root BYTEA,
+  i_candidate_root BYTEA,
+  i_reviewer_roots_root BYTEA,
+  i_review_roots_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS TEXT AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN null;
+  ELSE
+    DECLARE
+    o_current JSONB;
+      o_review JSONB;
+      v_review_root BYTEA;
+      v_reviewer_root BYTEA;
+  BEGIN
+    v_reviewer_root := "gw_ledger".cell_ref_child(i_reviewer_roots_root,i_position,'element');
+      v_review_root := "gw_ledger".cell_ref_child(i_review_roots_root,i_position,'element');
+      o_review := "gw_ledger".workspace_review_row(v_review_root);
+      o_current := "gw_ledger".scoped_ref_row(
+        "gw_ledger".main_scope(i_workspace_id_root),
+        "gw_ledger".review_ref_name(i_candidate_root,v_reviewer_root)
+      );
+      IF o_review is null  THEN
+        RETURN 'workspace/main-acceptance-review-not-found';
+      ELSIF NOT "gw_ledger".workspace_review_valid(v_review_root) THEN
+        RETURN 'workspace/invalid-main-acceptance-review';
+      ELSIF NOT ((o_review ->> 'workspace_id_root')::BYTEA = i_workspace_id_root) THEN
+        RETURN 'workspace/main-acceptance-review-workspace-mismatch';
+      ELSIF NOT ((o_review ->> 'candidate_root')::BYTEA = i_candidate_root) THEN
+        RETURN 'workspace/main-acceptance-review-candidate-mismatch';
+      ELSIF NOT ((o_review ->> 'reviewer_root')::BYTEA = v_reviewer_root) THEN
+        RETURN 'workspace/main-acceptance-reviewer-position-mismatch';
+      ELSIF NOT ((o_review ->> 'decision')::TEXT = 'approve') THEN
+        RETURN 'workspace/main-acceptance-review-not-approved';
+      ELSIF o_current is null  THEN
+        RETURN 'workspace/main-acceptance-review-not-current';
+      ELSIF NOT ((o_current ->> 'root')::BYTEA = v_review_root) THEN
+        RETURN 'workspace/main-acceptance-review-not-current';
+      ELSIF NOT ((o_current ->> 'authorization_root')::BYTEA = v_reviewer_root) THEN
+        RETURN 'workspace/main-acceptance-review-authorization-mismatch';
+      ELSE
+        RETURN "gw_ledger".main_review_evidence_error_at(
+          i_workspace_id_root,
+          i_candidate_root,
+          i_reviewer_roots_root,
+          i_review_roots_root,
+          i_position + 1,
+          i_count
+        );
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-review-evidence-error [665] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_review_evidence_error(
+  i_workspace_id_root BYTEA,
+  i_candidate_root BYTEA,
+  i_reviewer_roots_root BYTEA,
+  i_review_roots_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    o_reviewers JSONB;
+    o_reviews JSONB;
+  BEGIN
+    o_reviewers := "gw_ledger".cell_by_hash(i_reviewer_roots_root);
+    o_reviews := "gw_ledger".cell_by_hash(i_review_roots_root);
+    IF o_reviewers IS NULL OR NOT ((o_reviewers ->> 'type_tag')::SMALLINT = 10) THEN
+      RETURN 'workspace/main-policy-reviewers-not-vector';
+    ELSIF o_reviews IS NULL OR NOT ((o_reviews ->> 'type_tag')::SMALLINT = 10) THEN
+      RETURN 'workspace/main-acceptance-reviews-not-vector';
+    ELSE
+      DECLARE
+      v_review_count INTEGER;
+        v_reviewer_count INTEGER;
+    BEGIN
+      v_reviewer_count := "gw_ledger".cell_ref_count(i_reviewer_roots_root,'element');
+        v_review_count := "gw_ledger".cell_ref_count(i_review_roots_root,'element');
+        IF NOT (v_reviewer_count = v_review_count) THEN
+          RETURN 'workspace/main-acceptance-review-count-mismatch';
+        ELSE
+          RETURN "gw_ledger".main_review_evidence_error_at(
+            i_workspace_id_root,
+            i_candidate_root,
+            i_reviewer_roots_root,
+            i_review_roots_root,
+            0,
+            v_reviewer_count
+          );
+        END IF;
+    END;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/main-transition-error [699] 
+CREATE OR REPLACE FUNCTION "gw_ledger".main_transition_error(
+  i_workspace_id_root BYTEA,
+  i_authority_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_review_roots_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    o_candidate JSONB;
+    o_expected JSONB;
+    o_policy JSONB;
+  BEGIN
+    o_policy := "gw_ledger".workspace_main_policy_row(i_policy_root);
+    o_candidate := "gw_ledger".workspace_commit_row(i_candidate_root);
+    o_expected := CASE WHEN i_expected_root IS NULL THEN null
+    ELSE "gw_ledger".workspace_commit_row(i_expected_root)
+    END;
+    IF o_policy is null  THEN
+      RETURN 'workspace/main-policy-not-found';
+    ELSIF NOT "gw_ledger".workspace_main_policy_valid(i_policy_root) THEN
+      RETURN 'workspace/invalid-main-policy';
+    ELSIF NOT ((o_policy ->> 'workspace_id_root')::BYTEA = i_workspace_id_root) THEN
+      RETURN 'workspace/main-policy-workspace-mismatch';
+    ELSIF NOT ((o_policy ->> 'authority_root')::BYTEA = i_authority_root) THEN
+      RETURN 'workspace/main-policy-authority-mismatch';
+    ELSIF NOT "gw_ledger".main_policy_selected(i_workspace_id_root,i_policy_root,i_authority_root) THEN
+      RETURN 'workspace/main-policy-not-published';
+    ELSIF o_candidate is null  THEN
+      RETURN 'workspace/main-candidate-not-found';
+    ELSIF NOT "gw_ledger".workspace_commit_valid(i_candidate_root) THEN
+      RETURN 'workspace/invalid-main-candidate';
+    ELSIF NOT ((o_candidate ->> 'workspace_id_root')::BYTEA = i_workspace_id_root) THEN
+      RETURN 'workspace/main-candidate-workspace-mismatch';
+    ELSIF NOT "gw_ledger".proposal_published(i_workspace_id_root,i_candidate_root) THEN
+      RETURN 'workspace/main-candidate-not-proposed';
+    ELSIF i_expected_root IS NULL AND NOT ((o_candidate ->> 'parent_count')::INTEGER = 0) THEN
+      RETURN 'workspace/main-bootstrap-not-genesis';
+    ELSIF i_expected_root IS NOT NULL AND o_expected IS NULL THEN
+      RETURN 'workspace/expected-main-not-found';
+    ELSIF i_expected_root IS NOT NULL AND NOT "gw_ledger".workspace_commit_valid(i_expected_root) THEN
+      RETURN 'workspace/invalid-expected-main';
+    ELSIF i_expected_root IS NOT NULL AND NOT ((o_expected ->> 'workspace_id_root')::BYTEA = i_workspace_id_root) THEN
+      RETURN 'workspace/expected-main-workspace-mismatch';
+    ELSIF i_expected_root IS NOT NULL AND (i_expected_root = i_candidate_root) THEN
+      RETURN 'workspace/noop-main-acceptance';
+    ELSIF i_expected_root IS NOT NULL AND NOT "gw_ledger".workspace_commit_ancestor(i_expected_root,i_candidate_root) THEN
+      RETURN 'workspace/non-fast-forward-main-acceptance';
+    ELSE
+      RETURN "gw_ledger".main_review_evidence_error(
+        i_workspace_id_root,
+        i_candidate_root,
+        (o_policy ->> 'reviewer_roots_root')::BYTEA,
+        i_review_roots_root
+      );
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-signing-request [791] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_signing_request(
+  i_network TEXT,
+  i_public_key BYTEA,
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_review_roots_root BYTEA,
+  i_recorded_at BIGINT,
+  i_cost_limit BIGINT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_head JSONB;
+    v_acceptance_root BYTEA;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_controller_root BYTEA;
+    v_expected_controller BYTEA;
+    v_op_root BYTEA;
+    v_payload BYTEA;
+    v_runtime_root BYTEA;
+    v_sequence BIGINT;
+    v_state_root BYTEA;
+    v_transition_error TEXT;
+  BEGIN
+    o_head := "gw_ledger".head_get(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/network_missing','data',null))::TEXT,
+        MESSAGE = 'ledger/network-missing'
+      ;
+    END IF;
+    IF NOT (i_cost_limit >= 1) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_cost_limit','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-cost-limit'
+      ;
+    END IF;
+    v_state_root := (o_head ->> 'state_root')::BYTEA;
+    v_address_root := "gw_ledger".admission_address_root(i_public_key);
+    v_account_root := "gw_ledger".state_account_root(v_state_root,v_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_controller_root := "gw_ledger".account_value_controller_root(v_account_root);
+    v_expected_controller := "gw_ledger".admission_controller_root(i_public_key);
+    IF NOT (v_controller_root = v_expected_controller) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/controller_mismatch','data',null))::TEXT,
+        MESSAGE = 'ledger/controller-mismatch'
+      ;
+    END IF;
+    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    v_transition_error := "gw_ledger".main_transition_error(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_candidate_root,
+      i_policy_root,
+      i_review_roots_root
+    );
+    IF NOT (v_transition_error IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_main_acceptance',
+          'data',
+          v_transition_error
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-main-acceptance'
+      ;
+    END IF;
+    IF NOT (i_recorded_at >= 0) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_main_acceptance_recorded_at',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-main-acceptance-recorded-at'
+      ;
+    END IF;
+    v_acceptance_root := "gw_ledger".workspace_main_acceptance_put(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_candidate_root,
+      i_policy_root,
+      i_review_roots_root,
+      i_recorded_at
+    );
+    v_op_root := "gw_ledger".constant(v_acceptance_root);
+    v_runtime_root := "gw_ledger".put_integer('1');
+    v_payload := "gw_ledger".transaction_signing_payload(
+      i_network,
+      v_address_root,
+      v_sequence,
+      v_op_root,
+      null,
+      i_cost_limit,
+      v_runtime_root
+    );
+    RETURN jsonb_build_object(
+      'address',
+      encode(v_address_root,'hex'),
+      'sequence',
+      v_sequence,
+      'workspace_id_root',
+      encode(i_workspace_id_root,'hex'),
+      'scope',
+      "gw_ledger".main_scope(i_workspace_id_root),
+      'name',
+      "gw_ledger".main_ref_name(),
+      'expected_root',
+      "gw_ledger".root_hex(i_expected_root),
+      'candidate_root',
+      encode(i_candidate_root,'hex'),
+      'policy_root',
+      encode(i_policy_root,'hex'),
+      'review_roots_root',
+      encode(i_review_roots_root,'hex'),
+      'recorded_at',
+      i_recorded_at,
+      'policy',
+      'main-acceptance-v1',
+      'acceptance_root',
+      encode(v_acceptance_root,'hex'),
+      'operation_root',
+      encode(v_op_root,'hex'),
+      'signing_payload',
+      encode(v_payload,'hex')
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-main/workspace-main-submit [860] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_main_submit(
+  i_network TEXT,
+  i_public_key BYTEA,
+  i_sequence BIGINT,
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_candidate_root BYTEA,
+  i_policy_root BYTEA,
+  i_review_roots_root BYTEA,
+  i_recorded_at BIGINT,
+  i_cost_limit BIGINT,
+  i_signature BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_cas JSONB;
+    o_head JSONB;
+    v_acceptance_root BYTEA;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_cas_status TEXT;
+    v_controller_root BYTEA;
+    v_current_sequence BIGINT;
+    v_expected_controller BYTEA;
+    v_name TEXT;
+    v_op_root BYTEA;
+    v_previous_height BIGINT;
+    v_previous_state BYTEA;
+    v_runtime_root BYTEA;
+    v_scope TEXT;
+    v_signing_payload BYTEA;
+    v_transition_error TEXT;
+  BEGIN
+    o_head := "gw_ledger".head_lock(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/network_missing','data',null))::TEXT,
+        MESSAGE = 'ledger/network-missing'
+      ;
+    END IF;
+    IF NOT (i_cost_limit >= 1) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_cost_limit','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-cost-limit'
+      ;
+    END IF;
+    v_previous_state := (o_head ->> 'state_root')::BYTEA;
+    v_previous_height := (o_head ->> 'height')::BIGINT;
+    v_address_root := "gw_ledger".admission_address_root(i_public_key);
+    v_account_root := "gw_ledger".state_account_root(v_previous_state,v_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_controller_root := "gw_ledger".account_value_controller_root(v_account_root);
+    v_expected_controller := "gw_ledger".admission_controller_root(i_public_key);
+    IF NOT (v_controller_root = v_expected_controller) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/controller_mismatch','data',null))::TEXT,
+        MESSAGE = 'ledger/controller-mismatch'
+      ;
+    END IF;
+    v_current_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    IF NOT (v_current_sequence = i_sequence) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/sequence_conflict','data',null))::TEXT,
+        MESSAGE = 'ledger/sequence-conflict'
+      ;
+    END IF;
+    v_transition_error := "gw_ledger".main_transition_error(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_candidate_root,
+      i_policy_root,
+      i_review_roots_root
+    );
+    IF NOT (v_transition_error IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_main_acceptance',
+          'data',
+          v_transition_error
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-main-acceptance'
+      ;
+    END IF;
+    IF NOT (i_recorded_at >= 0) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_main_acceptance_recorded_at',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-main-acceptance-recorded-at'
+      ;
+    END IF;
+    v_acceptance_root := "gw_ledger".workspace_main_acceptance_put(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_candidate_root,
+      i_policy_root,
+      i_review_roots_root,
+      i_recorded_at
+    );
+    v_op_root := "gw_ledger".constant(v_acceptance_root);
+    v_runtime_root := "gw_ledger".put_integer('1');
+    v_signing_payload := "gw_ledger".transaction_signing_payload(
+      i_network,
+      v_address_root,
+      i_sequence,
+      v_op_root,
+      null,
+      i_cost_limit,
+      v_runtime_root
+    );
+    IF NOT ("gw_ledger".signature_verify(i_signature,v_signing_payload,i_public_key)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_main_acceptance_signature',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-main-acceptance-signature'
+      ;
+    END IF;
+    v_scope := "gw_ledger".main_scope(i_workspace_id_root);
+    v_name := "gw_ledger".main_ref_name();
+    o_cas := "gw_ledger".scoped_ref_compare_and_set(v_scope,v_name,i_expected_root,i_candidate_root,i_policy_root);
+    v_cas_status := (o_cas ->> 'status')::TEXT;
+    IF NOT (v_cas_status = 'ok') THEN
+      RETURN o_cas || jsonb_build_object(
+        'address',
+        encode(v_address_root,'hex'),
+        'workspace_id_root',
+        encode(i_workspace_id_root,'hex'),
+        'candidate_root',
+        encode(i_candidate_root,'hex'),
+        'policy_root',
+        encode(i_policy_root,'hex'),
+        'review_roots_root',
+        encode(i_review_roots_root,'hex'),
+        'recorded_at',
+        i_recorded_at,
+        'policy',
+        'main-acceptance-v1',
+        'acceptance_root',
+        encode(v_acceptance_root,'hex'),
+        'sequence',
+        i_sequence
+      );
+    END IF;
+    DECLARE
+      o_bound JSONB;
+      o_receipt JSONB;
+      v_block_root BYTEA;
+      v_receipt_root BYTEA;
+      v_state_root BYTEA;
+      v_transaction_root BYTEA;
+    BEGIN
+      v_transaction_root := "gw_ledger".transaction_put(
+        i_network,
+        v_address_root,
+        i_sequence,
+        v_op_root,
+        null,
+        i_cost_limit,
+        v_runtime_root,
+        i_signature
+      );
+      v_receipt_root := "gw_ledger".block_execute_signed_transaction(
+        v_transaction_root,
+        i_network,
+        v_previous_state,
+        v_previous_height + 1,
+        i_recorded_at
+      );
+      o_receipt := "gw_ledger".transaction_receipt_get(v_receipt_root);
+      IF NOT (o_receipt IS NOT NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_receipt','data',null))::TEXT,
+          MESSAGE = 'ledger/missing-receipt'
+        ;
+      END IF;
+      IF NOT (((o_receipt ->> 'status')::TEXT = 'ok') AND ((o_receipt ->> 'result_root')::BYTEA = v_acceptance_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workspace_main_acceptance_receipt_mismatch',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workspace-main-acceptance-receipt-mismatch'
+        ;
+      END IF;
+      v_state_root := (o_receipt ->> 'state_root')::BYTEA;
+      v_block_root := "gw_ledger".block_commit(
+        i_network,
+        v_previous_height,
+        v_previous_state,
+        v_previous_height + 1,
+        (o_head ->> 'block_root')::BYTEA,
+        v_previous_state,
+        v_state_root,
+        i_recorded_at,
+        "gw_ledger".admission_proposer_root(),
+        null,
+        jsonb_build_array(encode(v_transaction_root,'hex'))
+      );
+      o_bound := "gw_ledger".block_transaction_bind(v_block_root,0,v_receipt_root);
+      RETURN jsonb_build_object(
+        'status',
+        'ok',
+        'address',
+        encode(v_address_root,'hex'),
+        'sequence',
+        i_sequence,
+        'workspace_id_root',
+        encode(i_workspace_id_root,'hex'),
+        'scope',
+        v_scope,
+        'name',
+        v_name,
+        'expected_root',
+        "gw_ledger".root_hex(i_expected_root),
+        'candidate_root',
+        encode(i_candidate_root,'hex'),
+        'policy_root',
+        encode(i_policy_root,'hex'),
+        'review_roots_root',
+        encode(i_review_roots_root,'hex'),
+        'recorded_at',
+        i_recorded_at,
+        'policy',
+        'main-acceptance-v1',
+        'acceptance_root',
+        encode(v_acceptance_root,'hex'),
+        'ref_version',
+        (o_cas ->> 'version')::BIGINT,
+        'transaction_root',
+        encode(v_transaction_root,'hex'),
+        'receipt_root',
+        encode(v_receipt_root,'hex'),
+        'result_root',
+        encode((o_receipt ->> 'result_root')::BYTEA,'hex'),
+        'state_root',
+        encode(v_state_root,'hex'),
+        'block_root',
+        encode(v_block_root,'hex')
+      );
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- gwdb.ledger.syntax/Syntax [18] 
+DROP TABLE IF EXISTS "gw_ledger"."Syntax" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."Syntax" (
+  "syntax_root" BYTEA PRIMARY KEY,
+  "value_root" BYTEA NOT NULL,
+  "metadata_root" BYTEA NOT NULL
+);
+
+-- gwdb.ledger.syntax/put-syntax [25] 
+CREATE OR REPLACE FUNCTION "gw_ledger".put_syntax(
+  i_value_root BYTEA,
+  i_metadata_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_metadata JSONB;
+    o_metadata_ref JSONB;
+    o_root BYTEA;
+    o_upsert JSONB;
+    o_value JSONB;
+    o_value_ref JSONB;
+    v_payload BYTEA;
+  BEGIN
+    o_value := "gw_ledger".cell_by_hash(i_value_root);
+    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
+    IF NOT (o_value IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_syntax_value','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-syntax-value'
+      ;
+    END IF;
+    IF NOT (o_metadata IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/missing_syntax_metadata',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/missing-syntax-metadata'
+      ;
+    END IF;
+    IF NOT ((o_metadata ->> 'type_tag')::SMALLINT = 11) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/syntax_metadata_not_map',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/syntax-metadata-not-map'
+      ;
+    END IF;
+    v_payload := "gw_ledger".syntax_payload(i_value_root,i_metadata_root);
+    o_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(13,v_payload),1,13,v_payload);
+    o_value_ref := "gw_ledger".cell_ref_put(o_root,0,'value',i_value_root);
+    o_metadata_ref := "gw_ledger".cell_ref_put(o_root,1,'metadata',i_metadata_root);
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."Syntax" ("syntax_root","value_root","metadata_root") VALUES (
+        (o_root)::BYTEA,
+        (i_value_root)::BYTEA,
+        (i_metadata_root)::BYTEA
+      ) ON CONFLICT ("syntax_root") DO UPDATE SET ("syntax_root","value_root","metadata_root") = row(
+        EXCLUDED."syntax_root",
+        EXCLUDED."value_root",
+        EXCLUDED."metadata_root"
+      ) RETURNING "syntax_root","value_root","metadata_root")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
+    RETURN o_root;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/syntax-value-root [50] 
+CREATE OR REPLACE FUNCTION "gw_ledger".syntax_value_root(
+  i_syntax_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
+      WHERE "syntax_root" = i_syntax_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN (o_row ->> 'value_root')::BYTEA;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/syntax-metadata-root [58] 
+CREATE OR REPLACE FUNCTION "gw_ledger".syntax_metadata_root(
+  i_syntax_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "syntax_root","value_root","metadata_root" FROM "gw_ledger"."Syntax"
+      WHERE "syntax_root" = i_syntax_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN (o_row ->> 'metadata_root')::BYTEA;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.syntax/semantic-root [66] 
+CREATE OR REPLACE FUNCTION "gw_ledger".semantic_root(
+  i_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_root);
+    IF o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 13) THEN
+      RETURN "gw_ledger".syntax_value_root(i_root);
+    ELSE
+      RETURN i_root;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- gwdb.ledger.module/Module [18] 
+DROP TABLE IF EXISTS "gw_ledger"."Module" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."Module" (
+  "module_root" BYTEA PRIMARY KEY,
+  "module_name" TEXT NOT NULL,
+  "module_version" TEXT NOT NULL,
+  "environment_root" BYTEA NOT NULL,
+  "exports_root" BYTEA NOT NULL,
+  "dependencies_root" BYTEA NOT NULL,
+  "source_root" BYTEA,
+  "compiled_root" BYTEA,
+  "metadata_root" BYTEA NOT NULL,
+  "publisher" BYTEA NOT NULL,
+  "signature" BYTEA,
+  UNIQUE ("module_name","module_version")
+);
+
+-- gwdb.ledger.module/ModuleAlias [33] 
+DROP TABLE IF EXISTS "gw_ledger"."ModuleAlias" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."ModuleAlias" (
+  "module_name" TEXT,
+  "alias" TEXT,
+  "module_root" BYTEA NOT NULL,
+  PRIMARY KEY (module_name,alias)
+);
+
+-- gwdb.ledger.module/ModuleExport [40] 
+DROP TABLE IF EXISTS "gw_ledger"."ModuleExport" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."ModuleExport" (
+  "module_root" BYTEA,
+  "symbol_root" BYTEA,
+  "value_root" BYTEA NOT NULL,
+  PRIMARY KEY (module_root,symbol_root)
+);
+
+-- gwdb.ledger.module/module-root-hex [47] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_root_hex(
+  i_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN CASE WHEN i_root IS NULL THEN '-'
+  ELSE encode(i_root,'hex')
+  END;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-payload [52] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_payload(
+  i_module_name TEXT,
+  i_module_version TEXT,
+  i_environment_root BYTEA,
+  i_exports_root BYTEA,
+  i_dependencies_root BYTEA,
+  i_source_root BYTEA,
+  i_compiled_root BYTEA,
+  i_metadata_root BYTEA,
+  i_publisher BYTEA,
+  i_signature BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN decode(
+    'R:module:1:11:' || i_module_name || ':' || i_module_version || ':' || "gw_ledger".module_root_hex(i_environment_root) || "gw_ledger".module_root_hex(i_exports_root) || "gw_ledger".module_root_hex(i_dependencies_root) || "gw_ledger".module_root_hex(i_source_root) || "gw_ledger".module_root_hex(i_compiled_root) || "gw_ledger".module_root_hex(i_metadata_root) || "gw_ledger".module_root_hex(i_publisher) || "gw_ledger".module_root_hex(i_signature),
+    'escape'
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-publish [71] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_publish(
+  i_module_name TEXT,
+  i_module_version TEXT,
+  i_environment_root BYTEA,
+  i_exports_root BYTEA,
+  i_dependencies_root BYTEA,
+  i_source_root BYTEA,
+  i_compiled_root BYTEA,
+  i_metadata_root BYTEA,
+  i_publisher BYTEA,
+  i_signature BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_dependencies JSONB;
+    o_dependencies_ref JSONB;
+    o_environment JSONB;
+    o_environment_ref JSONB;
+    o_exports JSONB;
+    o_exports_ref JSONB;
+    o_metadata JSONB;
+    o_metadata_ref JSONB;
+    o_publisher JSONB;
+    o_publisher_ref JSONB;
+    o_upsert JSONB;
+    v_payload BYTEA;
+    v_root BYTEA;
+  BEGIN
+    o_environment := "gw_ledger".cell_by_hash(i_environment_root);
+    o_exports := "gw_ledger".cell_by_hash(i_exports_root);
+    o_dependencies := "gw_ledger".cell_by_hash(i_dependencies_root);
+    o_metadata := "gw_ledger".cell_by_hash(i_metadata_root);
+    o_publisher := "gw_ledger".cell_by_hash(i_publisher);
+    IF NOT (regexp_match(i_module_name,'^[a-z][a-z0-9.]*$') IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_module_name','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-module-name'
+      ;
+    END IF;
+    IF NOT (regexp_match(i_module_version,'^[0-9]+[.][0-9]+[.][0-9]+$') IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_module_version',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-module-version'
+      ;
+    END IF;
+    IF NOT (o_environment IS NOT NULL AND ((o_environment ->> 'type_tag')::SMALLINT = 11)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/module_environment_not_map',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/module-environment-not-map'
+      ;
+    END IF;
+    IF NOT (o_exports IS NOT NULL AND ((o_exports ->> 'type_tag')::SMALLINT = 12)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/module_exports_not_set',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/module-exports-not-set'
+      ;
+    END IF;
+    IF NOT (o_dependencies IS NOT NULL AND ((o_dependencies ->> 'type_tag')::SMALLINT = 11)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/module_dependencies_not_map',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/module-dependencies-not-map'
+      ;
+    END IF;
+    IF NOT (o_metadata IS NOT NULL AND ((o_metadata ->> 'type_tag')::SMALLINT = 11)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/module_metadata_not_map',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/module-metadata-not-map'
+      ;
+    END IF;
+    IF NOT (o_publisher IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/missing_module_publisher',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/missing-module-publisher'
+      ;
+    END IF;
+    v_payload := "gw_ledger".module_payload(
+      i_module_name,
+      i_module_version,
+      i_environment_root,
+      i_exports_root,
+      i_dependencies_root,
+      i_source_root,
+      i_compiled_root,
+      i_metadata_root,
+      i_publisher,
+      i_signature
+    );
+    v_root := "gw_ledger".cell_put("gw_ledger".canonical_hash(14,v_payload),1,14,v_payload);
+    o_environment_ref := "gw_ledger".cell_ref_put(v_root,0,'environment',i_environment_root);
+    o_exports_ref := "gw_ledger".cell_ref_put(v_root,1,'exports',i_exports_root);
+    o_dependencies_ref := "gw_ledger".cell_ref_put(v_root,2,'dependencies',i_dependencies_root);
+    o_metadata_ref := "gw_ledger".cell_ref_put(v_root,3,'metadata',i_metadata_root);
+    o_publisher_ref := "gw_ledger".cell_ref_put(v_root,4,'publisher',i_publisher);
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."Module" (
+        "module_root",
+        "module_name",
+        "module_version",
+        "environment_root",
+        "exports_root",
+        "dependencies_root",
+        "source_root",
+        "compiled_root",
+        "metadata_root",
+        "publisher",
+        "signature"
+      ) VALUES (
+        (v_root)::BYTEA,
+        (i_module_name)::TEXT,
+        (i_module_version)::TEXT,
+        (i_environment_root)::BYTEA,
+        (i_exports_root)::BYTEA,
+        (i_dependencies_root)::BYTEA,
+        (i_source_root)::BYTEA,
+        (i_compiled_root)::BYTEA,
+        (i_metadata_root)::BYTEA,
+        (i_publisher)::BYTEA,
+        (i_signature)::BYTEA
+      ) ON CONFLICT ("module_root") DO UPDATE SET ("module_root",
+        "module_name",
+        "module_version",
+        "environment_root",
+        "exports_root",
+        "dependencies_root",
+        "source_root",
+        "compiled_root",
+        "metadata_root",
+        "publisher",
+        "signature") = row(
+        EXCLUDED."module_root",
+        EXCLUDED."module_name",
+        EXCLUDED."module_version",
+        EXCLUDED."environment_root",
+        EXCLUDED."exports_root",
+        EXCLUDED."dependencies_root",
+        EXCLUDED."source_root",
+        EXCLUDED."compiled_root",
+        EXCLUDED."metadata_root",
+        EXCLUDED."publisher",
+        EXCLUDED."signature"
+      ) RETURNING
+        "module_root",
+        "module_name",
+        "module_version",
+        "environment_root",
+        "exports_root",
+        "dependencies_root",
+        "source_root",
+        "compiled_root",
+        "metadata_root",
+        "publisher",
+        "signature")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_upsert;
+    RETURN v_root;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-get [122] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_get(
+  i_module_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT
+        "module_root",
+        "module_name",
+        "module_version",
+        "environment_root",
+        "exports_root",
+        "dependencies_root",
+        "source_root",
+        "compiled_root",
+        "metadata_root",
+        "publisher",
+        "signature"
+      FROM "gw_ledger"."Module"
+      WHERE "module_root" = i_module_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN o_row;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-valid [128] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_valid(
+  i_module_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_cell JSONB;
+    o_module JSONB;
+    v_payload BYTEA;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_module_root);
+    o_module := "gw_ledger".module_get(i_module_root);
+    IF o_cell IS NULL OR o_module IS NULL THEN
+      RETURN false;
+    END IF;
+    v_payload := "gw_ledger".module_payload(
+      (o_module ->> 'module_name')::TEXT,
+      (o_module ->> 'module_version')::TEXT,
+      (o_module ->> 'environment_root')::BYTEA,
+      (o_module ->> 'exports_root')::BYTEA,
+      (o_module ->> 'dependencies_root')::BYTEA,
+      (o_module ->> 'source_root')::BYTEA,
+      (o_module ->> 'compiled_root')::BYTEA,
+      (o_module ->> 'metadata_root')::BYTEA,
+      (o_module ->> 'publisher')::BYTEA,
+      (o_module ->> 'signature')::BYTEA
+    );
+    RETURN ((o_cell ->> 'type_tag')::SMALLINT = 14) AND ((o_cell ->> 'payload')::BYTEA = v_payload) AND "gw_ledger".verify(i_module_root,14,v_payload);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-set-alias [150] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_set_alias(
+  i_module_name TEXT,
+  i_alias TEXT,
+  i_module_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    IF NOT ("gw_ledger".module_valid(i_module_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_module','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-module'
+      ;
+    END IF;
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."ModuleAlias" ("module_name","alias","module_root") VALUES ((i_module_name)::TEXT,(i_alias)::TEXT,(i_module_root)::BYTEA) ON CONFLICT ("module_name","alias") DO UPDATE SET ("module_name","alias","module_root") = row(
+        EXCLUDED."module_name",
+        EXCLUDED."alias",
+        EXCLUDED."module_root"
+      ) RETURNING "module_name","alias","module_root")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN o_row;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-resolve-alias [159] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_resolve_alias(
+  i_module_name TEXT,
+  i_alias TEXT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "module_name","alias","module_root" FROM "gw_ledger"."ModuleAlias"
+      WHERE "module_name" = i_module_name AND "alias" = i_alias
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN (o_row ->> 'module_root')::BYTEA;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-export [166] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_export(
+  i_module_root BYTEA,
+  i_symbol_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_module JSONB;
+  BEGIN
+    o_module := "gw_ledger".module_get(i_module_root);
+    IF NOT (o_module IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_module','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-module'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".set_contains((o_module ->> 'exports_root')::BYTEA,i_symbol_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/non_exported_symbol','data',null))::TEXT,
+        MESSAGE = 'ledger/non-exported-symbol'
+      ;
+    END IF;
+    RETURN "gw_ledger".map_get((o_module ->> 'environment_root')::BYTEA,i_symbol_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-export-put [178] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_export_put(
+  i_module_root BYTEA,
+  i_symbol_root BYTEA,
+  i_value_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+    v_authoritative BYTEA;
+  BEGIN
+    v_authoritative := "gw_ledger".module_export(i_module_root,i_symbol_root);
+    IF NOT (v_authoritative = i_value_root) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/module_export_projection_mismatch',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/module-export-projection-mismatch'
+      ;
+    END IF;
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."ModuleExport" ("module_root","symbol_root","value_root") VALUES (
+        (i_module_root)::BYTEA,
+        (i_symbol_root)::BYTEA,
+        (i_value_root)::BYTEA
+      ) ON CONFLICT ("module_root","symbol_root") DO UPDATE SET ("module_root","symbol_root","value_root") = row(
+        EXCLUDED."module_root",
+        EXCLUDED."symbol_root",
+        EXCLUDED."value_root"
+      ) RETURNING "module_root","symbol_root","value_root")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN o_row;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.module/module-export-projection-get [190] 
+CREATE OR REPLACE FUNCTION "gw_ledger".module_export_projection_get(
+  i_module_root BYTEA,
+  i_symbol_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "module_root","symbol_root","value_root" FROM "gw_ledger"."ModuleExport"
+      WHERE "module_root" = i_module_root AND "symbol_root" = i_symbol_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN o_row;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- gwdb.ledger.integrity/cell-integrity [26] 
+CREATE OR REPLACE FUNCTION "gw_ledger".cell_integrity(
+  i_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_root);
+    RETURN o_cell IS NOT NULL AND ((o_cell ->> 'codec_version')::INTEGER = 1) AND "gw_ledger".verify(
+      i_root,
+      (o_cell ->> 'type_tag')::INTEGER,
+      (o_cell ->> 'payload')::BYTEA
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/state-integrity [38] 
+CREATE OR REPLACE FUNCTION "gw_ledger".state_integrity(
+  i_state_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN "gw_ledger".cell_integrity(i_state_root) AND "gw_ledger".state_root_valid(i_state_root) AND "gw_ledger".cell_integrity("gw_ledger".state_version_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_accounts_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_modules_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_module_aliases_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_validators_root(i_state_root)) AND "gw_ledger".cell_integrity("gw_ledger".state_settings_root(i_state_root));
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/block-integrity [52] 
+CREATE OR REPLACE FUNCTION "gw_ledger".block_integrity(
+  i_block_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_block JSONB;
+  BEGIN
+    o_block := "gw_ledger".block_get(i_block_root);
+    RETURN o_block IS NOT NULL AND "gw_ledger".cell_integrity(i_block_root) AND "gw_ledger".block_valid(i_block_root) AND "gw_ledger".state_integrity((o_block ->> 'previous_state_root')::BYTEA) AND "gw_ledger".state_integrity((o_block ->> 'state_root')::BYTEA);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/head-integrity [66] 
+CREATE OR REPLACE FUNCTION "gw_ledger".head_integrity(
+  i_network TEXT
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_block JSONB;
+    o_head JSONB;
+  BEGIN
+    o_head := "gw_ledger".head_get(i_network);
+    o_block := "gw_ledger".block_get((o_head ->> 'block_root')::BYTEA);
+    RETURN o_head IS NOT NULL AND o_block IS NOT NULL AND "gw_ledger".block_integrity((o_head ->> 'block_root')::BYTEA) AND ((o_head ->> 'height')::BIGINT = (o_block ->> 'height')::BIGINT) AND ((o_head ->> 'state_root')::BYTEA = (o_block ->> 'state_root')::BYTEA);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/rebuild-account-projection [81] 
+CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_account_projection(
+  i_state_root BYTEA,
+  i_address_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+    v_account_root BYTEA;
+    v_sequence BIGINT;
+  BEGIN
+    v_account_root := "gw_ledger".state_account_root(i_state_root,i_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    o_row := "gw_ledger".account_put(
+      i_address_root,
+      v_sequence,
+      i_state_root,
+      "gw_ledger".account_value_environment_root(v_account_root),
+      "gw_ledger".account_value_metadata_root(v_account_root),
+      "gw_ledger".account_value_controller_root(v_account_root)
+    );
+    RETURN o_row;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/rebuild-module-export-projection-at [97] 
+CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_module_export_projection_at(
+  i_module_root BYTEA,
+  i_exports_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    o_projection JSONB;
+      v_symbol_root BYTEA;
+      v_value_root BYTEA;
+  BEGIN
+    v_symbol_root := "gw_ledger".cell_ref_child(i_exports_root,i_position,'element');
+      v_value_root := "gw_ledger".module_export(i_module_root,v_symbol_root);
+      o_projection := "gw_ledger".module_export_put(i_module_root,v_symbol_root,v_value_root);
+      RETURN "gw_ledger".rebuild_module_export_projection_at(i_module_root,i_exports_root,i_position + 1,i_count);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.integrity/rebuild-module-export-projection [112] 
+CREATE OR REPLACE FUNCTION "gw_ledger".rebuild_module_export_projection(
+  i_module_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_module JSONB;
+    v_count INTEGER;
+    v_exports_root BYTEA;
+  BEGIN
+    o_module := "gw_ledger".module_get(i_module_root);
+    IF NOT (o_module IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_module','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-module'
+      ;
+    END IF;
+    v_exports_root := (o_module ->> 'exports_root')::BYTEA;
+    v_count := "gw_ledger".cell_ref_count(v_exports_root,'element');
+    RETURN "gw_ledger".rebuild_module_export_projection_at(i_module_root,v_exports_root,0,v_count);
   END;
 
 $$ LANGUAGE 'plpgsql';
