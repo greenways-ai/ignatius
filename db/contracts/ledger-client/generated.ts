@@ -309,6 +309,58 @@ export type WorkspaceReviewSubmission =
       intent_root: LedgerRoot;
     };
 
+export interface WorkspaceMainPolicySigningRequest {
+  address: LedgerRoot;
+  sequence: number;
+  workspace_id_root: LedgerRoot;
+  scope: string;
+  name: "policy/main";
+  expected_root?: undefined;
+  reviewer_roots_root: LedgerRoot;
+  recorded_at: number;
+  policy: "unanimous-reviewers-v1";
+  policy_root: LedgerRoot;
+  operation_root: LedgerRoot;
+  signing_payload: string;
+}
+
+export type WorkspaceMainPolicySubmission =
+  | {
+      status: "ok";
+      address: LedgerRoot;
+      sequence: number;
+      workspace_id_root: LedgerRoot;
+      scope: string;
+      name: "policy/main";
+      expected_root?: undefined;
+      reviewer_roots_root: LedgerRoot;
+      recorded_at: number;
+      policy: "unanimous-reviewers-v1";
+      policy_root: LedgerRoot;
+      ref_version: number;
+      transaction_root: LedgerRoot;
+      receipt_root: LedgerRoot;
+      result_root: LedgerRoot;
+      state_root: LedgerRoot;
+      block_root: LedgerRoot;
+    }
+  | {
+      status: "conflict";
+      error: "storage/ref-conflict";
+      address: LedgerRoot;
+      sequence: number;
+      scope: string;
+      name: "policy/main";
+      expected_root?: undefined;
+      actual_root?: LedgerRoot;
+      desired_root: LedgerRoot;
+      version: number;
+      reviewer_roots_root: LedgerRoot;
+      recorded_at: number;
+      policy: "unanimous-reviewers-v1";
+      policy_root: LedgerRoot;
+    };
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;
@@ -335,4 +387,6 @@ export interface LedgerSignedApi {
   submitWorkspaceProposal(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceProposalSubmission>;
   workspaceReviewSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, candidateRoot: LedgerRoot, expectedReviewRoot: LedgerRoot | undefined, decision: WorkspaceReviewDecision, recordedAt: number, costLimit?: number): Promise<WorkspaceReviewSigningRequest>;
   submitWorkspaceReview(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, candidateRoot: LedgerRoot, expectedReviewRoot: LedgerRoot | undefined, decision: WorkspaceReviewDecision, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceReviewSubmission>;
+  workspaceMainPolicySigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, reviewerRootsRoot: LedgerRoot, recordedAt: number, costLimit?: number): Promise<WorkspaceMainPolicySigningRequest>;
+  submitWorkspaceMainPolicy(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, reviewerRootsRoot: LedgerRoot, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceMainPolicySubmission>;
 }
