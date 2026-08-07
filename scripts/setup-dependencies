@@ -10,7 +10,7 @@ fi
 HARA_REPOSITORY="https://github.com/hara-lang/hara.git"
 HARA_REVISION="99a0b106158dec0902ebe08349c8f8b113d97ea9"
 FOUNDATION_REPOSITORY="https://github.com/zcaudate-xyz/foundation-base.git"
-FOUNDATION_REVISION="f909a44ad504cc6c9f44248d59ec3148261a48d7"
+FOUNDATION_REVISION="c3e37bfc41cc1a27305351279fb31832f637448d"
 
 checkout_revision() {
   local repository="$1"
