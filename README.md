@@ -198,15 +198,21 @@ writes are idempotent, while a different envelope under an existing root is a
 conflict. Ref writes name an explicit scope, name, expected root, desired root
 and authorization root.
 
-The included pure memory adapter declares `:single-writer` consistency rather
-than pretending to coordinate concurrent hosts. PostgreSQL will implement the
-same block contract through the existing immutable `Cell`, ordered `CellRef` and
-HCP1 snapshot code. A separate scoped-ref adapter will provide atomic
-`:linearizable` compare-and-set without replacing account, contract or global
-chain heads.
+The pure memory adapter declares `:single-writer` consistency rather than
+pretending to coordinate concurrent hosts. PostgreSQL maps immutable blocks to
+the existing `Cell`, ordered `CellRef` and HCP1 snapshot code. The separate
+`gwdb.ledger.scoped-ref` adapter provides durable `:linearizable` compare-and-set
+for generic workspace, proposal, release and module refs using transaction-scoped
+advisory locks and exact-root checks.
 
-See [`docs/storage-contracts.md`](docs/storage-contracts.md) and
-[`hal/test/ignatius/storage_test.hal`](hal/test/ignatius/storage_test.hal).
+The generic ref table does not replace account sequences, contract heads or the
+global chain head. Every desired, expected and authorization root must already be
+an immutable Ignatius cell, and a stale update returns the accepted root without
+discarding candidate commits or blocks.
+
+See [`docs/storage-contracts.md`](docs/storage-contracts.md),
+[`hal/test/ignatius/storage_test.hal`](hal/test/ignatius/storage_test.hal), and
+[`db/test/gwdb/ledger/scoped_ref_test.clj`](db/test/gwdb/ledger/scoped_ref_test.clj).
 
 ## Convex-style accounts and actors
 
