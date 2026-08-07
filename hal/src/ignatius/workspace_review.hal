@@ -1,0 +1,330 @@
+(ns ignatius.workspace-review
+  (:require [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-admission :as admission]
+            [ignatius.workspace-proposal :as proposal]))
+
+(def review-policy :review-decision-v1)
+
+(defn decision-valid?
+  [decision]
+  (or (= decision :approve)
+      (= decision :reject)
+      (= decision :withdraw)))
+
+(defn review-id
+  [candidate-root reviewer-root]
+  (str "review/" candidate-root "/" reviewer-root))
+
+(defn review-ref-name
+  [candidate-root reviewer-root]
+  (review-id candidate-root reviewer-root))
+
+(defn recorded-evidence
+  [reviewer-root recorded-at]
+  (record/ledger-evidence
+   {:ledger/signer reviewer-root
+    :ledger/transaction-root nil
+    :ledger/timestamp recorded-at
+    :ledger/previous-head-root nil
+    :ledger/contract-root nil
+    :ledger/template-root nil
+    :ledger/global-state-root nil
+    :record/extensions {}}))
+
+(defn review-decision-value
+  "Constructs one constrained immutable decision for an exact candidate."
+  [candidate-root reviewer-root decision recorded-at]
+  (record/review-decision
+   {:review/id (review-id candidate-root reviewer-root)
+    :review/subject-id (proposal/proposal-ref-name candidate-root)
+    :review/subject-root candidate-root
+    :review/decision decision
+    :review/evidence-roots []
+    :review/process-run-id nil
+    :review/process-run-root nil
+    :review/recorded-evidence
+    (recorded-evidence reviewer-root recorded-at)
+    :review/metadata {}
+    :record/extensions {}}))
+
+(defn review-shape-error
+  [candidate-root reviewer-root review]
+  (let [evidence (get review :review/recorded-evidence)]
+    (cond
+      (= false (record/record-valid? review))
+      :workspace/invalid-review-record
+
+      (not (= (review-id candidate-root reviewer-root)
+              (get review :review/id)))
+      :workspace/review-id-not-derived
+
+      (not (= (proposal/proposal-ref-name candidate-root)
+              (get review :review/subject-id)))
+      :workspace/review-subject-id-not-proposal
+
+      (not (= candidate-root
+              (get review :review/subject-root)))
+      :workspace/review-subject-root-mismatch
+
+      (= false
+         (decision-valid? (get review :review/decision)))
+      :workspace/invalid-review-decision
+
+      (not (= []
+              (record/vector-or-empty
+               (get review :review/evidence-roots))))
+      :workspace/review-evidence-roots-not-supported
+
+      (not (= nil (get review :review/process-run-id)))
+      :workspace/review-process-run-not-supported
+
+      (not (= nil (get review :review/process-run-root)))
+      :workspace/review-process-run-not-supported
+
+      (not (= :ledger/evidence (get evidence :record/type)))
+      :workspace/invalid-review-recorded-evidence
+
+      (not (= reviewer-root (get evidence :ledger/signer)))
+      :workspace/review-signer-not-origin
+
+      (= nil (get evidence :ledger/timestamp))
+      :workspace/missing-review-recorded-at
+
+      (not (= nil (get evidence :ledger/transaction-root)))
+      :workspace/review-transaction-evidence-not-supported
+
+      (not (= nil (get evidence :ledger/previous-head-root)))
+      :workspace/review-head-evidence-not-supported
+
+      (not (= nil (get evidence :ledger/contract-root)))
+      :workspace/review-contract-evidence-not-supported
+
+      (not (= nil (get evidence :ledger/template-root)))
+      :workspace/review-template-evidence-not-supported
+
+      (not (= nil (get evidence :ledger/global-state-root)))
+      :workspace/review-state-evidence-not-supported
+
+      (not (= {}
+              (record/map-or-empty
+               (get review :review/metadata))))
+      :workspace/review-metadata-not-supported
+
+      (not (= {}
+              (record/map-or-empty
+               (get review :record/extensions))))
+      :workspace/review-extensions-not-supported
+
+      :else nil)))
+
+(defn review-store
+  []
+  {:workspace/review-store-version 1
+   :workspace/reviews {}})
+
+(defn reviews
+  [store]
+  (get store :workspace/reviews))
+
+(defn review-at
+  [store root]
+  (get (reviews store) root))
+
+(defn register-review
+  "Indexes one decoded decision only after an injected root verifier succeeds."
+  [verify-root store root candidate-root reviewer-root review]
+  (let [error
+        (review-shape-error candidate-root reviewer-root review)
+        existing (review-at store root)]
+    (cond
+      (= nil root)
+      {:error :workspace/missing-review-root}
+
+      (not (= nil error))
+      {:error error}
+
+      (= false (= true (verify-root root review)))
+      {:error :workspace/review-root-mismatch
+       :review/root root}
+
+      (not (= nil existing))
+      (if (= existing review)
+        {:ok store
+         :review/root root
+         :review/value review
+         :review/created false}
+        {:error :workspace/review-root-conflict
+         :review/root root
+         :review/existing existing
+         :review/proposed review})
+
+      :else
+      {:ok
+       (assoc store :workspace/reviews
+              (assoc (reviews store) root review))
+       :review/root root
+       :review/value review
+       :review/created true})))
+
+(defn review-update-intent
+  "Constructs the constrained CAS intent for one reviewer's decision ref."
+  [workspace-id candidate-root reviewer-root
+   expected-review-root desired-review-root]
+  (record/record-envelope
+   admission/intent-record-type
+   {:workspace/id workspace-id
+    :ref/scope (workspace/workspace-scope workspace-id)
+    :ref/name (review-ref-name candidate-root reviewer-root)
+    :ref/expected-root expected-review-root
+    :ref/desired-root desired-review-root
+    :ref/authorization-root reviewer-root
+    :ref/policy review-policy
+    :ref/metadata {}
+    :record/extensions {}}))
+
+(defn review-intent-structure-error
+  [workspace-id candidate-root reviewer-root intent]
+  (cond
+    (not (= admission/intent-record-type
+            (get intent :record/type)))
+    :workspace/invalid-ref-intent-record
+
+    (not (= admission/intent-record-version
+            (get intent :record/version)))
+    :workspace/unsupported-ref-intent-version
+
+    (not (= workspace-id (get intent :workspace/id)))
+    :workspace/review-workspace-not-derived
+
+    (not (= (workspace/workspace-scope workspace-id)
+            (get intent :ref/scope)))
+    :workspace/ref-scope-not-derived
+
+    (not (= (review-ref-name candidate-root reviewer-root)
+            (get intent :ref/name)))
+    :workspace/ref-name-not-review
+
+    (not (= reviewer-root
+            (get intent :ref/authorization-root)))
+    :workspace/ref-authorization-not-origin
+
+    (not (= review-policy (get intent :ref/policy)))
+    :workspace/unsupported-ref-policy
+
+    (= nil (get intent :ref/desired-root))
+    :workspace/missing-desired-review-root
+
+    (= (get intent :ref/expected-root)
+       (get intent :ref/desired-root))
+    :workspace/noop-review-update
+
+    (not (= {}
+            (record/map-or-empty
+             (get intent :ref/metadata))))
+    :workspace/ref-metadata-not-supported
+
+    (not (= {}
+            (record/map-or-empty
+             (get intent :record/extensions))))
+    :workspace/ref-extensions-not-supported
+
+    :else nil))
+
+(defn proposal-published?
+  [backend workspace-id candidate-root reviewer-root]
+  (let [read
+        (storage/memory-get-ref
+         backend
+         (storage/ref-read-request
+          (workspace/workspace-scope workspace-id)
+          (proposal/proposal-ref-name candidate-root)
+          reviewer-root))
+        value (get read :ok)]
+    (and (= nil (get read :error))
+         (= candidate-root (get value :ref/root)))))
+
+(defn review-selection-error
+  [commit-store review-store-value proposal-backend
+   workspace-id candidate-root reviewer-root intent]
+  (let [candidate (workspace/commit-at commit-store candidate-root)
+        expected-root (get intent :ref/expected-root)
+        desired-root (get intent :ref/desired-root)
+        expected
+        (if (= nil expected-root)
+          nil
+          (review-at review-store-value expected-root))
+        desired (review-at review-store-value desired-root)]
+    (cond
+      (= nil candidate)
+      :workspace/review-candidate-not-found
+
+      (not (= workspace-id (get candidate :workspace/id)))
+      :workspace/review-candidate-workspace-mismatch
+
+      (= false
+         (proposal-published?
+          proposal-backend workspace-id
+          candidate-root reviewer-root))
+      :workspace/review-proposal-not-published
+
+      (= nil desired)
+      :workspace/desired-review-not-found
+
+      (not (= nil
+              (review-shape-error
+               candidate-root reviewer-root desired)))
+      :workspace/invalid-desired-review
+
+      (and (not (= nil expected-root))
+           (= nil expected))
+      :workspace/expected-review-not-found
+
+      (and (not (= nil expected-root))
+           (not (= nil
+                   (review-shape-error
+                    candidate-root reviewer-root expected))))
+      :workspace/invalid-expected-review
+
+      :else nil)))
+
+(defn validate-review-update
+  [commit-store review-store-value proposal-backend
+   workspace-id candidate-root reviewer-root intent]
+  (let [structure-error
+        (review-intent-structure-error
+         workspace-id candidate-root reviewer-root intent)]
+    (if (not (= nil structure-error))
+      {:error structure-error}
+      (let [selection-error
+            (review-selection-error
+             commit-store review-store-value proposal-backend
+             workspace-id candidate-root reviewer-root intent)]
+        (if (not (= nil selection-error))
+          {:error selection-error}
+          {:ok intent
+           :ref/scope (get intent :ref/scope)
+           :ref/name (get intent :ref/name)
+           :ref/expected-root (get intent :ref/expected-root)
+           :ref/desired-root (get intent :ref/desired-root)
+           :ref/authorization-root reviewer-root})))))
+
+(defn select-memory-review
+  "Validates then exact-CAS selects one immutable decision root."
+  [commit-store review-store-value proposal-backend review-backend
+   workspace-id candidate-root reviewer-root intent]
+  (let [validation
+        (validate-review-update
+         commit-store review-store-value proposal-backend
+         workspace-id candidate-root reviewer-root intent)]
+    (if (not (= nil (get validation :error)))
+      validation
+      (storage/memory-compare-and-set-ref
+       review-backend
+       (storage/ref-update-request
+        (get intent :ref/scope)
+        (get intent :ref/name)
+        (get intent :ref/expected-root)
+        (get intent :ref/desired-root)
+        reviewer-root)))))
