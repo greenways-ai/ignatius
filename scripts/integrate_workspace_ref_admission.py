@@ -9,15 +9,23 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 base_path = Path("db/src/gwdb/ledger/base.clj")
 base = base_path.read_text()
-marker = "            [gwdb.ledger.admission]\n            [gwdb.ledger.developer]"
-replacement = (
+base = replace_once(
+    base,
+    "            [gwdb.ledger.admission]\n            [gwdb.ledger.developer]",
     "            [gwdb.ledger.admission]\n"
     "            [gwdb.ledger.workspace-admission]\n"
-    "            [gwdb.ledger.developer]"
+    "            [gwdb.ledger.developer]",
+    "base namespace admission",
 )
-if base.count(marker) != 2:
-    raise SystemExit("expected two base admission markers")
-base_path.write_text(base.replace(marker, replacement))
+base = replace_once(
+    base,
+    "             [gwdb.ledger.admission]\n             [gwdb.ledger.developer]",
+    "             [gwdb.ledger.admission]\n"
+    "             [gwdb.ledger.workspace-admission]\n"
+    "             [gwdb.ledger.developer]",
+    "base script admission",
+)
+base_path.write_text(base)
 
 workflow_path = Path(".github/workflows/verify.yml")
 workflow = workflow_path.read_text()
