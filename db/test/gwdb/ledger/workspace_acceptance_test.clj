@@ -1,0 +1,249 @@
+(ns gwdb.ledger.workspace-acceptance-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.admission :as admission]
+            [gwdb.ledger.developer :as developer]
+            [gwdb.ledger.scoped-ref :as scoped-ref]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.workspace-acceptance :as acceptance]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :vendor :impossibl
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.admission :as admission]
+             [gwdb.ledger.developer :as developer]
+             [gwdb.ledger.scoped-ref :as scoped-ref]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.workspace-acceptance :as acceptance]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+(defn hex-bytes
+  [text]
+  (.parseHex (java.util.HexFormat/of) text))
+
+(defn bytes-hex
+  [bytes]
+  (.formatHex (java.util.HexFormat/of) bytes))
+
+(defn json-field
+  [value field]
+  (or (get value field)
+      (get value (keyword field))))
+
+(def +alice-private-seed+
+  "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+
+(def +alice-public-key+
+  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+
+(def +bob-private-seed+
+  "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+
+(def +bob-public-key+
+  "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+
+(defn sign-payload
+  [private-seed payload-hex]
+  (let [spec
+        (java.security.spec.EdECPrivateKeySpec.
+         java.security.spec.NamedParameterSpec/ED25519
+         (hex-bytes private-seed))
+        factory (java.security.KeyFactory/getInstance "Ed25519")
+        private-key (.generatePrivate factory spec)
+        signer (java.security.Signature/getInstance "Ed25519")]
+    (.initSign signer private-key)
+    (.update signer (hex-bytes payload-hex))
+    (bytes-hex (.sign signer))))
+
+(defn register-account
+  [network public-key private-seed timestamp]
+  (let [request
+        (admission/admission-registration-signing-request
+         network public-key)
+        signature
+        (hex-bytes
+         (sign-payload
+          private-seed
+          (json-field request "signing_payload")))]
+    (admission/admission-register-account
+     network public-key signature timestamp)))
+
+(defn.pg ^{:- [:bytea]}
+  root-vector
+  {:added "0.15"}
+  [:jsonb i-roots]
+  (return (value/put-vector i-roots)))
+
+^{:refer gwdb.ledger.workspace-acceptance/workspace-main-policy-submit
+  :added "0.15"}
+(fact "signed main-policy publication is canonical, create-only and linear"
+  (let [network "workspace-main-policy"
+        alice-public-key (hex-bytes +alice-public-key+)
+        bob-public-key (hex-bytes +bob-public-key+)
+        _ (developer/developer-genesis network 0)
+        alice
+        (register-account
+         network alice-public-key +alice-private-seed+ 1)
+        bob
+        (register-account
+         network bob-public-key +bob-private-seed+ 2)
+        alice-address-hex (json-field alice "address")
+        bob-address-hex (json-field bob "address")
+        alice-address-root (hex-bytes alice-address-hex)
+        bob-address-root (hex-bytes bob-address-hex)
+        workspace-id-root
+        (value/put-string "world/orbital-station")
+        reviewer-roots-root
+        (-/root-vector
+         (pg/jsonb-build-array
+          alice-address-hex bob-address-hex))
+        reverse-reviewer-roots-root
+        (-/root-vector
+         (pg/jsonb-build-array
+          bob-address-hex alice-address-hex))
+        duplicate-reviewer-roots-root
+        (-/root-vector
+         (pg/jsonb-build-array
+          alice-address-hex alice-address-hex))
+
+        request
+        (acceptance/workspace-main-policy-signing-request
+         network alice-public-key workspace-id-root
+         reviewer-roots-root 10 20)
+        signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field request "signing_payload")))
+        result
+        (acceptance/workspace-main-policy-submit
+         network alice-public-key
+         (long (json-field request "sequence"))
+         workspace-id-root reviewer-roots-root
+         10 20 signature)
+        policy-root
+        (hex-bytes (json-field result "policy_root"))
+
+        duplicate-request
+        (acceptance/workspace-main-policy-signing-request
+         network alice-public-key workspace-id-root
+         reviewer-roots-root 10 20)
+        duplicate-signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field duplicate-request "signing_payload")))
+        duplicate-result
+        (acceptance/workspace-main-policy-submit
+         network alice-public-key
+         (long (json-field duplicate-request "sequence"))
+         workspace-id-root reviewer-roots-root
+         10 20 duplicate-signature)
+
+        reverse-request
+        (acceptance/workspace-main-policy-signing-request
+         network alice-public-key workspace-id-root
+         reverse-reviewer-roots-root 11 20)
+        reverse-signature
+        (hex-bytes
+         (sign-payload
+          +alice-private-seed+
+          (json-field reverse-request "signing_payload")))
+        reverse-result
+        (acceptance/workspace-main-policy-submit
+         network alice-public-key
+         (long (json-field reverse-request "sequence"))
+         workspace-id-root reverse-reviewer-roots-root
+         11 20 reverse-signature)
+        reverse-policy-root
+        (hex-bytes (json-field reverse-request "policy_root"))
+
+        invalid-reviewers
+        (try
+          (acceptance/workspace-main-policy-signing-request
+           network alice-public-key workspace-id-root
+           duplicate-reviewer-roots-root 12 20)
+          (catch Throwable _ :rejected))
+        replayed
+        (try
+          (acceptance/workspace-main-policy-submit
+           network alice-public-key
+           (long (json-field request "sequence"))
+           workspace-id-root reviewer-roots-root
+           10 20 signature)
+          (catch Throwable _ :rejected))
+
+        scope (json-field result "scope")
+        name (json-field result "name")
+        selected
+        (scoped-ref/scoped-ref-read
+         scope name alice-address-root)
+        policy-row
+        (acceptance/workspace-main-policy-row policy-root)
+        selected-row (scoped-ref/scoped-ref-row scope name)
+        main-row (scoped-ref/scoped-ref-row scope "main")
+        head (developer/developer-head network)]
+    [(json-field result "status")
+     (json-field result "ref_version")
+     (= (json-field result "policy_root")
+        (json-field result "result_root"))
+     (= (json-field result "policy")
+        "unanimous-reviewers-v1")
+     (= (json-field selected "root")
+        (bytes-hex policy-root))
+     (= (:bytea (json-field selected-row "authorization_root"))
+        alice-address-root)
+     (acceptance/workspace-main-policy-valid policy-root)
+     (= (:bytea (json-field policy-row "workspace_id_root"))
+        workspace-id-root)
+     (= (:bytea (json-field policy-row "authority_root"))
+        alice-address-root)
+     (= (:bytea (json-field policy-row "reviewer_roots_root"))
+        reviewer-roots-root)
+     (= (:bigint (json-field policy-row "recorded_at")) 10)
+     (json-field duplicate-result "status")
+     (json-field duplicate-result "error")
+     (= (json-field duplicate-result "actual_root")
+        (bytes-hex policy-root))
+     (json-field reverse-result "status")
+     (json-field reverse-result "error")
+     (= (json-field reverse-result "actual_root")
+        (bytes-hex policy-root))
+     (not (= reverse-policy-root policy-root))
+     (acceptance/workspace-main-policy-valid reverse-policy-root)
+     (json-field reverse-request "sequence")
+     invalid-reviewers
+     replayed
+     (nil? main-row)
+     (json-field head "height")
+     (= alice-address-hex (json-field result "address"))
+     (= bob-address-hex
+        (bytes-hex bob-address-root))])
+  => ["ok" 1 true true true true
+      true true true true true
+      "conflict" "storage/ref-conflict" true
+      "conflict" "storage/ref-conflict" true
+      true true 1 :rejected :rejected true 3 true true])
