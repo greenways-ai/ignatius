@@ -1,0 +1,29 @@
+name: Integrate workspace review
+
+on:
+  push:
+    branches: [agent/workspace-review-admission]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-review-admission
+
+      - name: Apply review contract and README integration
+        run: |
+          set -euo pipefail
+          python scripts/integrate_workspace_review.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- README.md db/src/ledger/build_contract.clj; then
+            exit 0
+          fi
+          git add README.md db/src/ledger/build_contract.clj
+          git commit -m "Integrate signed workspace review API"
+          git push origin HEAD:agent/workspace-review-admission
