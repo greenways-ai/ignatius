@@ -8,6 +8,23 @@
 (def review-policy :review-decision-v1)
 
 (defn decision-valid?
+  "Checks the portable public decision text."
+  [decision]
+  (or (= decision "approve")
+      (= decision "reject")
+      (= decision "withdraw")))
+
+(defn decision-keyword
+  "Converts public decision text into the canonical record keyword."
+  [decision]
+  (cond
+    (= decision "approve") :approve
+    (= decision "reject") :reject
+    (= decision "withdraw") :withdraw
+    :else nil))
+
+(defn decision-value-valid?
+  "Checks one decoded canonical review decision value."
   [decision]
   (or (= decision :approve)
       (= decision :reject)
@@ -34,13 +51,17 @@
     :record/extensions {}}))
 
 (defn review-decision-value
-  "Constructs one constrained immutable decision for an exact candidate."
+  "Constructs one constrained immutable decision for an exact candidate.
+
+  The portable call boundary accepts text so native Hara runtimes do not need
+  to treat a keyword literal as a positional invocation form. The committed
+  canonical value still stores the existing keyword decision vocabulary."
   [candidate-root reviewer-root decision recorded-at]
   (record/review-decision
    {:review/id (review-id candidate-root reviewer-root)
     :review/subject-id (proposal/proposal-ref-name candidate-root)
     :review/subject-root candidate-root
-    :review/decision decision
+    :review/decision (decision-keyword decision)
     :review/evidence-roots []
     :review/process-run-id nil
     :review/process-run-root nil
@@ -69,7 +90,8 @@
       :workspace/review-subject-root-mismatch
 
       (= false
-         (decision-valid? (get review :review/decision)))
+         (decision-value-valid?
+          (get review :review/decision)))
       :workspace/invalid-review-decision
 
       (not (= []
