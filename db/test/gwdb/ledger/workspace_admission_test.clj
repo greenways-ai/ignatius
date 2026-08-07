@@ -256,7 +256,9 @@
           (catch Throwable _ :rejected))
         scope (json-field later-result "scope")
         name (json-field later-result "name")
-        personal-row (scoped-ref/scoped-ref-row scope name)
+        personal-read
+        (scoped-ref/scoped-ref-read
+         scope name (hex-bytes address-hex))
         main-row (scoped-ref/scoped-ref-row scope "main")
         head (developer/developer-head network)]
     [(json-field create-result "status")
@@ -265,15 +267,16 @@
      (json-field advance-result "ref_version")
      (json-field stale-result "status")
      (json-field stale-result "error")
-     (json-field stale-result "actual_root")
+     (= (json-field stale-result "actual_root")
+        (bytes-hex c1))
      (json-field after-conflict-request "sequence")
      (json-field later-result "status")
      (json-field later-result "ref_version")
      (= (json-field later-result "intent_root")
         (json-field later-result "result_root"))
      scope
-     name
-     (= (bytes-hex (:bytea (json-field personal-row "root")))
+     (= name (str "user/" address-hex))
+     (= (json-field personal-read "root")
         (bytes-hex c3))
      (nil? main-row)
      (workspace/workspace-commit-valid c2)
@@ -283,8 +286,8 @@
      (= address-hex (json-field later-result "address"))])
   => ["ok" 1
       "ok" 2
-      "conflict" "storage/ref-conflict" #1
+      "conflict" "storage/ref-conflict" true
       2
       "ok" 3 true
-      "workspace/world/orbital-station" #2
+      "workspace/world/orbital-station" true
       true true true 4 :rejected :rejected true])

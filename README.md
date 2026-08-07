@@ -214,6 +214,19 @@ See [`docs/storage-contracts.md`](docs/storage-contracts.md),
 [`hal/test/ignatius/storage_test.hal`](hal/test/ignatius/storage_test.hal), and
 [`db/test/gwdb/ledger/scoped_ref_test.clj`](db/test/gwdb/ledger/scoped_ref_test.clj).
 
+## Signed personal workspace branches
+
+The first signed workspace-ref policy lets a verified account advance only its
+own `user/<address-root>` branch inside an explicit workspace scope. Ignatius
+derives the scope, name and authorization root, validates verified commit
+ancestry, performs exact PostgreSQL compare-and-set, and records each successful
+selection through the ordinary signed transaction, receipt and linear block
+chain. Stale selections do not consume the account sequence or advance the
+network head.
+
+Shared `main`, proposal and release refs remain policy-gated follow-up work. See
+[`docs/workspace-ref-admission.md`](docs/workspace-ref-admission.md).
+
 ## Convex-style accounts and actors
 
 New account roots use a backward-compatible v2 shape that separates the external
