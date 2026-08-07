@@ -163,7 +163,7 @@ jobs:
           git commit -m "Regenerate ledger artefacts"
           git push origin "HEAD:${TARGET_BRANCH}"
 
-      - name: Test scoped refs, protocol, runtime, actors and reducer contracts
+      - name: Test workspace commits, scoped refs, protocol, runtime, actors and reducer contracts
         run: |
           docker build \
             -t gw-ledger-postgres:15-pgsodium \
@@ -173,7 +173,8 @@ jobs:
           lein update-in :dependencies conj \
             '[org.clojure/core.rrb-vector "0.1.2"]' \
             '[org.apache.commons/commons-math3 "3.6.1"]' -- \
-            test gwdb.ledger.scoped-ref-test \
+            test gwdb.ledger.workspace-test \
+                 gwdb.ledger.scoped-ref-test \
                  gwdb.ledger.protocol-value-test \
                  gwdb.ledger.runtime-v2-demo-test \
                  gwdb.ledger.actor-runtime-test \

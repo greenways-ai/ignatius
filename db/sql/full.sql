@@ -12531,6 +12531,807 @@ CREATE OR REPLACE FUNCTION "gw_ledger".scoped_ref_compare_and_set(
 
 $$ LANGUAGE 'plpgsql';
 
+-- gwdb.ledger.workspace/WorkspaceCommit [15] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkspaceCommit" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkspaceCommit" (
+  "commit_root" BYTEA PRIMARY KEY,
+  "workspace_id_root" BYTEA NOT NULL,
+  "workspace_root" BYTEA,
+  "state_root" BYTEA NOT NULL,
+  "operation_root" BYTEA,
+  "merge_base_root" BYTEA,
+  "merge_policy_root" BYTEA,
+  "author_evidence_root" BYTEA NOT NULL,
+  "execution_provenance_root" BYTEA,
+  "parent_count" INTEGER NOT NULL
+);
+
+-- gwdb.ledger.workspace/WorkspaceCommitParent [29] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkspaceCommitParent" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkspaceCommitParent" (
+  "commit_root" BYTEA NOT NULL,
+  "position" INTEGER NOT NULL,
+  "parent_root" BYTEA NOT NULL,
+  PRIMARY KEY (commit_root,position)
+);
+
+-- gwdb.ledger.workspace/keyword-root [36] 
+CREATE OR REPLACE FUNCTION "gw_ledger".keyword_root(
+  i_name TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".put_keyword(i_name);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/field [42] 
+CREATE OR REPLACE FUNCTION "gw_ledger".field(
+  i_record_root BYTEA,
+  i_name TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_get(i_record_root,"gw_ledger".keyword_root(i_name));
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/optional-field [49] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_field(
+  i_record_root BYTEA,
+  i_name TEXT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_root BYTEA;
+  BEGIN
+    v_root := "gw_ledger".field(i_record_root,i_name);
+    RETURN CASE WHEN "gw_ledger".cell_type_tag(v_root) = 0 THEN null
+    ELSE v_root
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/record-kind [60] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_kind(
+  i_record_root BYTEA,
+  i_kind TEXT
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_record_root);
+    RETURN o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 11) AND ("gw_ledger".field(i_record_root,'record/type') = "gw_ledger".keyword_root(i_kind));
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/record-version-one [71] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_version_one(
+  i_record_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_version_root BYTEA;
+  BEGIN
+    v_version_root := "gw_ledger".field(i_record_root,'record/version');
+    RETURN v_version_root IS NOT NULL AND ("gw_ledger".cell_type_tag(v_version_root) = 2) AND ("gw_ledger".integer_bigint(v_version_root) = 1);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/optional-root [82] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_root(
+  i_root BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN CASE WHEN i_root IS NULL THEN "gw_ledger".put_nil()
+  ELSE i_root
+  END;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/record-start [91] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_start(
+  i_kind TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_assoc(
+    "gw_ledger".put_map(jsonb_build_array()),
+    "gw_ledger".keyword_root('record/type'),
+    "gw_ledger".keyword_root(i_kind)
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/record-assoc [101] 
+CREATE OR REPLACE FUNCTION "gw_ledger".record_assoc(
+  i_record_root BYTEA,
+  i_name TEXT,
+  i_value_root BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".map_assoc(i_record_root,"gw_ledger".keyword_root(i_name),i_value_root);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-value [109] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_value(
+  i_workspace_id_root BYTEA,
+  i_workspace_root BYTEA,
+  i_parent_roots_root BYTEA,
+  i_state_root BYTEA,
+  i_operation_root BYTEA,
+  i_merge_base_root BYTEA,
+  i_merge_policy_root BYTEA,
+  i_author_evidence_root BYTEA,
+  i_execution_provenance_root BYTEA,
+  i_metadata_root BYTEA,
+  i_extensions_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_author BYTEA;
+    v_extensions BYTEA;
+    v_merge_base BYTEA;
+    v_merge_policy BYTEA;
+    v_operation BYTEA;
+    v_parents BYTEA;
+    v_provenance BYTEA;
+    v_record BYTEA;
+    v_state BYTEA;
+    v_version BYTEA;
+    v_workspace BYTEA;
+    v_workspace_id BYTEA;
+  BEGIN
+    v_record := "gw_ledger".record_start('workspace/commit-candidate');
+    v_version := "gw_ledger".record_assoc(v_record,'record/version',"gw_ledger".put_integer_number(1));
+    v_extensions := "gw_ledger".record_assoc(v_version,'record/extensions',i_extensions_root);
+    v_workspace_id := "gw_ledger".record_assoc(v_extensions,'workspace/id',i_workspace_id_root);
+    v_workspace := "gw_ledger".record_assoc(
+      v_workspace_id,
+      'workspace/root',
+      "gw_ledger".optional_root(i_workspace_root)
+    );
+    v_parents := "gw_ledger".record_assoc(v_workspace,'commit/parent-roots',i_parent_roots_root);
+    v_state := "gw_ledger".record_assoc(v_parents,'commit/state-root',i_state_root);
+    v_operation := "gw_ledger".record_assoc(
+      v_state,
+      'commit/operation-root',
+      "gw_ledger".optional_root(i_operation_root)
+    );
+    v_merge_base := "gw_ledger".record_assoc(
+      v_operation,
+      'commit/merge-base-root',
+      "gw_ledger".optional_root(i_merge_base_root)
+    );
+    v_merge_policy := "gw_ledger".record_assoc(
+      v_merge_base,
+      'commit/merge-policy-root',
+      "gw_ledger".optional_root(i_merge_policy_root)
+    );
+    v_author := "gw_ledger".record_assoc(
+      v_merge_policy,
+      'commit/author-evidence',
+      i_author_evidence_root
+    );
+    v_provenance := "gw_ledger".record_assoc(
+      v_author,
+      'commit/execution-provenance',
+      "gw_ledger".optional_root(i_execution_provenance_root)
+    );
+    RETURN "gw_ledger".record_assoc(v_provenance,'commit/metadata',i_metadata_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-row [168] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_row(
+  i_commit_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "commit_root",
+      "workspace_id_root",
+      "workspace_root",
+      "state_root",
+      "operation_root",
+      "merge_base_root",
+      "merge_policy_root",
+      "author_evidence_root",
+      "execution_provenance_root",
+      "parent_count"
+    FROM "gw_ledger"."WorkspaceCommit"
+    WHERE "commit_root" = i_commit_root
+    LIMIT 1)
+  SELECT to_jsonb(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-parent-count [175] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_parent_count(
+  i_commit_root BYTEA
+) RETURNS INTEGER AS $$
+BEGIN
+  RETURN SELECT count(*) FROM "gw_ledger"."WorkspaceCommitParent"
+  WHERE "commit_root" = i_commit_root;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-parent-root [183] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_parent_root(
+  i_commit_root BYTEA,
+  i_position INTEGER
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT "commit_root","position","parent_root" FROM "gw_ledger"."WorkspaceCommitParent"
+      WHERE "commit_root" = i_commit_root AND "position" = i_position
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_row;
+    RETURN CASE WHEN o_row IS NULL THEN null
+    ELSE (o_row ->> 'parent_root')::BYTEA
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/parent-seen-before [195] 
+CREATE OR REPLACE FUNCTION "gw_ledger".parent_seen_before(
+  i_parent_vector_root BYTEA,
+  i_position INTEGER,
+  i_parent_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position <= 0 THEN
+    RETURN false;
+  ELSE
+    DECLARE
+    v_previous INTEGER;
+      v_root BYTEA;
+  BEGIN
+    v_previous := (i_position - 1);
+      v_root := "gw_ledger".cell_ref_child(i_parent_vector_root,v_previous,'element');
+      RETURN (v_root = i_parent_root) OR "gw_ledger".parent_seen_before(i_parent_vector_root,v_previous,i_parent_root);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/parent-error-at [214] 
+CREATE OR REPLACE FUNCTION "gw_ledger".parent_error_at(
+  i_commit_root BYTEA,
+  i_workspace_id_root BYTEA,
+  i_parent_vector_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS TEXT AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN null;
+  ELSE
+    DECLARE
+    o_parent JSONB;
+      v_parent_root BYTEA;
+  BEGIN
+    v_parent_root := "gw_ledger".cell_ref_child(i_parent_vector_root,i_position,'element');
+      o_parent := "gw_ledger".workspace_commit_row(v_parent_root);
+      IF v_parent_root = i_commit_root THEN
+        RETURN 'workspace/self-parent';
+      ELSIF "gw_ledger".parent_seen_before(i_parent_vector_root,i_position,v_parent_root) THEN
+        RETURN 'workspace/duplicate-parent-root';
+      ELSIF o_parent is null  THEN
+        RETURN 'workspace/missing-parent-commit';
+      ELSIF NOT (i_workspace_id_root = (o_parent ->> 'workspace_id_root')::BYTEA) THEN
+        RETURN 'workspace/parent-workspace-mismatch';
+      ELSE
+        RETURN "gw_ledger".parent_error_at(
+          i_commit_root,
+          i_workspace_id_root,
+          i_parent_vector_root,
+          i_position + 1,
+          i_count
+        );
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-root-seen-at [251] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_root_seen_at(
+  i_roots JSONB,
+  i_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN false;
+  ELSE
+    DECLARE
+    v_current BYTEA;
+  BEGIN
+    v_current := ((i_roots -> i_position) ->> 'commit_root')::BYTEA;
+      IF v_current = i_root THEN
+        RETURN true;
+      ELSE
+        RETURN "gw_ledger".workspace_commit_root_seen_at(i_roots,i_root,i_position + 1,i_count);
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-root-tail [271] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_root_tail(
+  i_roots JSONB,
+  i_position INTEGER,
+  i_count INTEGER,
+  i_out JSONB
+) RETURNS JSONB AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN i_out;
+  ELSE
+    DECLARE
+    v_next JSONB;
+      v_root JSONB;
+  BEGIN
+    v_root := (i_roots -> i_position);
+      v_next := (i_out || jsonb_build_array(v_root));
+      RETURN "gw_ledger".workspace_commit_root_tail(i_roots,i_position + 1,i_count,v_next);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-parent-entries-at [287] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_parent_entries_at(
+  i_commit_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER,
+  i_out JSONB
+) RETURNS JSONB AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN i_out;
+  ELSE
+    DECLARE
+    v_entry JSONB;
+      v_next JSONB;
+      v_parent_root BYTEA;
+  BEGIN
+    v_parent_root := "gw_ledger".workspace_commit_parent_root(i_commit_root,i_position);
+      v_entry := jsonb_build_object('commit_root',v_parent_root);
+      v_next := (i_out || jsonb_build_array(v_entry));
+      RETURN "gw_ledger".workspace_commit_parent_entries_at(i_commit_root,i_position + 1,i_count,v_next);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-parent-entries [311] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_parent_entries(
+  i_commit_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".workspace_commit_parent_entries_at(
+    i_commit_root,
+    0,
+    "gw_ledger".workspace_commit_parent_count(i_commit_root),
+    jsonb_build_array()
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-ancestor-at [321] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_ancestor_at(
+  i_ancestor_root BYTEA,
+  i_pending JSONB,
+  i_seen JSONB
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    v_pending_count INTEGER;
+  BEGIN
+    v_pending_count := jsonb_array_length(i_pending);
+    IF v_pending_count = 0 THEN
+      RETURN false;
+    ELSE
+      DECLARE
+      v_first JSONB;
+        v_next_pending JSONB;
+        v_next_seen JSONB;
+        v_parents JSONB;
+        v_root BYTEA;
+        v_seen BOOLEAN;
+        v_seen_count INTEGER;
+        v_tail JSONB;
+    BEGIN
+      v_first := (i_pending -> 0);
+        v_root := (v_first ->> 'commit_root')::BYTEA;
+        v_seen_count := jsonb_array_length(i_seen);
+        v_seen := "gw_ledger".workspace_commit_root_seen_at(i_seen,v_root,0,v_seen_count);
+        v_tail := "gw_ledger".workspace_commit_root_tail(i_pending,1,v_pending_count,jsonb_build_array());
+        v_parents := "gw_ledger".workspace_commit_parent_entries(v_root);
+        v_next_pending := CASE WHEN v_seen THEN v_tail
+        ELSE v_parents || v_tail
+        END;
+        v_next_seen := CASE WHEN v_seen THEN i_seen
+        ELSE i_seen || jsonb_build_array(v_first)
+        END;
+        IF i_ancestor_root = v_root THEN
+          RETURN true;
+        ELSE
+          RETURN "gw_ledger".workspace_commit_ancestor_at(i_ancestor_root,v_next_pending,v_next_seen);
+        END IF;
+    END;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-ancestor [363] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_ancestor(
+  i_ancestor_root BYTEA,
+  i_descendant_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_ancestor_root = i_descendant_root THEN
+    RETURN true;
+  ELSIF "gw_ledger".workspace_commit_row(i_descendant_root) is null  THEN
+    RETURN false;
+  ELSE
+    RETURN "gw_ledger".workspace_commit_ancestor_at(
+      i_ancestor_root,
+      jsonb_build_array(jsonb_build_object('commit_root',i_descendant_root)),
+      jsonb_build_array()
+    );
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/merge-base-valid-at [383] 
+CREATE OR REPLACE FUNCTION "gw_ledger".merge_base_valid_at(
+  i_merge_base_root BYTEA,
+  i_parent_vector_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    v_parent_root BYTEA;
+  BEGIN
+    v_parent_root := "gw_ledger".cell_ref_child(i_parent_vector_root,i_position,'element');
+      RETURN "gw_ledger".workspace_commit_ancestor(i_merge_base_root,v_parent_root) AND "gw_ledger".merge_base_valid_at(i_merge_base_root,i_parent_vector_root,i_position + 1,i_count);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-error [405] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_error(
+  i_commit_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  IF NOT "gw_ledger".record_kind(i_commit_root,'workspace/commit-candidate') THEN
+    RETURN 'workspace/invalid-commit-record';
+  ELSIF NOT "gw_ledger".record_version_one(i_commit_root) THEN
+    RETURN 'workspace/unsupported-commit-version';
+  ELSE
+    DECLARE
+    o_parent_vector JSONB;
+      v_author_root BYTEA;
+      v_merge_base_root BYTEA;
+      v_merge_policy_root BYTEA;
+      v_parent_count INTEGER;
+      v_parent_vector_root BYTEA;
+      v_state_root BYTEA;
+      v_workspace_id_root BYTEA;
+  BEGIN
+    v_workspace_id_root := "gw_ledger".field(i_commit_root,'workspace/id');
+      v_parent_vector_root := "gw_ledger".field(i_commit_root,'commit/parent-roots');
+      v_state_root := "gw_ledger".field(i_commit_root,'commit/state-root');
+      v_author_root := "gw_ledger".field(i_commit_root,'commit/author-evidence');
+      v_merge_base_root := "gw_ledger".optional_field(i_commit_root,'commit/merge-base-root');
+      v_merge_policy_root := "gw_ledger".optional_field(i_commit_root,'commit/merge-policy-root');
+      o_parent_vector := "gw_ledger".cell_by_hash(v_parent_vector_root);
+      v_parent_count := CASE WHEN o_parent_vector IS NULL THEN -1
+      ELSE "gw_ledger".cell_ref_count(v_parent_vector_root,'element')
+      END;
+      IF "gw_ledger".cell_by_hash(v_workspace_id_root) is null  THEN
+        RETURN 'workspace/missing-workspace-id';
+      ELSIF o_parent_vector IS NULL OR NOT ((o_parent_vector ->> 'type_tag')::SMALLINT = 10) THEN
+        RETURN 'workspace/parents-not-vector';
+      ELSIF "gw_ledger".cell_by_hash(v_state_root) is null  THEN
+        RETURN 'workspace/missing-state-root';
+      ELSIF NOT "gw_ledger".record_kind(v_author_root,'ledger/evidence') THEN
+        RETURN 'workspace/invalid-author-evidence';
+      ELSIF "gw_ledger".cell_by_hash("gw_ledger".field(v_author_root,'ledger/signer')) is null  THEN
+        RETURN 'workspace/missing-author-signer';
+      ELSE
+        DECLARE
+        v_parent_error TEXT;
+      BEGIN
+        v_parent_error := "gw_ledger".parent_error_at(
+            i_commit_root,
+            v_workspace_id_root,
+            v_parent_vector_root,
+            0,
+            v_parent_count
+          );
+          IF v_parent_error is not null  THEN
+            RETURN v_parent_error;
+          ELSIF v_parent_count >= 2 THEN
+            IF v_merge_base_root is null  THEN
+              RETURN 'workspace/missing-merge-base';
+            ELSIF v_merge_policy_root is null  THEN
+              RETURN 'workspace/missing-merge-policy';
+            ELSIF "gw_ledger".workspace_commit_row(v_merge_base_root) is null  THEN
+              RETURN 'workspace/unknown-merge-base';
+            ELSIF NOT "gw_ledger".merge_base_valid_at(v_merge_base_root,v_parent_vector_root,0,v_parent_count) THEN
+              RETURN 'workspace/invalid-merge-base';
+            ELSE
+              RETURN null;
+            END IF;
+          ELSIF v_merge_base_root IS NOT NULL OR v_merge_policy_root IS NOT NULL THEN
+            RETURN 'workspace/non-merge-has-merge-fields';
+          ELSE
+            RETURN null;
+          END IF;
+      END;
+      END IF;
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/projection-parents-valid-at [490] 
+CREATE OR REPLACE FUNCTION "gw_ledger".projection_parents_valid_at(
+  i_commit_root BYTEA,
+  i_parent_vector_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    RETURN ("gw_ledger".workspace_commit_parent_root(i_commit_root,i_position) = "gw_ledger".cell_ref_child(i_parent_vector_root,i_position,'element')) AND "gw_ledger".projection_parents_valid_at(i_commit_root,i_parent_vector_root,i_position + 1,i_count);
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/optional-root-equal [511] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_root_equal(
+  i_left BYTEA,
+  i_right BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN CASE WHEN i_left IS NULL THEN i_right IS NULL
+  WHEN i_right IS NULL THEN false
+  ELSE i_left = i_right
+  END;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-valid [524] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_valid(
+  i_commit_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_row JSONB;
+  BEGIN
+    o_row := "gw_ledger".workspace_commit_row(i_commit_root);
+    IF o_row is null  THEN
+      RETURN false;
+    END IF;
+    DECLARE
+      v_parent_count INTEGER;
+      v_parent_vector_root BYTEA;
+    BEGIN
+      v_parent_vector_root := "gw_ledger".field(i_commit_root,'commit/parent-roots');
+      v_parent_count := "gw_ledger".cell_ref_count(v_parent_vector_root,'element');
+      RETURN "gw_ledger".workspace_commit_error(i_commit_root) IS NULL AND ((o_row ->> 'workspace_id_root')::BYTEA = "gw_ledger".field(i_commit_root,'workspace/id')) AND "gw_ledger".optional_root_equal(
+        (o_row ->> 'workspace_root')::BYTEA,
+        "gw_ledger".optional_field(i_commit_root,'workspace/root')
+      ) AND ((o_row ->> 'state_root')::BYTEA = "gw_ledger".field(i_commit_root,'commit/state-root')) AND "gw_ledger".optional_root_equal(
+        (o_row ->> 'operation_root')::BYTEA,
+        "gw_ledger".optional_field(i_commit_root,'commit/operation-root')
+      ) AND "gw_ledger".optional_root_equal(
+        (o_row ->> 'merge_base_root')::BYTEA,
+        "gw_ledger".optional_field(i_commit_root,'commit/merge-base-root')
+      ) AND "gw_ledger".optional_root_equal(
+        (o_row ->> 'merge_policy_root')::BYTEA,
+        "gw_ledger".optional_field(i_commit_root,'commit/merge-policy-root')
+      ) AND ((o_row ->> 'author_evidence_root')::BYTEA = "gw_ledger".field(i_commit_root,'commit/author-evidence')) AND "gw_ledger".optional_root_equal(
+        (o_row ->> 'execution_provenance_root')::BYTEA,
+        "gw_ledger".optional_field(i_commit_root,'commit/execution-provenance')
+      ) AND ((o_row ->> 'parent_count')::INTEGER = v_parent_count) AND ("gw_ledger".workspace_commit_parent_count(i_commit_root) = v_parent_count) AND "gw_ledger".projection_parents_valid_at(i_commit_root,v_parent_vector_root,0,v_parent_count);
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-parent-import-at [567] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_parent_import_at(
+  i_commit_root BYTEA,
+  i_parent_vector_root BYTEA,
+  i_position INTEGER,
+  i_count INTEGER
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_position >= i_count THEN
+    RETURN true;
+  ELSE
+    DECLARE
+    o_insert JSONB;
+      v_parent_root BYTEA;
+  BEGIN
+    v_parent_root := "gw_ledger".cell_ref_child(i_parent_vector_root,i_position,'element');
+      WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkspaceCommitParent" ("commit_root","position","parent_root") VALUES (
+          (i_commit_root)::BYTEA,
+          (i_position)::INTEGER,
+          (v_parent_root)::BYTEA
+        ) RETURNING "commit_root","position","parent_root")
+      SELECT to_jsonb(j_ret) FROM j_ret INTO o_insert;
+      RETURN "gw_ledger".workspace_commit_parent_import_at(i_commit_root,i_parent_vector_root,i_position + 1,i_count);
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-import [592] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_import(
+  i_commit_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_existing JSONB;
+  BEGIN
+    o_existing := "gw_ledger".workspace_commit_row(i_commit_root);
+    IF o_existing is not null  THEN
+      IF NOT ("gw_ledger".workspace_commit_valid(i_commit_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+              'status',
+              'error',
+              'tag',
+              'ledger/workspace_commit_projection_conflict',
+              'data',
+              null
+            ))::TEXT,
+          MESSAGE = 'ledger/workspace-commit-projection-conflict'
+        ;
+      END IF;
+      RETURN i_commit_root;
+    END IF;
+    DECLARE
+      o_insert JSONB;
+      v_author_root BYTEA;
+      v_error TEXT;
+      v_merge_base_root BYTEA;
+      v_merge_policy_root BYTEA;
+      v_operation_root BYTEA;
+      v_parent_count INTEGER;
+      v_parent_vector_root BYTEA;
+      v_provenance_root BYTEA;
+      v_state_root BYTEA;
+      v_workspace_id_root BYTEA;
+      v_workspace_root BYTEA;
+    BEGIN
+      v_error := "gw_ledger".workspace_commit_error(i_commit_root);
+      IF NOT (v_error IS NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/invalid_workspace_commit',
+            'data',
+            v_error
+          ))::TEXT,
+          MESSAGE = 'ledger/invalid-workspace-commit'
+        ;
+      END IF;
+      v_workspace_id_root := "gw_ledger".field(i_commit_root,'workspace/id');
+      v_workspace_root := "gw_ledger".optional_field(i_commit_root,'workspace/root');
+      v_parent_vector_root := "gw_ledger".field(i_commit_root,'commit/parent-roots');
+      v_state_root := "gw_ledger".field(i_commit_root,'commit/state-root');
+      v_operation_root := "gw_ledger".optional_field(i_commit_root,'commit/operation-root');
+      v_merge_base_root := "gw_ledger".optional_field(i_commit_root,'commit/merge-base-root');
+      v_merge_policy_root := "gw_ledger".optional_field(i_commit_root,'commit/merge-policy-root');
+      v_author_root := "gw_ledger".field(i_commit_root,'commit/author-evidence');
+      v_provenance_root := "gw_ledger".optional_field(i_commit_root,'commit/execution-provenance');
+      v_parent_count := "gw_ledger".cell_ref_count(v_parent_vector_root,'element');
+      WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkspaceCommit" (
+          "commit_root",
+          "workspace_id_root",
+          "workspace_root",
+          "state_root",
+          "operation_root",
+          "merge_base_root",
+          "merge_policy_root",
+          "author_evidence_root",
+          "execution_provenance_root",
+          "parent_count"
+        ) VALUES (
+          (i_commit_root)::BYTEA,
+          (v_workspace_id_root)::BYTEA,
+          (v_workspace_root)::BYTEA,
+          (v_state_root)::BYTEA,
+          (v_operation_root)::BYTEA,
+          (v_merge_base_root)::BYTEA,
+          (v_merge_policy_root)::BYTEA,
+          (v_author_root)::BYTEA,
+          (v_provenance_root)::BYTEA,
+          (v_parent_count)::INTEGER
+        ) RETURNING
+          "commit_root",
+          "workspace_id_root",
+          "workspace_root",
+          "state_root",
+          "operation_root",
+          "merge_base_root",
+          "merge_policy_root",
+          "author_evidence_root",
+          "execution_provenance_root",
+          "parent_count")
+      SELECT to_jsonb(j_ret) FROM j_ret INTO o_insert;
+      "gw_ledger".workspace_commit_parent_import_at(i_commit_root,v_parent_vector_root,0,v_parent_count);
+      RETURN i_commit_root;
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace/workspace-commit-put [643] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_commit_put(
+  i_workspace_id_root BYTEA,
+  i_workspace_root BYTEA,
+  i_parent_roots_root BYTEA,
+  i_state_root BYTEA,
+  i_operation_root BYTEA,
+  i_merge_base_root BYTEA,
+  i_merge_policy_root BYTEA,
+  i_author_evidence_root BYTEA,
+  i_execution_provenance_root BYTEA,
+  i_metadata_root BYTEA,
+  i_extensions_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_root BYTEA;
+  BEGIN
+    v_root := "gw_ledger".workspace_commit_value(
+      i_workspace_id_root,
+      i_workspace_root,
+      i_parent_roots_root,
+      i_state_root,
+      i_operation_root,
+      i_merge_base_root,
+      i_merge_policy_root,
+      i_author_evidence_root,
+      i_execution_provenance_root,
+      i_metadata_root,
+      i_extensions_root
+    );
+    RETURN "gw_ledger".workspace_commit_import(v_root);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pgsodium";
 
