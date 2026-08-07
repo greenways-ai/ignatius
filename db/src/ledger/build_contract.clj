@@ -253,6 +253,66 @@ export type WorkspaceProposalSubmission = WorkspaceRefSubmission & {
   policy: \"proposal-publication-v1\";
 };
 
+export type WorkspaceReviewDecision = \"approve\" | \"reject\" | \"withdraw\";
+
+export interface WorkspaceReviewSigningRequest {
+  address: LedgerRoot;
+  sequence: number;
+  workspace_id_root: LedgerRoot;
+  candidate_root: LedgerRoot;
+  scope: string;
+  name: string;
+  expected_review_root?: LedgerRoot;
+  review_root: LedgerRoot;
+  decision: WorkspaceReviewDecision;
+  recorded_at: number;
+  policy: \"review-decision-v1\";
+  intent_root: LedgerRoot;
+  operation_root: LedgerRoot;
+  signing_payload: string;
+}
+
+export type WorkspaceReviewSubmission =
+  | {
+      status: \"ok\";
+      address: LedgerRoot;
+      sequence: number;
+      workspace_id_root: LedgerRoot;
+      candidate_root: LedgerRoot;
+      scope: string;
+      name: string;
+      expected_review_root?: LedgerRoot;
+      review_root: LedgerRoot;
+      decision: WorkspaceReviewDecision;
+      recorded_at: number;
+      policy: \"review-decision-v1\";
+      ref_version: number;
+      intent_root: LedgerRoot;
+      transaction_root: LedgerRoot;
+      receipt_root: LedgerRoot;
+      result_root: LedgerRoot;
+      state_root: LedgerRoot;
+      block_root: LedgerRoot;
+    }
+  | {
+      status: \"conflict\";
+      error: \"storage/ref-conflict\";
+      address: LedgerRoot;
+      sequence: number;
+      candidate_root: LedgerRoot;
+      scope: string;
+      name: string;
+      expected_root?: LedgerRoot;
+      actual_root?: LedgerRoot;
+      desired_root: LedgerRoot;
+      version: number;
+      review_root: LedgerRoot;
+      decision: WorkspaceReviewDecision;
+      recorded_at: number;
+      policy: \"review-decision-v1\";
+      intent_root: LedgerRoot;
+    };
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;
@@ -277,6 +337,8 @@ export interface LedgerSignedApi {
   submitWorkspaceRef(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceRefSubmission>;
   workspaceProposalSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, desiredRoot: LedgerRoot, costLimit?: number): Promise<WorkspaceProposalSigningRequest>;
   submitWorkspaceProposal(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceProposalSubmission>;
+  workspaceReviewSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, candidateRoot: LedgerRoot, expectedReviewRoot: LedgerRoot | undefined, decision: WorkspaceReviewDecision, recordedAt: number, costLimit?: number): Promise<WorkspaceReviewSigningRequest>;
+  submitWorkspaceReview(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, candidateRoot: LedgerRoot, expectedReviewRoot: LedgerRoot | undefined, decision: WorkspaceReviewDecision, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceReviewSubmission>;
 }
 ")
 

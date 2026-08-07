@@ -224,8 +224,24 @@ selection through the ordinary signed transaction, receipt and linear block
 chain. Stale selections do not consume the account sequence or advance the
 network head.
 
-Shared `main`, proposal and release refs remain policy-gated follow-up work. See
+Proposal publication and reviewer decisions are separate signed policies; shared
+`main` and release refs remain policy-gated follow-up work. See
 [`docs/workspace-ref-admission.md`](docs/workspace-ref-admission.md).
+
+## Signed workspace proposals and reviews
+
+A verified account may publish an immutable candidate as
+`proposal/<candidate-root>`. The proposal is create-only and cannot be redirected
+to a different commit. Reviewers then sign canonical `:review/decision` records
+for that exact candidate. Each reviewer has an independent
+`review/<candidate-root>/<reviewer-root>` ref updated through exact compare-and-set,
+so stale decisions do not consume account sequence or global block height.
+
+Proposal visibility and reviewer statements do not by themselves authorize
+`main`. A later explicit workspace policy evaluates exact proposal and review
+roots before accepting a shared head. See
+[`docs/workspace-proposals.md`](docs/workspace-proposals.md) and
+[`docs/workspace-reviews.md`](docs/workspace-reviews.md).
 
 ## Convex-style accounts and actors
 
