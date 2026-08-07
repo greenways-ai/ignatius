@@ -33,5 +33,5 @@ hpt1-flat-map-benchmark: setup
 	    '[org.apache.commons/commons-math3 "3.6.1"]' \
 	    '[com.impossibl.pgjdbc-ng/pgjdbc-ng "0.8.9" :exclusions [io.netty/netty-common io.netty/netty-buffer io.netty/netty-transport io.netty/netty-codec io.netty/netty-handler io.netty/netty-transport-native-unix-common]]' \
 	    '[io.netty/netty-all "4.1.118.Final"]' -- \
-	    run -m ledger.hpt1-flat-map-benchmark \
+	    run -m ledger.hpt1-flat-map-benchmark-runner \
 	    ../benchmarks/hpt1-flat-map/evidence.edn
