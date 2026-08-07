@@ -69,35 +69,35 @@
 
 (def create-intent
   (admission/personal-ref-update-intent
-   workspace-id origin-root nil "C0" {:device "laptop"} {}))
+   workspace-id origin-root nil "C0"))
 
 (def advance-intent
   (admission/personal-ref-update-intent
-   workspace-id origin-root "C0" "C1" {} {}))
+   workspace-id origin-root "C0" "C1"))
 
 (def later-intent
   (admission/personal-ref-update-intent
-   workspace-id origin-root "C1" "C3" {} {}))
+   workspace-id origin-root "C1" "C3"))
 
 (def unknown-desired
   (admission/personal-ref-update-intent
-   workspace-id origin-root "C0" "UNKNOWN" {} {}))
+   workspace-id origin-root "C0" "UNKNOWN"))
 
 (def unknown-expected
   (admission/personal-ref-update-intent
-   workspace-id origin-root "UNKNOWN" "C1" {} {}))
+   workspace-id origin-root "UNKNOWN" "C1"))
 
 (def non-fast-forward
   (admission/personal-ref-update-intent
-   workspace-id origin-root "C1" "C2" {} {}))
+   workspace-id origin-root "C1" "C2"))
 
 (def wrong-workspace
   (admission/personal-ref-update-intent
-   workspace-id origin-root nil "X0" {} {}))
+   workspace-id origin-root nil "X0"))
 
 (def no-op
   (admission/personal-ref-update-intent
-   workspace-id origin-root "C1" "C1" {} {}))
+   workspace-id origin-root "C1" "C1"))
 
 (def tampered-scope
   (assoc create-intent :ref/scope "workspace/other"))
@@ -110,6 +110,12 @@
 
 (def tampered-policy
   (assoc create-intent :ref/policy :shared-main-v1))
+
+(def tampered-metadata
+  (assoc create-intent :ref/metadata {:device "laptop"}))
+
+(def tampered-extensions
+  (assoc create-intent :record/extensions {:example/note "extra"}))
 
 (def valid-create
   (admission/validate-personal-ref-update
@@ -136,6 +142,10 @@
    (test/check "the first authority policy is explicit"
                (get create-intent :ref/policy)
                :personal-fast-forward-v1)
+   (test/check "v1 metadata and extensions have one constrained value"
+               [(get create-intent :ref/metadata)
+                (get create-intent :record/extensions)]
+               [{} {}])
    (test/check "a verified genesis may create the personal ref"
                [(get valid-create :error)
                 (get valid-create :ref/desired-root)]
@@ -170,6 +180,18 @@
                  store-all origin-root tampered-policy)
                 :error)
                :workspace/unsupported-ref-policy)
+   (test/check "v1 metadata cannot change the signed intent shape"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-metadata)
+                :error)
+               :workspace/ref-metadata-not-supported)
+   (test/check "v1 extensions cannot change the signed intent shape"
+               (get
+                (admission/validate-personal-ref-update
+                 store-all origin-root tampered-extensions)
+                :error)
+               :workspace/ref-extensions-not-supported)
    (test/check "desired roots must be verified commits"
                (get
                 (admission/validate-personal-ref-update
