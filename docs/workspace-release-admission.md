@@ -93,6 +93,21 @@ Every row is verified by reconstructing the complete canonical attestation.
 Generated TypeScript contracts expose a signing request and a signed submission
 result with a discriminated success-or-conflict shape.
 
+## Conformance evidence
+
+The portable suite checks release identity, evidence pinning, current-main
+selection, create-only version refs and rejection of unknown acceptance roots.
+The PostgreSQL lifecycle then registers two real Ed25519 accounts, publishes a
+unanimous main policy, records independent approvals, accepts `main`, verifies
+the exact `WorkspaceMainSelection`, publishes `release/1.0.0`, and confirms that
+duplicate publication consumes neither account sequence nor block height.
+
+The same lifecycle rejects an acceptance that was constructed but never selected
+by a successful `main` CAS, a non-current candidate and an invalid version name.
+SQL generation, generated TypeScript contracts, portable Hara tests, the signed
+PostgreSQL suite and the SHA extension are all part of the repository's complete
+Verify gate.
+
 ## V1 boundaries
 
 - Version names must be non-empty and valid scoped-ref path components.
