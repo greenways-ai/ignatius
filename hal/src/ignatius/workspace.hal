@@ -1,0 +1,353 @@
+(ns ignatius.workspace
+  (:require [ignatius.record :as record]
+            [ignatius.storage :as storage]))
+
+(def workspace-commit-contract-version 1)
+
+(defn commit-store
+  "Creates a verified decoded commit store. Exact bytes remain owned by the
+  injected block store; this value indexes decoded commits by verified root."
+  []
+  {:workspace/commit-store-version workspace-commit-contract-version
+   :workspace/commits {}})
+
+(defn commits
+  [store]
+  (get store :workspace/commits))
+
+(defn commit-count
+  [store]
+  (count (commits store)))
+
+(defn commit-at
+  [store root]
+  (get (commits store) root))
+
+(defn parent-roots
+  [commit]
+  (record/vector-or-empty
+   (get commit :commit/parent-roots)))
+
+(defn commit-kind
+  [commit]
+  (let [parent-count (count (parent-roots commit))]
+    (cond
+      (= 0 parent-count) :genesis
+      (= 1 parent-count) :edit
+      :else :merge)))
+
+(defn genesis-commit?
+  [commit]
+  (= :genesis (commit-kind commit)))
+
+(defn edit-commit?
+  [commit]
+  (= :edit (commit-kind commit)))
+
+(defn merge-commit?
+  [commit]
+  (= :merge (commit-kind commit)))
+
+(defn contains-root?
+  [roots target-root]
+  (reduce
+   (fn [found root]
+     (if found
+       true
+       (= root target-root)))
+   false
+   roots))
+
+(defn nil-parent-root?
+  [roots]
+  (reduce
+   (fn [found root]
+     (if found
+       true
+       (= nil root)))
+   false
+   roots))
+
+(defn duplicate-parent-roots?
+  [roots]
+  (get
+   (reduce
+    (fn [state root]
+      (let [seen (get state :seen)]
+        (if (= true (get seen root))
+          (assoc state :duplicate true)
+          (assoc state :seen (assoc seen root true)))))
+    {:seen {}
+     :duplicate false}
+    roots)
+   :duplicate))
+
+(defn commit-candidate
+  [fields]
+  (record/workspace-commit-candidate fields))
+
+(defn commit-shape-error
+  "Validates the intrinsic commit shape without consulting parent storage."
+  [commit]
+  (let [kind (commit-kind commit)
+        parents (parent-roots commit)
+        merge-base-root (get commit :commit/merge-base-root)
+        merge-policy-root (get commit :commit/merge-policy-root)]
+    (cond
+      (= false (record/record-valid? commit))
+      :workspace/invalid-commit-record
+
+      (= nil (get commit :commit/author-evidence))
+      :workspace/missing-author-evidence
+
+      (nil-parent-root? parents)
+      :workspace/nil-parent-root
+
+      (duplicate-parent-roots? parents)
+      :workspace/duplicate-parent-root
+
+      (= :merge kind)
+      (cond
+        (= nil merge-base-root)
+        :workspace/missing-merge-base
+
+        (= nil merge-policy-root)
+        :workspace/missing-merge-policy
+
+        :else nil)
+
+      (or (not (= nil merge-base-root))
+          (not (= nil merge-policy-root)))
+      :workspace/non-merge-has-merge-fields
+
+      :else nil)))
+
+(defn validate-commit-shape
+  [commit]
+  (let [error (commit-shape-error commit)]
+    (if (= nil error)
+      {:ok commit
+       :commit/kind (commit-kind commit)}
+      {:error error
+       :commit/kind (commit-kind commit)})))
+
+(defn missing-parent-roots
+  [store commit]
+  (reduce
+   (fn [missing root]
+     (if (= nil (commit-at store root))
+       (conj missing root)
+       missing))
+   []
+   (parent-roots commit)))
+
+(defn parent-workspace-mismatch?
+  [store commit]
+  (let [workspace-id (get commit :workspace/id)]
+    (reduce
+     (fn [mismatch root]
+       (if mismatch
+         true
+         (not
+          (= workspace-id
+             (get (commit-at store root) :workspace/id)))))
+     false
+     (parent-roots commit))))
+
+(defn ancestor?
+  "Returns true when ancestor-root is reachable from descendant-root.
+
+  The verified store admits parents before children, so this recursion cannot
+  enter a cycle. A root is considered its own ancestor."
+  [store ancestor-root descendant-root]
+  (cond
+    (= ancestor-root descendant-root)
+    true
+
+    (= nil descendant-root)
+    false
+
+    :else
+    (let [commit (commit-at store descendant-root)]
+      (if (= nil commit)
+        false
+        (reduce
+         (fn [found parent-root]
+           (if found
+             true
+             (ancestor? store ancestor-root parent-root)))
+         false
+         (parent-roots commit))))))
+
+(defn merge-base-valid?
+  [store commit]
+  (let [merge-base-root (get commit :commit/merge-base-root)]
+    (if (= false (merge-commit? commit))
+      true
+      (if (= nil (commit-at store merge-base-root))
+        false
+        (reduce
+         (fn [valid parent-root]
+           (if valid
+             (ancestor? store merge-base-root parent-root)
+             false))
+         true
+         (parent-roots commit))))))
+
+(defn collect-ancestry
+  [store pending seen out]
+  (if (= 0 (count pending))
+    out
+    (let [root (first pending)
+          remaining (rest pending)]
+      (if (= true (get seen root))
+        (collect-ancestry store remaining seen out)
+        (let [commit (commit-at store root)
+              next-seen (assoc seen root true)
+              next-out (conj out root)
+              next-pending
+              (reduce
+               (fn [roots parent-root]
+                 (conj roots parent-root))
+               remaining
+               (parent-roots commit))]
+          (collect-ancestry
+           store next-pending next-seen next-out))))))
+
+(defn ancestry-roots
+  "Returns each reachable commit root once, beginning with the supplied root."
+  [store root]
+  (if (= nil (commit-at store root))
+    {:error :workspace/commit-not-found
+     :commit/root root}
+    {:ok (collect-ancestry store [root] {} [])}))
+
+(defn register-commit
+  "Adds one decoded commit after an injected canonical-root verifier succeeds.
+
+  verify-root must recompute or otherwise prove the HCV1 root for the supplied
+  commit. Exact reinsertion is idempotent; a different value under one root is
+  a conflict."
+  [verify-root store root commit]
+  (let [shape (validate-commit-shape commit)
+        existing (commit-at store root)]
+    (cond
+      (= nil root)
+      {:error :workspace/missing-commit-root}
+
+      (not (= nil (get shape :error)))
+      shape
+
+      (= false (= true (verify-root root commit)))
+      {:error :workspace/commit-root-mismatch
+       :commit/root root}
+
+      (= false (= nil existing))
+      (if (= existing commit)
+        {:ok store
+         :commit/root root
+         :commit/value commit
+         :commit/kind (commit-kind commit)
+         :commit/created false}
+        {:error :workspace/commit-root-conflict
+         :commit/root root
+         :commit/existing existing
+         :commit/proposed commit})
+
+      (contains-root? (parent-roots commit) root)
+      {:error :workspace/self-parent
+       :commit/root root}
+
+      (not (= 0 (count (missing-parent-roots store commit))))
+      {:error :workspace/missing-parent-commits
+       :commit/root root
+       :commit/missing-parent-roots
+       (missing-parent-roots store commit)}
+
+      (parent-workspace-mismatch? store commit)
+      {:error :workspace/parent-workspace-mismatch
+       :commit/root root
+       :workspace/id (get commit :workspace/id)}
+
+      (= false (merge-base-valid? store commit))
+      {:error :workspace/invalid-merge-base
+       :commit/root root
+       :commit/merge-base-root
+       (get commit :commit/merge-base-root)}
+
+      :else
+      (let [next-store
+            (assoc store :workspace/commits
+                   (assoc (commits store) root commit))]
+        {:ok next-store
+         :commit/root root
+         :commit/value commit
+         :commit/kind (commit-kind commit)
+         :commit/created true}))))
+
+(defn workspace-scope
+  [workspace-id]
+  (str "workspace/" workspace-id))
+
+(def main-ref-name "main")
+
+(defn user-ref-name
+  [account-id]
+  (str "user/" account-id))
+
+(defn proposal-ref-name
+  [proposal-id]
+  (str "proposal/" proposal-id))
+
+(defn release-ref-name
+  [version]
+  (str "release/" version))
+
+(defn read-memory-ref
+  [backend workspace-id ref-name authorization-root]
+  (storage/memory-get-ref
+   backend
+   (storage/ref-read-request
+    (workspace-scope workspace-id)
+    ref-name
+    authorization-root)))
+
+(defn select-memory-ref
+  "Selects a verified commit through exact-root compare-and-set.
+
+  The desired and non-nil expected roots must be present in the verified commit
+  store before the mutable ref can name them."
+  [store backend workspace-id ref-name
+   expected-root desired-root authorization-root]
+  (cond
+    (= nil (commit-at store desired-root))
+    {:error :workspace/desired-commit-not-found
+     :commit/root desired-root}
+
+    (and (not (= nil expected-root))
+         (= nil (commit-at store expected-root)))
+    {:error :workspace/expected-commit-not-found
+     :commit/root expected-root}
+
+    :else
+    (storage/memory-compare-and-set-ref
+     backend
+     (storage/ref-update-request
+      (workspace-scope workspace-id)
+      ref-name
+      expected-root
+      desired-root
+      authorization-root))))
+
+(defn fast-forward-memory-ref
+  "Selects only descendants of the expected root, then performs exact CAS."
+  [store backend workspace-id ref-name
+   expected-root desired-root authorization-root]
+  (if (and (not (= nil expected-root))
+           (= false (ancestor? store expected-root desired-root)))
+    {:error :workspace/non-fast-forward-ref-update
+     :ref/expected-root expected-root
+     :ref/desired-root desired-root}
+    (select-memory-ref
+     store backend workspace-id ref-name
+     expected-root desired-root authorization-root)))
