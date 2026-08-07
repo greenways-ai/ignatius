@@ -125,17 +125,26 @@
    workspace-id authority-root release-root))
 
 (def wrong-version
-  (assoc published-release :release/version "2.0.0"))
-(def wrong-policy
-  (assoc published-release :attestation/context-root "P2"))
-(def wrong-acceptance
   (assoc published-release :record/extensions
          {:workspace/id workspace-id
-          :release/version "1.0.0"
-          :release/acceptance-root "UNKNOWN"
+          :release/version "2.0.0"
+          :release/acceptance-root acceptance-root
           :ref/expected-root nil
           :ref/desired-root candidate-root
           :ref/policy :release-publication-v1}))
+(def wrong-policy
+  (assoc published-release :attestation/context-root "P2"))
+(def wrong-acceptance
+  (assoc
+   (assoc published-release
+          :attestation/evidence-roots ["UNKNOWN"])
+   :record/extensions
+   {:workspace/id workspace-id
+    :release/version "1.0.0"
+    :release/acceptance-root "UNKNOWN"
+    :ref/expected-root nil
+    :ref/desired-root candidate-root
+    :ref/policy :release-publication-v1}))
 
 (def backend-wrong-main
   (get
@@ -193,10 +202,13 @@
                (release/release-shape-error
                 workspace-id authority-root wrong-version)
                :workspace/release-id-not-derived)
-   (test/check "release policy cannot be substituted"
-               (release/release-shape-error
-                workspace-id authority-root wrong-policy)
-               :workspace/release-extensions-not-supported)
+   (test/check "an unselected policy cannot authorize release"
+               (get
+                (release/validate-release
+                 commit-store acceptance-store backend-main
+                 workspace-id authority-root wrong-policy)
+                :error)
+               :workspace/release-policy-not-published)
    (test/check "unknown acceptance evidence cannot authorize release"
                (get
                 (release/validate-release
