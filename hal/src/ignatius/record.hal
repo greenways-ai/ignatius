@@ -5,7 +5,7 @@
 (def extension-policy :namespaced-map)
 
 (def reserved-event-fields
-  [:signer :transaction :timestamp :previous-head])
+  [:signer :transaction :timestamp :previous-head :contract :template])
 
 (defn value-or
   [value fallback]
@@ -22,9 +22,9 @@
   (value-or value []))
 
 (defn record-envelope
-  "Adds the canonical record envelope and prevents callers from spoofing its
-  type, version, or extension container. Writers emit known fields and place
-  application data beneath :record/extensions. Readers preserve unknown fields."
+  "Adds the canonical record envelope. Writers emit every known v1 field and
+  place application data beneath :record/extensions. Generic readers preserve
+  unknown fields because they validate and return the supplied value unchanged."
   [record-type fields]
   (assoc
    (assoc
@@ -43,6 +43,22 @@
     :workspace/schema-root (get fields :workspace/schema-root)
     :workspace/entrypoints
     (map-or-empty (get fields :workspace/entrypoints))
+    :workspace/participants
+    (map-or-empty (get fields :workspace/participants))
+    :workspace/status
+    (value-or (get fields :workspace/status) :active)
+    :workspace/processes
+    (map-or-empty (get fields :workspace/processes))
+    :workspace/artifacts
+    (map-or-empty (get fields :workspace/artifacts))
+    :workspace/artifact-versions
+    (map-or-empty (get fields :workspace/artifact-versions))
+    :workspace/reviews
+    (map-or-empty (get fields :workspace/reviews))
+    :workspace/timeline-entries
+    (map-or-empty (get fields :workspace/timeline-entries))
+    :workspace/latest-entry-id
+    (get fields :workspace/latest-entry-id)
     :workspace/metadata
     (map-or-empty (get fields :workspace/metadata))
     :record/extensions
@@ -74,6 +90,7 @@
    :process/run
    {:run/id (get fields :run/id)
     :run/workspace-id (get fields :run/workspace-id)
+    :run/workspace-root (get fields :run/workspace-root)
     :run/definition-root (get fields :run/definition-root)
     :run/status (get fields :run/status)
     :run/input-roots
@@ -97,6 +114,7 @@
    :process/step
    {:step/id (get fields :step/id)
     :step/run-id (get fields :step/run-id)
+    :step/run-root (get fields :step/run-root)
     :step/definition-root (get fields :step/definition-root)
     :step/status (get fields :step/status)
     :step/input-roots
@@ -118,7 +136,9 @@
    :process/checkpoint
    {:checkpoint/id (get fields :checkpoint/id)
     :checkpoint/run-id (get fields :checkpoint/run-id)
+    :checkpoint/run-root (get fields :checkpoint/run-root)
     :checkpoint/step-id (get fields :checkpoint/step-id)
+    :checkpoint/step-root (get fields :checkpoint/step-root)
     :checkpoint/state-root (get fields :checkpoint/state-root)
     :checkpoint/output-roots
     (vector-or-empty (get fields :checkpoint/output-roots))
@@ -135,6 +155,7 @@
    :artifact/identity
    {:artifact/id (get fields :artifact/id)
     :artifact/workspace-id (get fields :artifact/workspace-id)
+    :artifact/workspace-root (get fields :artifact/workspace-root)
     :artifact/kind (get fields :artifact/kind)
     :artifact/schema-root (get fields :artifact/schema-root)
     :artifact/metadata
@@ -153,6 +174,7 @@
     (get fields :artifact/previous-content-root)
     :artifact/source-roots
     (vector-or-empty (get fields :artifact/source-roots))
+    :artifact/producer-run-id (get fields :artifact/producer-run-id)
     :artifact/producer-run-root (get fields :artifact/producer-run-root)
     :artifact/schema-root (get fields :artifact/schema-root)
     :artifact/metadata
@@ -200,6 +222,7 @@
   (record-envelope
    :workspace/commit-candidate
    {:workspace/id (get fields :workspace/id)
+    :workspace/root (get fields :workspace/root)
     :commit/parent-roots
     (vector-or-empty (get fields :commit/parent-roots))
     :commit/state-root (get fields :commit/state-root)
@@ -224,6 +247,7 @@
     :review/decision (get fields :review/decision)
     :review/evidence-roots
     (vector-or-empty (get fields :review/evidence-roots))
+    :review/process-run-id (get fields :review/process-run-id)
     :review/process-run-root (get fields :review/process-run-root)
     :review/recorded-evidence (get fields :review/recorded-evidence)
     :review/metadata
@@ -237,10 +261,13 @@
    :attestation/claim
    {:attestation/id (get fields :attestation/id)
     :attestation/claim (get fields :attestation/claim)
+    :attestation/subject-id (get fields :attestation/subject-id)
     :attestation/subject-root (get fields :attestation/subject-root)
     :attestation/context-root (get fields :attestation/context-root)
     :attestation/evidence-roots
     (vector-or-empty (get fields :attestation/evidence-roots))
+    :attestation/process-run-id
+    (get fields :attestation/process-run-id)
     :attestation/process-run-root
     (get fields :attestation/process-run-root)
     :attestation/issuer-evidence
@@ -312,10 +339,19 @@
    :record/extensions :extension-map
 
    :workspace/id :stable-id
+   :workspace/root :record-root
    :workspace/kind :keyword
    :workspace/name :value
    :workspace/schema-root :schema-root
    :workspace/entrypoints :root-map
+   :workspace/participants :map
+   :workspace/status :keyword
+   :workspace/processes :record-map
+   :workspace/artifacts :record-map
+   :workspace/artifact-versions :record-map
+   :workspace/reviews :record-map
+   :workspace/timeline-entries :record-map
+   :workspace/latest-entry-id :stable-id
    :workspace/metadata :map
 
    :process/id :stable-id
@@ -330,6 +366,7 @@
 
    :run/id :stable-id
    :run/workspace-id :stable-id
+   :run/workspace-root :record-root
    :run/definition-root :record-root
    :run/status :keyword
    :run/input-roots :root-vector
@@ -343,6 +380,7 @@
 
    :step/id :stable-id
    :step/run-id :stable-id
+   :step/run-root :record-root
    :step/definition-root :record-root
    :step/status :keyword
    :step/input-roots :root-vector
@@ -355,7 +393,9 @@
 
    :checkpoint/id :stable-id
    :checkpoint/run-id :stable-id
+   :checkpoint/run-root :record-root
    :checkpoint/step-id :stable-id
+   :checkpoint/step-root :record-root
    :checkpoint/state-root :value-root
    :checkpoint/output-roots :root-vector
    :checkpoint/receipt-root :receipt-root
@@ -364,12 +404,14 @@
 
    :artifact/id :stable-id
    :artifact/workspace-id :stable-id
+   :artifact/workspace-root :record-root
    :artifact/kind :keyword
    :artifact/schema-root :schema-root
    :artifact/metadata :map
    :artifact/content-root :content-root
    :artifact/previous-content-root :content-root
    :artifact/source-roots :root-vector
+   :artifact/producer-run-id :stable-id
    :artifact/producer-run-root :record-root
    :artifact/published-evidence :record-value
 
@@ -401,15 +443,18 @@
    :review/subject-root :record-root
    :review/decision :keyword
    :review/evidence-roots :root-vector
+   :review/process-run-id :stable-id
    :review/process-run-root :record-root
    :review/recorded-evidence :record-value
    :review/metadata :map
 
    :attestation/id :stable-id
    :attestation/claim :keyword
+   :attestation/subject-id :stable-id
    :attestation/subject-root :record-root
    :attestation/context-root :record-root
    :attestation/evidence-roots :root-vector
+   :attestation/process-run-id :stable-id
    :attestation/process-run-root :record-root
    :attestation/issuer-evidence :record-value
    :attestation/scope :value
@@ -450,7 +495,12 @@
     :schema/required [:workspace/id :workspace/kind]
     :schema/known-fields
     [:workspace/id :workspace/kind :workspace/name
-     :workspace/schema-root :workspace/entrypoints :workspace/metadata]
+     :workspace/schema-root :workspace/entrypoints
+     :workspace/participants :workspace/status
+     :workspace/processes :workspace/artifacts
+     :workspace/artifact-versions :workspace/reviews
+     :workspace/timeline-entries :workspace/latest-entry-id
+     :workspace/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
@@ -472,9 +522,10 @@
     :schema/version 1
     :schema/required [:run/id :run/definition-root :run/status]
     :schema/known-fields
-    [:run/id :run/workspace-id :run/definition-root :run/status
-     :run/input-roots :run/parent-references :run/output-roots
-     :run/result-root :run/receipt-root :run/started-evidence
+    [:run/id :run/workspace-id :run/workspace-root
+     :run/definition-root :run/status :run/input-roots
+     :run/parent-references :run/output-roots :run/result-root
+     :run/receipt-root :run/started-evidence
      :run/completed-evidence :run/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
@@ -485,9 +536,9 @@
     :schema/required
     [:step/id :step/run-id :step/definition-root :step/status]
     :schema/known-fields
-    [:step/id :step/run-id :step/definition-root :step/status
-     :step/input-roots :step/output-roots :step/result-root
-     :step/receipt-root :step/started-evidence
+    [:step/id :step/run-id :step/run-root :step/definition-root
+     :step/status :step/input-roots :step/output-roots
+     :step/result-root :step/receipt-root :step/started-evidence
      :step/completed-evidence :step/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
@@ -498,7 +549,8 @@
     :schema/required
     [:checkpoint/id :checkpoint/run-id :checkpoint/state-root]
     :schema/known-fields
-    [:checkpoint/id :checkpoint/run-id :checkpoint/step-id
+    [:checkpoint/id :checkpoint/run-id :checkpoint/run-root
+     :checkpoint/step-id :checkpoint/step-root
      :checkpoint/state-root :checkpoint/output-roots
      :checkpoint/receipt-root :checkpoint/evidence
      :checkpoint/metadata]
@@ -511,8 +563,8 @@
     :schema/required
     [:artifact/id :artifact/workspace-id :artifact/kind]
     :schema/known-fields
-    [:artifact/id :artifact/workspace-id :artifact/kind
-     :artifact/schema-root :artifact/metadata]
+    [:artifact/id :artifact/workspace-id :artifact/workspace-root
+     :artifact/kind :artifact/schema-root :artifact/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
@@ -523,8 +575,9 @@
     :schema/known-fields
     [:artifact/id :artifact/kind :artifact/content-root
      :artifact/previous-content-root :artifact/source-roots
-     :artifact/producer-run-root :artifact/schema-root
-     :artifact/metadata :artifact/published-evidence]
+     :artifact/producer-run-id :artifact/producer-run-root
+     :artifact/schema-root :artifact/metadata
+     :artifact/published-evidence]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
@@ -557,10 +610,11 @@
     :schema/required
     [:workspace/id :commit/parent-roots :commit/state-root]
     :schema/known-fields
-    [:workspace/id :commit/parent-roots :commit/state-root
-     :commit/operation-root :commit/merge-base-root
-     :commit/merge-policy-root :commit/author-evidence
-     :commit/execution-provenance :commit/metadata]
+    [:workspace/id :workspace/root :commit/parent-roots
+     :commit/state-root :commit/operation-root
+     :commit/merge-base-root :commit/merge-policy-root
+     :commit/author-evidence :commit/execution-provenance
+     :commit/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
@@ -573,8 +627,8 @@
     :schema/known-fields
     [:review/id :review/subject-id :review/subject-root
      :review/decision :review/evidence-roots
-     :review/process-run-root :review/recorded-evidence
-     :review/metadata]
+     :review/process-run-id :review/process-run-root
+     :review/recorded-evidence :review/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
@@ -585,13 +639,13 @@
     [:attestation/id :attestation/claim
      :attestation/subject-root :attestation/issuer-evidence]
     :schema/known-fields
-    [:attestation/id :attestation/claim
+    [:attestation/id :attestation/claim :attestation/subject-id
      :attestation/subject-root :attestation/context-root
-     :attestation/evidence-roots :attestation/process-run-root
-     :attestation/issuer-evidence :attestation/scope
-     :attestation/audience :attestation/valid-from
-     :attestation/valid-until :attestation/revokes-root
-     :attestation/metadata]
+     :attestation/evidence-roots :attestation/process-run-id
+     :attestation/process-run-root :attestation/issuer-evidence
+     :attestation/scope :attestation/audience
+     :attestation/valid-from :attestation/valid-until
+     :attestation/revokes-root :attestation/metadata]
     :schema/unknown-fields :preserve
     :schema/extensions :namespaced-map}
 
