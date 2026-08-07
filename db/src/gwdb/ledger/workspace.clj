@@ -76,7 +76,7 @@
         (-/field i-record-root "record/version")]
     (return
      (and [v-version-root :is-not-null]
-          (== (cell/cell-type-tag v-version-root) 3)
+          (== (cell/cell-type-tag v-version-root) 2)
           (== (value/integer-bigint v-version-root) 1)))))
 
 (defn.pg ^{:- [:bytea]}
@@ -249,6 +249,118 @@
                   i-parent-vector-root (+ i-position 1) i-count))))))
 
 (defn.pg ^{:- [:boolean]}
+  workspace-commit-root-seen-at
+  "Checks a deterministic JSONB commit-root list."
+  {:added "0.11"}
+  [:jsonb i-roots :bytea i-root :integer i-position :integer i-count]
+  (cond (>= i-position i-count)
+        (return false)
+
+        :else
+        (let [(:bytea v-current)
+              (:bytea
+               (:->> (:-> i-roots i-position) "commit_root"))]
+          (cond (== v-current i-root)
+                (return true)
+
+                :else
+                (return
+                 (-/workspace-commit-root-seen-at
+                  i-roots i-root (+ i-position 1) i-count))))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-commit-root-tail
+  "Copies a deterministic JSONB commit-root suffix."
+  {:added "0.11"}
+  [:jsonb i-roots :integer i-position :integer i-count :jsonb i-out]
+  (cond (>= i-position i-count)
+        (return i-out)
+
+        :else
+        (let [(:jsonb v-root) (:-> i-roots i-position)
+              (:jsonb v-next)
+              (|| i-out (pg/jsonb-build-array v-root))]
+          (return
+           (-/workspace-commit-root-tail
+            i-roots (+ i-position 1) i-count v-next)))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-commit-parent-entries-at
+  "Builds ordered parent-root entries for deterministic traversal."
+  {:added "0.11"}
+  [:bytea i-commit-root
+   :integer i-position
+   :integer i-count
+   :jsonb i-out]
+  (cond (>= i-position i-count)
+        (return i-out)
+
+        :else
+        (let [(:bytea v-parent-root)
+              (-/workspace-commit-parent-root
+               i-commit-root i-position)
+              (:jsonb v-entry)
+              (pg/jsonb-build-object
+               "commit_root" v-parent-root)
+              (:jsonb v-next)
+              (|| i-out (pg/jsonb-build-array v-entry))]
+          (return
+           (-/workspace-commit-parent-entries-at
+            i-commit-root (+ i-position 1) i-count v-next)))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-commit-parent-entries
+  {:added "0.11"}
+  [:bytea i-commit-root]
+  (return
+   (-/workspace-commit-parent-entries-at
+    i-commit-root 0
+    (-/workspace-commit-parent-count i-commit-root)
+    (pg/jsonb-build-array))))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-commit-ancestor-at
+  "Walks one pending-root queue without mutually recursive functions."
+  {:added "0.11"}
+  [:bytea i-ancestor-root :jsonb i-pending :jsonb i-seen]
+  (let [(:integer v-pending-count)
+        (pg/jsonb-array-length i-pending)]
+    (cond (== v-pending-count 0)
+          (return false)
+
+          :else
+          (let [(:jsonb v-first) (:-> i-pending 0)
+                (:bytea v-root)
+                (:bytea (:->> v-first "commit_root"))
+                (:integer v-seen-count)
+                (pg/jsonb-array-length i-seen)
+                (:boolean v-seen)
+                (-/workspace-commit-root-seen-at
+                 i-seen v-root 0 v-seen-count)
+                (:jsonb v-tail)
+                (-/workspace-commit-root-tail
+                 i-pending 1 v-pending-count
+                 (pg/jsonb-build-array))
+                (:jsonb v-parents)
+                (-/workspace-commit-parent-entries v-root)
+                (:jsonb v-next-pending)
+                (pg/case v-seen v-tail
+                         :else (|| v-parents v-tail))
+                (:jsonb v-next-seen)
+                (pg/case v-seen i-seen
+                         :else
+                         (|| i-seen
+                             (pg/jsonb-build-array v-first)))]
+            (cond (== i-ancestor-root v-root)
+                  (return true)
+
+                  :else
+                  (return
+                   (-/workspace-commit-ancestor-at
+                    i-ancestor-root
+                    v-next-pending v-next-seen)))))))
+
+(defn.pg ^{:- [:boolean]}
   workspace-commit-ancestor
   "Checks ancestry in the verified parent-before-child projection."
   {:added "0.11"}
@@ -262,30 +374,11 @@
         :else
         (return
          (-/workspace-commit-ancestor-at
-          i-ancestor-root i-descendant-root 0
-          (-/workspace-commit-parent-count i-descendant-root)))))
-
-(defn.pg ^{:- [:boolean]}
-  workspace-commit-ancestor-at
-  {:added "0.11"}
-  [:bytea i-ancestor-root
-   :bytea i-descendant-root
-   :integer i-position
-   :integer i-count]
-  (cond (>= i-position i-count)
-        (return false)
-
-        :else
-        (let [(:bytea v-parent-root)
-              (-/workspace-commit-parent-root
-               i-descendant-root i-position)]
-          (return
-           (or (== i-ancestor-root v-parent-root)
-               (-/workspace-commit-ancestor
-                i-ancestor-root v-parent-root)
-               (-/workspace-commit-ancestor-at
-                i-ancestor-root i-descendant-root
-                (+ i-position 1) i-count))))))
+          i-ancestor-root
+          (pg/jsonb-build-array
+           (pg/jsonb-build-object
+            "commit_root" i-descendant-root))
+          (pg/jsonb-build-array)))))
 
 (defn.pg ^{:- [:boolean]}
   merge-base-valid-at
@@ -416,6 +509,19 @@
            (+ i-position 1) i-count)))))
 
 (defn.pg ^{:- [:boolean]}
+  optional-root-equal
+  "Compares nullable roots with SQL NULL-safe semantics."
+  {:added "0.11"}
+  [:bytea i-left :bytea i-right]
+  (return
+   (pg/case [i-left :is-null]
+            [i-right :is-null]
+            [i-right :is-null]
+            false
+            :else
+            (== i-left i-right))))
+
+(defn.pg ^{:- [:boolean]}
   workspace-commit-valid
   "Verifies a projection against its immutable canonical map and parents."
   {:added "0.11"}
@@ -431,19 +537,24 @@
        (and [(-/workspace-commit-error i-commit-root) :is-null]
             (== (:bytea (:->> o-row "workspace_id_root"))
                 (-/field i-commit-root "workspace/id"))
-            (== (:bytea (:->> o-row "workspace_root"))
+            (-/optional-root-equal
+                (:bytea (:->> o-row "workspace_root"))
                 (-/optional-field i-commit-root "workspace/root"))
             (== (:bytea (:->> o-row "state_root"))
                 (-/field i-commit-root "commit/state-root"))
-            (== (:bytea (:->> o-row "operation_root"))
+            (-/optional-root-equal
+                (:bytea (:->> o-row "operation_root"))
                 (-/optional-field i-commit-root "commit/operation-root"))
-            (== (:bytea (:->> o-row "merge_base_root"))
+            (-/optional-root-equal
+                (:bytea (:->> o-row "merge_base_root"))
                 (-/optional-field i-commit-root "commit/merge-base-root"))
-            (== (:bytea (:->> o-row "merge_policy_root"))
+            (-/optional-root-equal
+                (:bytea (:->> o-row "merge_policy_root"))
                 (-/optional-field i-commit-root "commit/merge-policy-root"))
             (== (:bytea (:->> o-row "author_evidence_root"))
                 (-/field i-commit-root "commit/author-evidence"))
-            (== (:bytea (:->> o-row "execution_provenance_root"))
+            (-/optional-root-equal
+                (:bytea (:->> o-row "execution_provenance_root"))
                 (-/optional-field
                  i-commit-root "commit/execution-provenance"))
             (== (:integer (:->> o-row "parent_count"))
@@ -452,6 +563,31 @@
                 v-parent-count)
             (-/projection-parents-valid-at
              i-commit-root v-parent-vector-root 0 v-parent-count))))))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-commit-parent-import-at
+  {:added "0.11"}
+  [:bytea i-commit-root
+   :bytea i-parent-vector-root
+   :integer i-position
+   :integer i-count]
+  (cond (>= i-position i-count)
+        (return true)
+
+        :else
+        (let [(:bytea v-parent-root)
+              (cell/cell-ref-child
+               i-parent-vector-root i-position "element")
+              o-insert
+              (pg/t:insert
+               -/WorkspaceCommitParent
+               {:commit-root i-commit-root
+                :position i-position
+                :parent-root v-parent-root})]
+          (return
+           (-/workspace-commit-parent-import-at
+            i-commit-root i-parent-vector-root
+            (+ i-position 1) i-count)))))
 
 (defn.pg ^{:- [:bytea]}
   workspace-commit-import
@@ -503,31 +639,6 @@
           _ (-/workspace-commit-parent-import-at
              i-commit-root v-parent-vector-root 0 v-parent-count)]
       (return i-commit-root))))
-
-(defn.pg ^{:- [:boolean]}
-  workspace-commit-parent-import-at
-  {:added "0.11"}
-  [:bytea i-commit-root
-   :bytea i-parent-vector-root
-   :integer i-position
-   :integer i-count]
-  (cond (>= i-position i-count)
-        (return true)
-
-        :else
-        (let [(:bytea v-parent-root)
-              (cell/cell-ref-child
-               i-parent-vector-root i-position "element")
-              o-insert
-              (pg/t:insert
-               -/WorkspaceCommitParent
-               {:commit-root i-commit-root
-                :position i-position
-                :parent-root v-parent-root})]
-          (return
-           (-/workspace-commit-parent-import-at
-            i-commit-root i-parent-vector-root
-            (+ i-position 1) i-count)))))
 
 (defn.pg ^{:- [:bytea]}
   workspace-commit-put
