@@ -51,6 +51,22 @@
    :review-roots-root {:type :bytea :required true}
    :recorded-at       {:type :long :required true}])
 
+(deftype.pg WorkspaceMainSelection
+  "Append-only binding proving that one acceptance caused a successful main CAS."
+  {:added "0.17"}
+  [:acceptance-root   {:type :bytea :primary true}
+   :workspace-id-root {:type :bytea :required true}
+   :authority-root    {:type :bytea :required true}
+   :expected-root     {:type :bytea}
+   :candidate-root    {:type :bytea :required true}
+   :policy-root       {:type :bytea :required true}
+   :ref-version       {:type :long :required true}
+   :network           {:type :text :required true}
+   :transaction-root  {:type :bytea :required true}
+   :receipt-root      {:type :bytea :required true}
+   :block-root        {:type :bytea :required true}
+   :recorded-at       {:type :long :required true}])
+
 (defn.pg ^{:- [:text]}
   main-scope
   {:added "0.16"}
@@ -505,6 +521,162 @@
                  v-workspace-id-root v-authority-root
                  v-expected-root v-candidate-root v-policy-root
                  v-review-roots-root v-recorded-at)))))))
+
+(defn.pg workspace-main-selection-row
+  {:added "0.17"}
+  [:bytea i-acceptance-root]
+  (return
+   (pg/t:get -/WorkspaceMainSelection
+             {:where {:acceptance-root i-acceptance-root}})))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-main-selection-valid
+  "Verifies the append-only CAS, transaction, receipt and block binding."
+  {:added "0.17"}
+  [:bytea i-acceptance-root]
+  (let [o-selection (-/workspace-main-selection-row i-acceptance-root)
+        o-acceptance
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (-/workspace-main-acceptance-row i-acceptance-root))
+        (:bytea v-selection-expected-root)
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-selection "expected_root")))
+        (:bytea v-acceptance-expected-root)
+        (pg/case [o-acceptance :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-acceptance "expected_root")))
+        o-transaction
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (transaction/transaction-get
+                  (:bytea (:->> o-selection "transaction_root"))))
+        o-receipt
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (transaction/transaction-receipt-get
+                  (:bytea (:->> o-selection "receipt_root"))))
+        o-block
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (block/block-get
+                  (:bytea (:->> o-selection "block_root"))))
+        o-binding
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (pg/t:get
+                  block/BlockTransaction
+                  {:where
+                   {:block-root
+                    (:bytea (:->> o-selection "block_root"))
+                    :transaction-root
+                    (:bytea (:->> o-selection "transaction_root"))
+                    :receipt-root
+                    (:bytea (:->> o-selection "receipt_root"))}}))
+        (:bytea v-operation-root)
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (op/constant i-acceptance-root))]
+    (return
+     (and [o-selection :is-not-null]
+          [o-acceptance :is-not-null]
+          [o-transaction :is-not-null]
+          [o-receipt :is-not-null]
+          [o-block :is-not-null]
+          [o-binding :is-not-null]
+          (-/workspace-main-acceptance-valid i-acceptance-root)
+          (== (:bytea (:->> o-selection "workspace_id_root"))
+              (:bytea (:->> o-acceptance "workspace_id_root")))
+          (== (:bytea (:->> o-selection "authority_root"))
+              (:bytea (:->> o-acceptance "authority_root")))
+          (or (and [v-selection-expected-root :is-null]
+                   [v-acceptance-expected-root :is-null])
+              (and [v-selection-expected-root :is-not-null]
+                   [v-acceptance-expected-root :is-not-null]
+                   (== v-selection-expected-root
+                       v-acceptance-expected-root)))
+          (== (:bytea (:->> o-selection "candidate_root"))
+              (:bytea (:->> o-acceptance "candidate_root")))
+          (== (:bytea (:->> o-selection "policy_root"))
+              (:bytea (:->> o-acceptance "policy_root")))
+          (== (:bigint (:->> o-selection "recorded_at"))
+              (:bigint (:->> o-acceptance "recorded_at")))
+          (>= (:bigint (:->> o-selection "ref_version")) 1)
+          (== (:text (:->> o-transaction "network"))
+              (:text (:->> o-selection "network")))
+          (== (:bytea (:->> o-transaction "origin"))
+              (:bytea (:->> o-selection "authority_root")))
+          (== (:bytea (:->> o-transaction "op_root"))
+              v-operation-root)
+          (== (:bytea (:->> o-receipt "transaction_root"))
+              (:bytea (:->> o-selection "transaction_root")))
+          (== (:text (:->> o-receipt "status")) "ok")
+          (== (:bytea (:->> o-receipt "result_root"))
+              i-acceptance-root)
+          (== (:bytea (:->> o-receipt "previous_state_root"))
+              (:bytea (:->> o-block "previous_state_root")))
+          (== (:bytea (:->> o-receipt "state_root"))
+              (:bytea (:->> o-block "state_root")))
+          (== (:text (:->> o-block "network"))
+              (:text (:->> o-selection "network")))
+          (== (:bigint (:->> o-block "timestamp"))
+              (:bigint (:->> o-selection "recorded_at")))
+          (block/block-valid
+           (:bytea (:->> o-selection "block_root")))
+          (transaction/transaction-signed-valid
+           (:bytea (:->> o-selection "transaction_root"))
+           (:text (:->> o-selection "network"))
+           (:bytea (:->> o-block "previous_state_root")))))))
+
+(defn.pg ^{:- [:bytea]}
+  workspace-main-selection-put
+  "Records the exact successful main CAS and its canonical ledger evidence."
+  {:added "0.17"}
+  [:text i-network
+   :bytea i-acceptance-root
+   :bytea i-workspace-id-root
+   :bytea i-authority-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bigint i-ref-version
+   :bytea i-transaction-root
+   :bytea i-receipt-root
+   :bytea i-block-root
+   :bigint i-recorded-at]
+  (let [o-existing (-/workspace-main-selection-row i-acceptance-root)]
+    (when [o-existing :is-not-null]
+      (pg/assert (-/workspace-main-selection-valid i-acceptance-root)
+                 [:ledger/workspace-main-selection-conflict])
+      (return i-acceptance-root))
+    (let [o-insert
+          (pg/t:insert
+           -/WorkspaceMainSelection
+           {:acceptance-root i-acceptance-root
+            :workspace-id-root i-workspace-id-root
+            :authority-root i-authority-root
+            :expected-root i-expected-root
+            :candidate-root i-candidate-root
+            :policy-root i-policy-root
+            :ref-version i-ref-version
+            :network i-network
+            :transaction-root i-transaction-root
+            :receipt-root i-receipt-root
+            :block-root i-block-root
+            :recorded-at i-recorded-at})
+          _ (pg/assert (-/workspace-main-selection-valid i-acceptance-root)
+                       [:ledger/invalid-workspace-main-selection])]
+      (return i-acceptance-root))))
+
 
 (defn.pg ^{:- [:bytea]}
   workspace-main-acceptance-import
@@ -969,7 +1141,15 @@
             (pg/encode v-transaction-root "hex")))
           o-bound
           (block/block-transaction-bind
-           v-block-root 0 v-receipt-root)]
+           v-block-root 0 v-receipt-root)
+          (:bytea v-selection-root)
+          (-/workspace-main-selection-put
+           i-network v-acceptance-root
+           i-workspace-id-root v-address-root i-expected-root
+           i-candidate-root i-policy-root
+           (:bigint (:->> o-cas "version"))
+           v-transaction-root v-receipt-root v-block-root
+           i-recorded-at)]
       (return
        (pg/jsonb-build-object
         "status" "ok"
