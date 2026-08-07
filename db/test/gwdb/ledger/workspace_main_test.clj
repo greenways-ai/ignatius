@@ -325,7 +325,7 @@
         reversed-reviewers
         (try
           (workspace-main/workspace-main-signing-request
-           network alice-public-key workspace-id-root c1 c1
+           network alice-public-key workspace-id-root c0 c1
            policy-root reversed-review-roots-root 13 20)
           (catch Throwable _ :rejected))
         replayed

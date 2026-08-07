@@ -365,6 +365,65 @@ export type WorkspaceMainPolicySubmission =
       policy_root: LedgerRoot;
     };
 
+export interface WorkspaceMainAcceptanceSigningRequest {
+  address: LedgerRoot;
+  sequence: number;
+  workspace_id_root: LedgerRoot;
+  scope: string;
+  name: \"main\";
+  expected_root?: LedgerRoot;
+  candidate_root: LedgerRoot;
+  policy_root: LedgerRoot;
+  review_roots_root: LedgerRoot;
+  recorded_at: number;
+  policy: \"main-acceptance-v1\";
+  acceptance_root: LedgerRoot;
+  operation_root: LedgerRoot;
+  signing_payload: string;
+}
+
+export type WorkspaceMainAcceptanceSubmission =
+  | {
+      status: \"ok\";
+      address: LedgerRoot;
+      sequence: number;
+      workspace_id_root: LedgerRoot;
+      scope: string;
+      name: \"main\";
+      expected_root?: LedgerRoot;
+      candidate_root: LedgerRoot;
+      policy_root: LedgerRoot;
+      review_roots_root: LedgerRoot;
+      recorded_at: number;
+      policy: \"main-acceptance-v1\";
+      acceptance_root: LedgerRoot;
+      ref_version: number;
+      transaction_root: LedgerRoot;
+      receipt_root: LedgerRoot;
+      result_root: LedgerRoot;
+      state_root: LedgerRoot;
+      block_root: LedgerRoot;
+    }
+  | {
+      status: \"conflict\";
+      error: \"storage/ref-conflict\";
+      address: LedgerRoot;
+      sequence: number;
+      workspace_id_root: LedgerRoot;
+      scope: string;
+      name: \"main\";
+      expected_root?: LedgerRoot;
+      actual_root?: LedgerRoot;
+      desired_root: LedgerRoot;
+      version: number;
+      candidate_root: LedgerRoot;
+      policy_root: LedgerRoot;
+      review_roots_root: LedgerRoot;
+      recorded_at: number;
+      policy: \"main-acceptance-v1\";
+      acceptance_root: LedgerRoot;
+    };
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;
@@ -393,6 +452,8 @@ export interface LedgerSignedApi {
   submitWorkspaceReview(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, candidateRoot: LedgerRoot, expectedReviewRoot: LedgerRoot | undefined, decision: WorkspaceReviewDecision, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceReviewSubmission>;
   workspaceMainPolicySigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, reviewerRootsRoot: LedgerRoot, recordedAt: number, costLimit?: number): Promise<WorkspaceMainPolicySigningRequest>;
   submitWorkspaceMainPolicy(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, reviewerRootsRoot: LedgerRoot, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceMainPolicySubmission>;
+  workspaceMainSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, candidateRoot: LedgerRoot, policyRoot: LedgerRoot, reviewRootsRoot: LedgerRoot, recordedAt: number, costLimit?: number): Promise<WorkspaceMainAcceptanceSigningRequest>;
+  submitWorkspaceMain(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, candidateRoot: LedgerRoot, policyRoot: LedgerRoot, reviewRootsRoot: LedgerRoot, recordedAt: number, signature: string, costLimit?: number): Promise<WorkspaceMainAcceptanceSubmission>;
 }
 ")
 
