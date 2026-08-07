@@ -1,0 +1,83 @@
+(ns ignatius.hpt1-workload-test
+  (:require [std.lib.test :as test]
+            [ignatius.hpt1-workload :as workload]))
+
+(def payload-baseline
+  (reduce
+   (fn [out entry-count]
+     (conj out
+           (workload/flat-map-payload-byte-count entry-count)))
+   []
+   workload/benchmark-entry-counts))
+
+(def ref-baseline
+  (reduce
+   (fn [out entry-count]
+     (conj out (workload/flat-map-ref-count entry-count)))
+   []
+   workload/benchmark-entry-counts))
+
+(def pressure-boundaries
+  (reduce
+   (fn [out entry-count]
+     (conj out (workload/flat-map-pressure-tier entry-count)))
+   []
+   [64 65 255 256]))
+
+(def workload-ids
+  (reduce
+   (fn [out item]
+     (conj out (get item :workload/id)))
+   []
+   workload/workload-corpus))
+
+(def first-baseline
+  (get workload/default-flat-map-baselines 0))
+
+(def results
+  [(test/check
+    "flat HCV1 payload sizes are exact"
+    payload-baseline
+    [2053 8197 32774 131079 524295 2097160 8388616])
+   (test/check
+    "each flat map entry derives one key and one value ref"
+    ref-baseline
+    [32 128 512 2048 8192 32768 131072])
+   (test/check
+    "pressure tiers remain explicit evidence bands"
+    pressure-boundaries
+    [:hcv1/preferred
+     :benchmark/required
+     :benchmark/required
+     :hpt1/candidate])
+   (test/check
+    "the default baseline covers every benchmark scale"
+    (count workload/default-flat-map-baselines)
+    7)
+   (test/check
+    "one inserted key rebuilds one additional key/value pair"
+    [(workload/flat-map-existing-assoc-ref-writes 64)
+     (workload/flat-map-new-assoc-ref-writes 64)]
+    [128 130])
+   (test/check
+    "baseline values retain exact structural pressure"
+    [(get first-baseline :baseline/entry-count)
+     (get first-baseline :baseline/payload-byte-count)
+     (get first-baseline :baseline/derived-ref-count)
+     (get first-baseline :baseline/worst-get-comparisons)]
+    [16 2053 32 16])
+   (test/check
+    "the initial corpus spans scene, DOM, Hara and process indexes"
+    workload-ids
+    [:scene/entity-index
+     :dom/node-index
+     :hara/namespace-bindings
+     :process/catalog])
+   (test/check
+    "diff and merge are mandatory benchmark scenarios"
+    [(get workload/benchmark-scenarios :diff)
+     (get workload/benchmark-scenarios :merge)]
+    [[:same-root :one-change :one-percent]
+     [:disjoint :same-key-conflict]])])
+
+(test/print-results results)
