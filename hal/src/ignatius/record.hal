@@ -1,0 +1,732 @@
+(ns ignatius.record)
+
+(def record-format-version 1)
+(def unknown-fields-policy :preserve)
+(def extension-policy :namespaced-map)
+
+(def reserved-event-fields
+  [:signer :transaction :timestamp :previous-head :contract :template])
+
+(defn value-or
+  [value fallback]
+  (if (= nil value)
+    fallback
+    value))
+
+(defn map-or-empty
+  [value]
+  (value-or value {}))
+
+(defn vector-or-empty
+  [value]
+  (value-or value []))
+
+(defn record-envelope
+  "Adds the canonical record envelope. Writers emit every known v1 field and
+  place application data beneath :record/extensions. Generic readers preserve
+  unknown fields because they validate and return the supplied value unchanged."
+  [record-type fields]
+  (assoc
+   (assoc
+    (assoc fields :record/type record-type)
+    :record/version record-format-version)
+   :record/extensions
+   (map-or-empty (get fields :record/extensions))))
+
+(defn workspace-build
+  [fields]
+  (record-envelope
+   :workspace/build
+   {:workspace/id (get fields :workspace/id)
+    :workspace/kind (get fields :workspace/kind)
+    :workspace/name (get fields :workspace/name)
+    :workspace/schema-root (get fields :workspace/schema-root)
+    :workspace/entrypoints
+    (map-or-empty (get fields :workspace/entrypoints))
+    :workspace/participants
+    (map-or-empty (get fields :workspace/participants))
+    :workspace/status
+    (value-or (get fields :workspace/status) :active)
+    :workspace/processes
+    (map-or-empty (get fields :workspace/processes))
+    :workspace/artifacts
+    (map-or-empty (get fields :workspace/artifacts))
+    :workspace/artifact-versions
+    (map-or-empty (get fields :workspace/artifact-versions))
+    :workspace/reviews
+    (map-or-empty (get fields :workspace/reviews))
+    :workspace/timeline-entries
+    (map-or-empty (get fields :workspace/timeline-entries))
+    :workspace/latest-entry-id
+    (get fields :workspace/latest-entry-id)
+    :workspace/metadata
+    (map-or-empty (get fields :workspace/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn process-definition
+  [fields]
+  (record-envelope
+   :process/definition
+   {:process/id (get fields :process/id)
+    :process/kind (get fields :process/kind)
+    :process/operation-root (get fields :process/operation-root)
+    :process/input-schema-root (get fields :process/input-schema-root)
+    :process/output-schema-root (get fields :process/output-schema-root)
+    :process/config-root (get fields :process/config-root)
+    :process/dependency-roots
+    (vector-or-empty (get fields :process/dependency-roots))
+    :process/required-capability-roots
+    (vector-or-empty
+     (get fields :process/required-capability-roots))
+    :process/metadata
+    (map-or-empty (get fields :process/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn process-run
+  [fields]
+  (record-envelope
+   :process/run
+   {:run/id (get fields :run/id)
+    :run/workspace-id (get fields :run/workspace-id)
+    :run/workspace-root (get fields :run/workspace-root)
+    :run/definition-root (get fields :run/definition-root)
+    :run/status (get fields :run/status)
+    :run/input-roots
+    (vector-or-empty (get fields :run/input-roots))
+    :run/parent-references
+    (vector-or-empty (get fields :run/parent-references))
+    :run/output-roots
+    (vector-or-empty (get fields :run/output-roots))
+    :run/result-root (get fields :run/result-root)
+    :run/receipt-root (get fields :run/receipt-root)
+    :run/started-evidence (get fields :run/started-evidence)
+    :run/completed-evidence (get fields :run/completed-evidence)
+    :run/metadata
+    (map-or-empty (get fields :run/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn process-step
+  [fields]
+  (record-envelope
+   :process/step
+   {:step/id (get fields :step/id)
+    :step/run-id (get fields :step/run-id)
+    :step/run-root (get fields :step/run-root)
+    :step/definition-root (get fields :step/definition-root)
+    :step/status (get fields :step/status)
+    :step/input-roots
+    (vector-or-empty (get fields :step/input-roots))
+    :step/output-roots
+    (vector-or-empty (get fields :step/output-roots))
+    :step/result-root (get fields :step/result-root)
+    :step/receipt-root (get fields :step/receipt-root)
+    :step/started-evidence (get fields :step/started-evidence)
+    :step/completed-evidence (get fields :step/completed-evidence)
+    :step/metadata
+    (map-or-empty (get fields :step/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn process-checkpoint
+  [fields]
+  (record-envelope
+   :process/checkpoint
+   {:checkpoint/id (get fields :checkpoint/id)
+    :checkpoint/run-id (get fields :checkpoint/run-id)
+    :checkpoint/run-root (get fields :checkpoint/run-root)
+    :checkpoint/step-id (get fields :checkpoint/step-id)
+    :checkpoint/step-root (get fields :checkpoint/step-root)
+    :checkpoint/state-root (get fields :checkpoint/state-root)
+    :checkpoint/output-roots
+    (vector-or-empty (get fields :checkpoint/output-roots))
+    :checkpoint/receipt-root (get fields :checkpoint/receipt-root)
+    :checkpoint/evidence (get fields :checkpoint/evidence)
+    :checkpoint/metadata
+    (map-or-empty (get fields :checkpoint/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn artifact-identity
+  [fields]
+  (record-envelope
+   :artifact/identity
+   {:artifact/id (get fields :artifact/id)
+    :artifact/workspace-id (get fields :artifact/workspace-id)
+    :artifact/workspace-root (get fields :artifact/workspace-root)
+    :artifact/kind (get fields :artifact/kind)
+    :artifact/schema-root (get fields :artifact/schema-root)
+    :artifact/metadata
+    (map-or-empty (get fields :artifact/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn artifact-version
+  [fields]
+  (record-envelope
+   :artifact/version
+   {:artifact/id (get fields :artifact/id)
+    :artifact/kind (get fields :artifact/kind)
+    :artifact/content-root (get fields :artifact/content-root)
+    :artifact/previous-content-root
+    (get fields :artifact/previous-content-root)
+    :artifact/source-roots
+    (vector-or-empty (get fields :artifact/source-roots))
+    :artifact/producer-run-id (get fields :artifact/producer-run-id)
+    :artifact/producer-run-root (get fields :artifact/producer-run-root)
+    :artifact/schema-root (get fields :artifact/schema-root)
+    :artifact/metadata
+    (map-or-empty (get fields :artifact/metadata))
+    :artifact/published-evidence
+    (get fields :artifact/published-evidence)
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn logical-reference
+  "Represents a stable logical edge. A nil :reference/root resolves through a
+  selected index; a non-nil root pins one exact immutable version. Logical
+  cycles therefore remain possible while the storage graph stays acyclic."
+  [fields]
+  (record-envelope
+   :reference/logical
+   {:reference/scope-id (get fields :reference/scope-id)
+    :reference/kind (get fields :reference/kind)
+    :reference/id (get fields :reference/id)
+    :reference/root (get fields :reference/root)
+    :reference/metadata
+    (map-or-empty (get fields :reference/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn timeline-entry
+  [fields]
+  (record-envelope
+   :timeline/entry
+   {:timeline/id (get fields :timeline/id)
+    :timeline/previous-entry-id
+    (get fields :timeline/previous-entry-id)
+    :timeline/event (get fields :timeline/event)
+    :timeline/evidence (get fields :timeline/evidence)
+    :timeline/subject-reference
+    (get fields :timeline/subject-reference)
+    :timeline/sequence (get fields :timeline/sequence)
+    :timeline/metadata
+    (map-or-empty (get fields :timeline/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn workspace-commit-candidate
+  [fields]
+  (record-envelope
+   :workspace/commit-candidate
+   {:workspace/id (get fields :workspace/id)
+    :workspace/root (get fields :workspace/root)
+    :commit/parent-roots
+    (vector-or-empty (get fields :commit/parent-roots))
+    :commit/state-root (get fields :commit/state-root)
+    :commit/operation-root (get fields :commit/operation-root)
+    :commit/merge-base-root (get fields :commit/merge-base-root)
+    :commit/merge-policy-root (get fields :commit/merge-policy-root)
+    :commit/author-evidence (get fields :commit/author-evidence)
+    :commit/execution-provenance
+    (get fields :commit/execution-provenance)
+    :commit/metadata
+    (map-or-empty (get fields :commit/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn review-decision
+  [fields]
+  (record-envelope
+   :review/decision
+   {:review/id (get fields :review/id)
+    :review/subject-id (get fields :review/subject-id)
+    :review/subject-root (get fields :review/subject-root)
+    :review/decision (get fields :review/decision)
+    :review/evidence-roots
+    (vector-or-empty (get fields :review/evidence-roots))
+    :review/process-run-id (get fields :review/process-run-id)
+    :review/process-run-root (get fields :review/process-run-root)
+    :review/recorded-evidence (get fields :review/recorded-evidence)
+    :review/metadata
+    (map-or-empty (get fields :review/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn attestation-claim
+  [fields]
+  (record-envelope
+   :attestation/claim
+   {:attestation/id (get fields :attestation/id)
+    :attestation/claim (get fields :attestation/claim)
+    :attestation/subject-id (get fields :attestation/subject-id)
+    :attestation/subject-root (get fields :attestation/subject-root)
+    :attestation/context-root (get fields :attestation/context-root)
+    :attestation/evidence-roots
+    (vector-or-empty (get fields :attestation/evidence-roots))
+    :attestation/process-run-id
+    (get fields :attestation/process-run-id)
+    :attestation/process-run-root
+    (get fields :attestation/process-run-root)
+    :attestation/issuer-evidence
+    (get fields :attestation/issuer-evidence)
+    :attestation/scope (get fields :attestation/scope)
+    :attestation/audience (get fields :attestation/audience)
+    :attestation/valid-from (get fields :attestation/valid-from)
+    :attestation/valid-until (get fields :attestation/valid-until)
+    :attestation/revokes-root (get fields :attestation/revokes-root)
+    :attestation/metadata
+    (map-or-empty (get fields :attestation/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn execution-provenance
+  [fields]
+  (record-envelope
+   :execution/provenance
+   {:provenance/source-root (get fields :provenance/source-root)
+    :provenance/expanded-root (get fields :provenance/expanded-root)
+    :provenance/code-root (get fields :provenance/code-root)
+    :provenance/namespace-root (get fields :provenance/namespace-root)
+    :provenance/compiler-root (get fields :provenance/compiler-root)
+    :provenance/runtime-root (get fields :provenance/runtime-root)
+    :provenance/artifact-root (get fields :provenance/artifact-root)
+    :provenance/target (get fields :provenance/target)
+    :provenance/optimization (get fields :provenance/optimization)
+    :provenance/input-roots
+    (vector-or-empty (get fields :provenance/input-roots))
+    :provenance/output-roots
+    (vector-or-empty (get fields :provenance/output-roots))
+    :provenance/receipt-root (get fields :provenance/receipt-root)
+    :provenance/effects-root (get fields :provenance/effects-root)
+    :provenance/cost (get fields :provenance/cost)
+    :provenance/metadata
+    (map-or-empty (get fields :provenance/metadata))
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn ledger-evidence
+  [fields]
+  (record-envelope
+   :ledger/evidence
+   {:ledger/signer (get fields :ledger/signer)
+    :ledger/transaction-root (get fields :ledger/transaction-root)
+    :ledger/timestamp (get fields :ledger/timestamp)
+    :ledger/previous-head-root (get fields :ledger/previous-head-root)
+    :ledger/contract-root (get fields :ledger/contract-root)
+    :ledger/template-root (get fields :ledger/template-root)
+    :ledger/global-state-root (get fields :ledger/global-state-root)
+    :record/extensions
+    (map-or-empty (get fields :record/extensions))}))
+
+(defn ledger-evidence-from-event
+  "Copies only fields overwritten or supplied by the verified contract runtime."
+  [event]
+  (ledger-evidence
+   {:ledger/signer (get event :signer)
+    :ledger/transaction-root (get event :transaction)
+    :ledger/timestamp (get event :timestamp)
+    :ledger/previous-head-root (get event :previous-head)
+    :ledger/contract-root (get event :contract)
+    :ledger/template-root (get event :template)
+    :ledger/global-state-root nil}))
+
+(def field-kinds
+  {:record/type :record-type
+   :record/version :integer
+   :record/extensions :extension-map
+
+   :workspace/id :stable-id
+   :workspace/root :record-root
+   :workspace/kind :keyword
+   :workspace/name :value
+   :workspace/schema-root :schema-root
+   :workspace/entrypoints :root-map
+   :workspace/participants :map
+   :workspace/status :keyword
+   :workspace/processes :record-map
+   :workspace/artifacts :record-map
+   :workspace/artifact-versions :record-map
+   :workspace/reviews :record-map
+   :workspace/timeline-entries :record-map
+   :workspace/latest-entry-id :stable-id
+   :workspace/metadata :map
+
+   :process/id :stable-id
+   :process/kind :keyword
+   :process/operation-root :code-root
+   :process/input-schema-root :schema-root
+   :process/output-schema-root :schema-root
+   :process/config-root :value-root
+   :process/dependency-roots :root-vector
+   :process/required-capability-roots :record-root-vector
+   :process/metadata :map
+
+   :run/id :stable-id
+   :run/workspace-id :stable-id
+   :run/workspace-root :record-root
+   :run/definition-root :record-root
+   :run/status :keyword
+   :run/input-roots :root-vector
+   :run/parent-references :logical-reference-vector
+   :run/output-roots :root-vector
+   :run/result-root :value-root
+   :run/receipt-root :receipt-root
+   :run/started-evidence :record-value
+   :run/completed-evidence :record-value
+   :run/metadata :map
+
+   :step/id :stable-id
+   :step/run-id :stable-id
+   :step/run-root :record-root
+   :step/definition-root :record-root
+   :step/status :keyword
+   :step/input-roots :root-vector
+   :step/output-roots :root-vector
+   :step/result-root :value-root
+   :step/receipt-root :receipt-root
+   :step/started-evidence :record-value
+   :step/completed-evidence :record-value
+   :step/metadata :map
+
+   :checkpoint/id :stable-id
+   :checkpoint/run-id :stable-id
+   :checkpoint/run-root :record-root
+   :checkpoint/step-id :stable-id
+   :checkpoint/step-root :record-root
+   :checkpoint/state-root :value-root
+   :checkpoint/output-roots :root-vector
+   :checkpoint/receipt-root :receipt-root
+   :checkpoint/evidence :record-value
+   :checkpoint/metadata :map
+
+   :artifact/id :stable-id
+   :artifact/workspace-id :stable-id
+   :artifact/workspace-root :record-root
+   :artifact/kind :keyword
+   :artifact/schema-root :schema-root
+   :artifact/metadata :map
+   :artifact/content-root :content-root
+   :artifact/previous-content-root :content-root
+   :artifact/source-roots :root-vector
+   :artifact/producer-run-id :stable-id
+   :artifact/producer-run-root :record-root
+   :artifact/published-evidence :record-value
+
+   :reference/scope-id :stable-id
+   :reference/kind :keyword
+   :reference/id :stable-id
+   :reference/root :record-root
+   :reference/metadata :map
+
+   :timeline/id :stable-id
+   :timeline/previous-entry-id :stable-id
+   :timeline/event :record-value
+   :timeline/evidence :record-value
+   :timeline/subject-reference :logical-reference
+   :timeline/sequence :integer
+   :timeline/metadata :map
+
+   :commit/parent-roots :record-root-vector
+   :commit/state-root :value-root
+   :commit/operation-root :code-root
+   :commit/merge-base-root :record-root
+   :commit/merge-policy-root :code-root
+   :commit/author-evidence :record-value
+   :commit/execution-provenance :record-value
+   :commit/metadata :map
+
+   :review/id :stable-id
+   :review/subject-id :stable-id
+   :review/subject-root :record-root
+   :review/decision :keyword
+   :review/evidence-roots :root-vector
+   :review/process-run-id :stable-id
+   :review/process-run-root :record-root
+   :review/recorded-evidence :record-value
+   :review/metadata :map
+
+   :attestation/id :stable-id
+   :attestation/claim :keyword
+   :attestation/subject-id :stable-id
+   :attestation/subject-root :record-root
+   :attestation/context-root :record-root
+   :attestation/evidence-roots :root-vector
+   :attestation/process-run-id :stable-id
+   :attestation/process-run-root :record-root
+   :attestation/issuer-evidence :record-value
+   :attestation/scope :value
+   :attestation/audience :value
+   :attestation/valid-from :timestamp
+   :attestation/valid-until :timestamp
+   :attestation/revokes-root :record-root
+   :attestation/metadata :map
+
+   :provenance/source-root :source-root
+   :provenance/expanded-root :code-root
+   :provenance/code-root :code-root
+   :provenance/namespace-root :record-root
+   :provenance/compiler-root :record-root
+   :provenance/runtime-root :record-root
+   :provenance/artifact-root :artifact-root
+   :provenance/target :keyword
+   :provenance/optimization :keyword
+   :provenance/input-roots :root-vector
+   :provenance/output-roots :root-vector
+   :provenance/receipt-root :receipt-root
+   :provenance/effects-root :record-root
+   :provenance/cost :integer
+   :provenance/metadata :map
+
+   :ledger/signer :stable-id
+   :ledger/transaction-root :record-root
+   :ledger/timestamp :timestamp
+   :ledger/previous-head-root :record-root
+   :ledger/contract-root :record-root
+   :ledger/template-root :record-root
+   :ledger/global-state-root :value-root})
+
+(def schema-catalog
+  {:workspace/build
+   {:schema/record-type :workspace/build
+    :schema/version 1
+    :schema/required [:workspace/id :workspace/kind]
+    :schema/known-fields
+    [:workspace/id :workspace/kind :workspace/name
+     :workspace/schema-root :workspace/entrypoints
+     :workspace/participants :workspace/status
+     :workspace/processes :workspace/artifacts
+     :workspace/artifact-versions :workspace/reviews
+     :workspace/timeline-entries :workspace/latest-entry-id
+     :workspace/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :process/definition
+   {:schema/record-type :process/definition
+    :schema/version 1
+    :schema/required
+    [:process/id :process/kind :process/operation-root]
+    :schema/known-fields
+    [:process/id :process/kind :process/operation-root
+     :process/input-schema-root :process/output-schema-root
+     :process/config-root :process/dependency-roots
+     :process/required-capability-roots :process/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :process/run
+   {:schema/record-type :process/run
+    :schema/version 1
+    :schema/required [:run/id :run/definition-root :run/status]
+    :schema/known-fields
+    [:run/id :run/workspace-id :run/workspace-root
+     :run/definition-root :run/status :run/input-roots
+     :run/parent-references :run/output-roots :run/result-root
+     :run/receipt-root :run/started-evidence
+     :run/completed-evidence :run/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :process/step
+   {:schema/record-type :process/step
+    :schema/version 1
+    :schema/required
+    [:step/id :step/run-id :step/definition-root :step/status]
+    :schema/known-fields
+    [:step/id :step/run-id :step/run-root :step/definition-root
+     :step/status :step/input-roots :step/output-roots
+     :step/result-root :step/receipt-root :step/started-evidence
+     :step/completed-evidence :step/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :process/checkpoint
+   {:schema/record-type :process/checkpoint
+    :schema/version 1
+    :schema/required
+    [:checkpoint/id :checkpoint/run-id :checkpoint/state-root]
+    :schema/known-fields
+    [:checkpoint/id :checkpoint/run-id :checkpoint/run-root
+     :checkpoint/step-id :checkpoint/step-root
+     :checkpoint/state-root :checkpoint/output-roots
+     :checkpoint/receipt-root :checkpoint/evidence
+     :checkpoint/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :artifact/identity
+   {:schema/record-type :artifact/identity
+    :schema/version 1
+    :schema/required
+    [:artifact/id :artifact/workspace-id :artifact/kind]
+    :schema/known-fields
+    [:artifact/id :artifact/workspace-id :artifact/workspace-root
+     :artifact/kind :artifact/schema-root :artifact/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :artifact/version
+   {:schema/record-type :artifact/version
+    :schema/version 1
+    :schema/required [:artifact/id :artifact/content-root]
+    :schema/known-fields
+    [:artifact/id :artifact/kind :artifact/content-root
+     :artifact/previous-content-root :artifact/source-roots
+     :artifact/producer-run-id :artifact/producer-run-root
+     :artifact/schema-root :artifact/metadata
+     :artifact/published-evidence]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :reference/logical
+   {:schema/record-type :reference/logical
+    :schema/version 1
+    :schema/required
+    [:reference/scope-id :reference/kind :reference/id]
+    :schema/known-fields
+    [:reference/scope-id :reference/kind :reference/id
+     :reference/root :reference/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :timeline/entry
+   {:schema/record-type :timeline/entry
+    :schema/version 1
+    :schema/required
+    [:timeline/id :timeline/event :timeline/evidence]
+    :schema/known-fields
+    [:timeline/id :timeline/previous-entry-id :timeline/event
+     :timeline/evidence :timeline/subject-reference
+     :timeline/sequence :timeline/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :workspace/commit-candidate
+   {:schema/record-type :workspace/commit-candidate
+    :schema/version 1
+    :schema/required
+    [:workspace/id :commit/parent-roots :commit/state-root]
+    :schema/known-fields
+    [:workspace/id :workspace/root :commit/parent-roots
+     :commit/state-root :commit/operation-root
+     :commit/merge-base-root :commit/merge-policy-root
+     :commit/author-evidence :commit/execution-provenance
+     :commit/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :review/decision
+   {:schema/record-type :review/decision
+    :schema/version 1
+    :schema/required
+    [:review/id :review/subject-root :review/decision
+     :review/recorded-evidence]
+    :schema/known-fields
+    [:review/id :review/subject-id :review/subject-root
+     :review/decision :review/evidence-roots
+     :review/process-run-id :review/process-run-root
+     :review/recorded-evidence :review/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :attestation/claim
+   {:schema/record-type :attestation/claim
+    :schema/version 1
+    :schema/required
+    [:attestation/id :attestation/claim
+     :attestation/subject-root :attestation/issuer-evidence]
+    :schema/known-fields
+    [:attestation/id :attestation/claim :attestation/subject-id
+     :attestation/subject-root :attestation/context-root
+     :attestation/evidence-roots :attestation/process-run-id
+     :attestation/process-run-root :attestation/issuer-evidence
+     :attestation/scope :attestation/audience
+     :attestation/valid-from :attestation/valid-until
+     :attestation/revokes-root :attestation/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :execution/provenance
+   {:schema/record-type :execution/provenance
+    :schema/version 1
+    :schema/required
+    [:provenance/code-root :provenance/compiler-root
+     :provenance/runtime-root]
+    :schema/known-fields
+    [:provenance/source-root :provenance/expanded-root
+     :provenance/code-root :provenance/namespace-root
+     :provenance/compiler-root :provenance/runtime-root
+     :provenance/artifact-root :provenance/target
+     :provenance/optimization :provenance/input-roots
+     :provenance/output-roots :provenance/receipt-root
+     :provenance/effects-root :provenance/cost
+     :provenance/metadata]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}
+
+   :ledger/evidence
+   {:schema/record-type :ledger/evidence
+    :schema/version 1
+    :schema/required [:ledger/signer :ledger/timestamp]
+    :schema/known-fields
+    [:ledger/signer :ledger/transaction-root :ledger/timestamp
+     :ledger/previous-head-root :ledger/contract-root
+     :ledger/template-root :ledger/global-state-root]
+    :schema/unknown-fields :preserve
+    :schema/extensions :namespaced-map}})
+
+(defn schema
+  [record-type]
+  (get schema-catalog record-type))
+
+(defn field-kind
+  [field]
+  (get field-kinds field))
+
+(defn missing-required-fields
+  [value]
+  (let [descriptor (schema (get value :record/type))]
+    (if (= nil descriptor)
+      []
+      (reduce
+       (fn [missing field]
+         (if (= nil (get value field))
+           (conj missing field)
+           missing))
+       []
+       (get descriptor :schema/required)))))
+
+(defn record-valid?
+  [value]
+  (let [descriptor (schema (get value :record/type))]
+    (if (= nil descriptor)
+      false
+      (if (= record-format-version
+             (get value :record/version))
+        (= 0 (count (missing-required-fields value)))
+        false))))
+
+(defn validate-record
+  [value]
+  (let [descriptor (schema (get value :record/type))
+        version (get value :record/version)]
+    (cond
+      (= nil descriptor)
+      {:error :record/unsupported-type
+       :record/type (get value :record/type)}
+
+      (= false (= record-format-version version))
+      {:error :record/unsupported-version
+       :record/type (get value :record/type)
+       :record/version version}
+
+      :else
+      (let [missing (missing-required-fields value)]
+        (if (= 0 (count missing))
+          {:ok value}
+          {:error :record/missing-required-fields
+           :record/type (get value :record/type)
+           :fields missing})))))

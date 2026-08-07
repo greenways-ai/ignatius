@@ -1,0 +1,228 @@
+(ns ignatius.record-vectors
+  (:require [ignatius.record :as record]))
+
+(def ledger-evidence-v1
+  (record/ledger-evidence
+   {:ledger/signer "account/alice"
+    :ledger/transaction-root "transaction-root-17"
+    :ledger/timestamp 1700000000
+    :ledger/previous-head-root "timeline-head-16"
+    :ledger/contract-root "contract-root"
+    :ledger/template-root "timeline-template-root"
+    :ledger/global-state-root "global-state-root-48"}))
+
+(def workspace-v1
+  (record/workspace-build
+   {:workspace/id "world/orbital-station"
+    :workspace/kind :scene
+    :workspace/name "Orbital Station"
+    :workspace/schema-root "scene-schema-root"
+    :workspace/entrypoints
+    {:edit-reducer "edit-reducer-root"
+     :merge "merge-policy-root"}
+    :workspace/participants
+    {"account/alice" true
+     "account/bob" true}
+    :workspace/status :active
+    :workspace/metadata {:units :meters}}))
+
+(def process-definition-v1
+  (record/process-definition
+   {:process/id "process/lighting-pass"
+    :process/kind :ai/scene-transform
+    :process/operation-root "lighting-operation-root"
+    :process/input-schema-root "lighting-input-schema-root"
+    :process/output-schema-root "scene-output-schema-root"
+    :process/config-root "lighting-config-root"
+    :process/dependency-roots
+    ["scene-loader-definition-root"
+     "texture-loader-definition-root"]
+    :process/required-capability-roots
+    ["capability/world-read-root"
+     "capability/gpu-compute-root"]
+    :process/metadata {:model "model/studio-lighting"}}))
+
+(def parent-run-reference-v1
+  (record/logical-reference
+   {:reference/scope-id "world/orbital-station"
+    :reference/kind :process/run
+    :reference/id "run/layout-9"
+    :reference/root nil
+    :reference/metadata {}}))
+
+(def process-run-v1
+  (record/process-run
+   {:run/id "run/lighting-17"
+    :run/workspace-id "world/orbital-station"
+    :run/workspace-root nil
+    :run/definition-root "lighting-definition-root"
+    :run/status :complete
+    :run/input-roots ["scene-root-A" "prompt-root"]
+    :run/parent-references [parent-run-reference-v1]
+    :run/output-roots ["scene-root-B"]
+    :run/result-root "lighting-result-root"
+    :run/receipt-root "lighting-receipt-root"
+    :run/started-evidence ledger-evidence-v1
+    :run/completed-evidence ledger-evidence-v1
+    :run/metadata {:attempt 1}}))
+
+(def process-step-v1
+  (record/process-step
+   {:step/id "step/model-call"
+    :step/run-id "run/lighting-17"
+    :step/run-root nil
+    :step/definition-root "model-call-definition-root"
+    :step/status :complete
+    :step/input-roots ["prompt-root" "scene-root-A"]
+    :step/output-roots ["model-output-root"]
+    :step/result-root "model-result-root"
+    :step/receipt-root "model-call-receipt-root"
+    :step/started-evidence ledger-evidence-v1
+    :step/completed-evidence ledger-evidence-v1
+    :step/metadata {:provider :local}}))
+
+(def process-checkpoint-v1
+  (record/process-checkpoint
+   {:checkpoint/id "checkpoint/model-call"
+    :checkpoint/run-id "run/lighting-17"
+    :checkpoint/run-root nil
+    :checkpoint/step-id "step/model-call"
+    :checkpoint/step-root nil
+    :checkpoint/state-root "checkpoint-state-root"
+    :checkpoint/output-roots ["model-output-root"]
+    :checkpoint/receipt-root "checkpoint-receipt-root"
+    :checkpoint/evidence ledger-evidence-v1
+    :checkpoint/metadata {:replayable true}}))
+
+(def artifact-identity-v1
+  (record/artifact-identity
+   {:artifact/id "scene/main"
+    :artifact/workspace-id "world/orbital-station"
+    :artifact/workspace-root nil
+    :artifact/kind :scene
+    :artifact/schema-root "scene-schema-root"
+    :artifact/metadata {:label "Main scene"}}))
+
+(def artifact-version-v1
+  (record/artifact-version
+   {:artifact/id "scene/main"
+    :artifact/kind :scene
+    :artifact/content-root "scene-root-B"
+    :artifact/previous-content-root "scene-root-A"
+    :artifact/source-roots
+    ["scene-root-A" "texture-root" "prompt-root"]
+    :artifact/producer-run-id "run/lighting-17"
+    :artifact/producer-run-root nil
+    :artifact/schema-root "scene-schema-root"
+    :artifact/metadata {:label "Lighting pass"}
+    :artifact/published-evidence ledger-evidence-v1}))
+
+(def review-v1
+  (record/review-decision
+   {:review/id "review/scene-B/alice"
+    :review/subject-id "scene/main"
+    :review/subject-root "scene-root-B"
+    :review/decision :approve
+    :review/evidence-roots ["review-notes-root"]
+    :review/process-run-id "run/lighting-17"
+    :review/process-run-root nil
+    :review/recorded-evidence ledger-evidence-v1
+    :review/metadata {:role :art-director}}))
+
+(def execution-provenance-v1
+  (record/execution-provenance
+   {:provenance/source-root "source-form-root"
+    :provenance/expanded-root "expanded-form-root"
+    :provenance/code-root "semantic-code-root"
+    :provenance/namespace-root "namespace-commit-root"
+    :provenance/compiler-root "compiler-root"
+    :provenance/runtime-root "runtime-root"
+    :provenance/artifact-root "wasm-artifact-root"
+    :provenance/target :wasm
+    :provenance/optimization :release
+    :provenance/input-roots ["scene-root-A" "prompt-root"]
+    :provenance/output-roots ["scene-root-B"]
+    :provenance/receipt-root "execution-receipt-root"
+    :provenance/effects-root "effects-root"
+    :provenance/cost 418
+    :provenance/metadata {:engine :ignatius}}))
+
+(def artifact-reference-v1
+  (record/logical-reference
+   {:reference/scope-id "world/orbital-station"
+    :reference/kind :artifact
+    :reference/id "scene/main"
+    :reference/root "scene-root-B"
+    :reference/metadata {}}))
+
+(def timeline-entry-v1
+  (record/timeline-entry
+   {:timeline/id "transaction-root-17"
+    :timeline/previous-entry-id "transaction-root-16"
+    :timeline/event artifact-version-v1
+    :timeline/evidence ledger-evidence-v1
+    :timeline/subject-reference artifact-reference-v1
+    :timeline/sequence 17
+    :timeline/metadata {}}))
+
+(def commit-candidate-v1
+  (record/workspace-commit-candidate
+   {:workspace/id "world/orbital-station"
+    :workspace/root nil
+    :commit/parent-roots
+    ["workspace-commit-alice" "workspace-commit-bob"]
+    :commit/state-root "workspace-state-root-52"
+    :commit/operation-root "merge-operation-root"
+    :commit/merge-base-root "workspace-commit-base"
+    :commit/merge-policy-root "scene-merge-policy-root"
+    :commit/author-evidence ledger-evidence-v1
+    :commit/execution-provenance execution-provenance-v1
+    :commit/metadata {:proposal "proposal/52"}}))
+
+(def attestation-v1
+  (record/attestation-claim
+   {:attestation/id "attestation/review/scene-B/alice"
+    :attestation/claim :artifact/reviewed
+    :attestation/subject-id "scene/main"
+    :attestation/subject-root "scene-root-B"
+    :attestation/context-root "review-policy-root"
+    :attestation/evidence-roots ["review-notes-root"]
+    :attestation/process-run-id "run/lighting-17"
+    :attestation/process-run-root nil
+    :attestation/issuer-evidence ledger-evidence-v1
+    :attestation/scope :workspace
+    :attestation/audience "world/orbital-station"
+    :attestation/valid-from 1700000000
+    :attestation/valid-until nil
+    :attestation/revokes-root nil
+    :attestation/metadata {:decision :approve}}))
+
+(def vectors
+  [{:vector/name :ledger/evidence-v1
+    :vector/record ledger-evidence-v1}
+   {:vector/name :workspace/build-v1
+    :vector/record workspace-v1}
+   {:vector/name :process/definition-v1
+    :vector/record process-definition-v1}
+   {:vector/name :reference/logical-v1
+    :vector/record parent-run-reference-v1}
+   {:vector/name :process/run-v1
+    :vector/record process-run-v1}
+   {:vector/name :process/step-v1
+    :vector/record process-step-v1}
+   {:vector/name :process/checkpoint-v1
+    :vector/record process-checkpoint-v1}
+   {:vector/name :artifact/identity-v1
+    :vector/record artifact-identity-v1}
+   {:vector/name :artifact/version-v1
+    :vector/record artifact-version-v1}
+   {:vector/name :review/decision-v1
+    :vector/record review-v1}
+   {:vector/name :execution/provenance-v1
+    :vector/record execution-provenance-v1}
+   {:vector/name :timeline/entry-v1
+    :vector/record timeline-entry-v1}
+   {:vector/name :workspace/commit-candidate-v1
+    :vector/record commit-candidate-v1}
+   {:vector/name :attestation/claim-v1
+    :vector/record attestation-v1}])

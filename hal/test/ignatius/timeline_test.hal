@@ -1,14 +1,24 @@
 (ns ignatius.timeline-test
   (:require [std.lib.test :as test]
+            [ignatius.record :as record]
             [ignatius.timeline :as timeline]))
+
+(def parent-run-reference
+  (record/logical-reference
+   {:reference/scope-id "world/orbital-station"
+    :reference/kind :process/run
+    :reference/id "run/layout-0"
+    :reference/root nil
+    :reference/metadata {}}))
 
 (def initial
   (timeline/init
    {:workspace/id "world/orbital-station"
     :workspace/kind :scene
     :workspace/schema-root "scene-schema-root"
-    :participants {"alice" true
-                   "bob" true}}))
+    :workspace/participants
+    {"alice" true
+     "bob" true}}))
 
 (def rejected-outsider
   (timeline/apply-event
@@ -29,11 +39,14 @@
      :process/id "run-1"
      :process/definition-root "definition-root"
      :process/input-roots ["prompt-root" "scene-A"]
-     :process/parent-runs []
+     :process/parent-references [parent-run-reference]
+     :process/metadata {:agent :lighting}
      :signer "alice"
      :transaction "tx-start"
      :timestamp 2
-     :previous-head "head-0"})
+     :previous-head "head-0"
+     :contract "contract-root"
+     :template "timeline-template-root"})
    :ok))
 
 (def published-a
@@ -61,8 +74,8 @@
    {:action :artifact/publish
     :artifact/id "scene/main"
     :artifact/kind :scene
-    :artifact/root "scene-B"
-    :artifact/previous-root "scene-before-A"
+    :artifact/content-root "scene-B"
+    :artifact/previous-content-root "scene-before-A"
     :artifact/source-roots ["texture-root"]
     :process/id "run-1"
     :signer "bob"
@@ -77,8 +90,8 @@
     {:action :artifact/publish
      :artifact/id "scene/main"
      :artifact/kind :scene
-     :artifact/root "scene-B"
-     :artifact/previous-root "scene-A"
+     :artifact/content-root "scene-B"
+     :artifact/previous-content-root "scene-A"
      :artifact/source-roots ["texture-root"]
      :artifact/schema-root "scene-schema-root"
      :artifact/metadata {:label "Lighting pass"}
@@ -95,8 +108,8 @@
    {:action :artifact/publish
     :artifact/id "scene/main"
     :artifact/kind :scene
-    :artifact/root "scene-A"
-    :artifact/previous-root "scene-B"
+    :artifact/content-root "scene-A"
+    :artifact/previous-content-root "scene-B"
     :artifact/source-roots []
     :process/id "run-1"
     :signer "alice"
@@ -110,9 +123,9 @@
    {:action :review/record
     :review/id "review-1"
     :review/decision :approve
-    :review/evidence-root "notes-root"
+    :review/evidence-roots ["notes-root"]
     :artifact/id "scene/main"
-    :artifact/root "scene-A"
+    :artifact/content-root "scene-A"
     :signer "alice"
     :transaction "tx-review-stale"
     :timestamp 7
@@ -125,9 +138,11 @@
     {:action :review/record
      :review/id "review-1"
      :review/decision :approve
-     :review/evidence-root "notes-root"
+     :review/evidence-roots ["notes-root"]
+     :review/metadata {:role :art-director}
      :artifact/id "scene/main"
-     :artifact/root "scene-B"
+     :artifact/content-root "scene-B"
+     :process/id "run-1"
      :signer "alice"
      :transaction "tx-review"
      :timestamp 8
@@ -149,60 +164,104 @@
      :previous-head "head-4"})
    :ok))
 
+(def latest
+  (timeline/latest-entry completed))
+
 (def results
-  [(test/check "the timeline records its stable workspace identity"
+  [(test/check "the contract state is a canonical workspace build"
+               (get initial :record/type)
+               :workspace/build)
+   (test/check "the workspace records its stable logical identity"
                (get (timeline/summary initial) :workspace/id)
                "world/orbital-station")
+   (test/check "the workspace state satisfies the canonical schema"
+               (record/record-valid? initial)
+               true)
    (test/check "only verified participants may advance the timeline"
                (get rejected-outsider :error)
                :timeline/not-participant)
-   (test/check "process definitions and ledger provenance are pinned"
+   (test/check "process runs use the canonical record family"
                (get-in (timeline/processes started)
-                       ["run-1" :process/started :timeline/transaction])
+                       ["run-1" :record/type])
+               :process/run)
+   (test/check "process definitions and ledger evidence are pinned"
+               (get-in (timeline/processes started)
+                       ["run-1" :run/started-evidence
+                        :ledger/transaction-root])
                "tx-start")
-   (test/check "artifact publication distinguishes stable IDs from exact roots"
+   (test/check "contract and template roots come from verified events"
+               [(get-in (timeline/processes started)
+                        ["run-1" :run/started-evidence
+                         :ledger/contract-root])
+                (get-in (timeline/processes started)
+                        ["run-1" :run/started-evidence
+                         :ledger/template-root])]
+               ["contract-root" "timeline-template-root"])
+   (test/check "process ancestry uses stable logical references"
+               (get-in (timeline/processes started)
+                       ["run-1" :run/parent-references])
+               [parent-run-reference])
+   (test/check "the compatibility artifact root alias remains accepted"
                (get-in (timeline/artifacts published-a)
-                       ["scene/main" :artifact/root])
+                       ["scene/main" :artifact/content-root])
                "scene-A")
    (test/check "a first artifact version has no synthetic parent"
                (get-in (timeline/artifact-versions published-a)
-                       ["scene/main" "scene-A" :artifact/previous-root])
+                       ["scene/main" "scene-A"
+                        :artifact/previous-content-root])
                nil)
    (test/check "artifact advancement requires the exact previous root"
                (get rejected-stale-publish :error)
                :timeline/stale-artifact-root)
    (test/check "artifact lineage is derived from accepted state"
                (get-in (timeline/artifact-versions published-b)
-                       ["scene/main" "scene-B" :artifact/previous-root])
+                       ["scene/main" "scene-B"
+                        :artifact/previous-content-root])
                "scene-A")
-   (test/check "artifact source roots remain explicit domain provenance"
+   (test/check "artifact source roots remain explicit derivation provenance"
                (get-in (timeline/artifact-versions published-b)
-                       ["scene/main" "scene-B" :artifact/source-roots])
+                       ["scene/main" "scene-B"
+                        :artifact/source-roots])
                ["texture-root"])
    (test/check "previous artifact versions remain directly queryable"
                (get-in (timeline/artifact-versions published-b)
-                       ["scene/main" "scene-A" :artifact/root])
+                       ["scene/main" "scene-A"
+                        :artifact/content-root])
                "scene-A")
+   (test/check "artifact versions retain the stable producing run ID"
+               (get-in (timeline/artifact-versions published-b)
+                       ["scene/main" "scene-B"
+                        :artifact/producer-run-id])
+               "run-1")
    (test/check "an artifact root cannot overwrite an earlier version record"
                (get rejected-version-reuse :error)
                :timeline/artifact-version-already-exists)
    (test/check "reviews are pinned to the current exact artifact root"
                (get rejected-stale-review :error)
                :timeline/stale-review-subject)
-   (test/check "review provenance comes from the verified event"
+   (test/check "reviews use the canonical decision record"
                (get-in (timeline/reviews reviewed)
-                       ["review-1" :review/recorded :timeline/signer])
+                       ["review-1" :record/type])
+               :review/decision)
+   (test/check "review evidence comes from the verified event"
+               (get-in (timeline/reviews reviewed)
+                       ["review-1" :review/recorded-evidence
+                        :ledger/signer])
                "alice")
-   (test/check "accepted transitions form a queryable linked timeline"
+   (test/check "accepted transitions form a canonical linked timeline"
                (get-in (timeline/entries completed)
                        ["tx-complete" :timeline/previous-entry-id])
                "tx-review")
-   (test/check "the latest timeline entry is the completed process"
-               (get (timeline/latest-entry completed) :record/type)
-               :timeline/process-completed)
+   (test/check "the latest value is a timeline entry wrapper"
+               (get latest :record/type)
+               :timeline/entry)
+   (test/check "the latest event is the completed canonical process run"
+               [(get-in latest [:timeline/event :record/type])
+                (get-in latest [:timeline/event :run/status])]
+               [:process/run :complete])
    (test/check "completed processes retain their execution receipt"
                (get-in (timeline/processes completed)
-                       ["run-1" :process/receipt-root])
+                       ["run-1" :run/receipt-root])
                "receipt-root")
    (test/check "completed processes cannot be completed twice"
                (get
