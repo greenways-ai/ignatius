@@ -1,24 +1,35 @@
-(ns ignatius.timeline)
+(ns ignatius.timeline
+  (:require [ignatius.record :as record]))
 
-(def timeline-format-version 1)
+(def timeline-format-version 2)
 
-(defn verified-provenance
-  "Copies only ledger-injected provenance from a verified contract event."
+(defn verified-evidence
+  "Copies only ledger-injected evidence from a verified contract event."
   [event]
-  {:record/type :timeline/provenance
-   :timeline/signer (get event :signer)
-   :timeline/transaction (get event :transaction)
-   :timeline/timestamp (get event :timestamp)
-   :timeline/previous-head (get event :previous-head)})
+  (record/ledger-evidence-from-event event))
+
+(defn parameter-or
+  [parameters canonical compatibility]
+  (let [value (get parameters canonical)]
+    (if (= nil value)
+      (get parameters compatibility)
+      value)))
+
+(defn event-or
+  [event canonical compatibility]
+  (let [value (get event canonical)]
+    (if (= nil value)
+      (get event compatibility)
+      value)))
 
 (defn participant?
   [state signer]
   (= true
-     (get (get state :timeline/participants) signer)))
+     (get (get state :workspace/participants) signer)))
 
 (defn active?
   [state]
-  (= :active (get state :timeline/status)))
+  (= :active (get state :workspace/status)))
 
 (defn entry-id
   [event]
@@ -26,49 +37,83 @@
     (get event :previous-head)
     (get event :transaction)))
 
+(defn process-parent-references
+  [event]
+  (record/vector-or-empty
+   (event-or event
+             :process/parent-references
+             :process/parent-runs)))
+
+(defn process-reference
+  [state process-id]
+  (record/logical-reference
+   {:reference/scope-id (get state :workspace/id)
+    :reference/kind :process/run
+    :reference/id process-id
+    :reference/root nil
+    :reference/metadata {}}))
+
+(defn artifact-reference
+  [state artifact-id artifact-root]
+  (record/logical-reference
+   {:reference/scope-id (get state :workspace/id)
+    :reference/kind :artifact
+    :reference/id artifact-id
+    :reference/root artifact-root
+    :reference/metadata {}}))
+
 (defn append-entry
-  "Adds one immutable transition record to a reverse-linked timeline index."
-  [state event entry]
+  "Adds one canonical transition entry to a reverse-linked timeline index."
+  [state event subject-reference entry]
   (let [id (entry-id event)
-        previous-id (get state :timeline/latest-entry)
+        previous-id (get state :workspace/latest-entry-id)
         linked-entry
-        (assoc
-         (assoc entry :timeline/entry-id id)
-         :timeline/previous-entry-id previous-id)
-        entries (get state :timeline/entries)
+        (record/timeline-entry
+         {:timeline/id id
+          :timeline/previous-entry-id previous-id
+          :timeline/event entry
+          :timeline/evidence (verified-evidence event)
+          :timeline/subject-reference subject-reference
+          :timeline/sequence nil
+          :timeline/metadata {}})
+        entries (get state :workspace/timeline-entries)
         with-entry
-        (assoc state :timeline/entries
+        (assoc state :workspace/timeline-entries
                (assoc entries id linked-entry))]
-    (assoc with-entry :timeline/latest-entry id)))
+    (assoc with-entry :workspace/latest-entry-id id)))
 
 (defn init
-  "Creates a linear signed build timeline.
+  "Creates a linear signed build workspace using the canonical v1 records.
 
-  The contract creator supplies the stable workspace identity, participant set
-  and optional schema root. Ignatius supplies identity and ordering facts on
-  every later event."
+  Compatibility aliases remain accepted for :participants and the original
+  timeline parameters. The returned state is a :workspace/build value."
   [parameters]
-  {:record/type :timeline/build
-   :timeline/format-version timeline-format-version
-   :timeline/workspace-id (get parameters :workspace/id)
-   :timeline/workspace-kind (get parameters :workspace/kind)
-   :timeline/schema-root (get parameters :workspace/schema-root)
-   :timeline/participants (get parameters :participants)
-   :timeline/status :active
-   :timeline/processes {}
-   :timeline/artifacts {}
-   :timeline/artifact-versions {}
-   :timeline/reviews {}
-   :timeline/entries {}
-   :timeline/latest-entry nil})
+  (record/workspace-build
+   {:workspace/id (get parameters :workspace/id)
+    :workspace/kind (get parameters :workspace/kind)
+    :workspace/name (get parameters :workspace/name)
+    :workspace/schema-root (get parameters :workspace/schema-root)
+    :workspace/entrypoints
+    (get parameters :workspace/entrypoints)
+    :workspace/participants
+    (parameter-or parameters :workspace/participants :participants)
+    :workspace/status :active
+    :workspace/processes {}
+    :workspace/artifacts {}
+    :workspace/artifact-versions {}
+    :workspace/reviews {}
+    :workspace/timeline-entries {}
+    :workspace/latest-entry-id nil
+    :workspace/metadata (get parameters :workspace/metadata)
+    :record/extensions (get parameters :record/extensions)}))
 
 (defn start-process
   [state event]
   (let [process-id (get event :process/id)
         definition-root (get event :process/definition-root)
-        processes (get state :timeline/processes)
+        processes (get state :workspace/processes)
         current (get processes process-id)
-        provenance (verified-provenance event)]
+        evidence (verified-evidence event)]
     (cond
       (= nil process-id)
       {:error :timeline/missing-process-id}
@@ -78,24 +123,29 @@
 
       (= nil current)
       (let [run
-            {:record/type :timeline/process-run
-             :process/id process-id
-             :process/definition-root definition-root
-             :process/input-roots (get event :process/input-roots)
-             :process/parent-runs (get event :process/parent-runs)
-             :process/status :running
-             :process/started provenance}
-            entry
-            {:record/type :timeline/process-started
-             :process/id process-id
-             :process/definition-root definition-root
-             :process/input-roots (get event :process/input-roots)
-             :process/parent-runs (get event :process/parent-runs)
-             :process/started provenance}
+            (record/process-run
+             {:run/id process-id
+              :run/workspace-id (get state :workspace/id)
+              :run/workspace-root nil
+              :run/definition-root definition-root
+              :run/status :running
+              :run/input-roots (get event :process/input-roots)
+              :run/parent-references
+              (process-parent-references event)
+              :run/output-roots []
+              :run/result-root nil
+              :run/receipt-root nil
+              :run/started-evidence evidence
+              :run/completed-evidence nil
+              :run/metadata (get event :process/metadata)})
             with-run
-            (assoc state :timeline/processes
+            (assoc state :workspace/processes
                    (assoc processes process-id run))]
-        {:ok (append-entry with-run event entry)})
+        {:ok
+         (append-entry
+          with-run event
+          (process-reference state process-id)
+          run)})
 
       :else
       {:error :timeline/process-already-exists})))
@@ -103,38 +153,36 @@
 (defn complete-process
   [state event]
   (let [process-id (get event :process/id)
-        processes (get state :timeline/processes)
+        processes (get state :workspace/processes)
         current (get processes process-id)]
     (cond
       (= nil current)
       {:error :timeline/process-not-found}
 
-      (= :running (get current :process/status))
-      (let [provenance (verified-provenance event)
-            output-roots (get event :process/output-roots)
-            result-root (get event :process/result-root)
-            receipt-root (get event :process/receipt-root)
-            with-status
-            (assoc current :process/status :complete)
+      (= :running (get current :run/status))
+      (let [with-status
+            (assoc current :run/status :complete)
             with-outputs
-            (assoc with-status :process/output-roots output-roots)
+            (assoc with-status :run/output-roots
+                   (record/vector-or-empty
+                    (get event :process/output-roots)))
             with-result
-            (assoc with-outputs :process/result-root result-root)
+            (assoc with-outputs :run/result-root
+                   (get event :process/result-root))
             with-receipt
-            (assoc with-result :process/receipt-root receipt-root)
+            (assoc with-result :run/receipt-root
+                   (get event :process/receipt-root))
             completed
-            (assoc with-receipt :process/completed provenance)
-            entry
-            {:record/type :timeline/process-completed
-             :process/id process-id
-             :process/output-roots output-roots
-             :process/result-root result-root
-             :process/receipt-root receipt-root
-             :process/completed provenance}
+            (assoc with-receipt :run/completed-evidence
+                   (verified-evidence event))
             with-process
-            (assoc state :timeline/processes
+            (assoc state :workspace/processes
                    (assoc processes process-id completed))]
-        {:ok (append-entry with-process event entry)})
+        {:ok
+         (append-entry
+          with-process event
+          (process-reference state process-id)
+          completed)})
 
       :else
       {:error :timeline/process-not-running})))
@@ -142,7 +190,7 @@
 (defn artifact-versions-for
   [state artifact-id]
   (let [versions
-        (get (get state :timeline/artifact-versions) artifact-id)]
+        (get (get state :workspace/artifact-versions) artifact-id)]
     (if (= nil versions)
       {}
       versions)))
@@ -150,17 +198,21 @@
 (defn publish-artifact
   [state event]
   (let [artifact-id (get event :artifact/id)
-        artifact-root (get event :artifact/root)
-        expected-root (get event :artifact/previous-root)
+        artifact-root
+        (event-or event :artifact/content-root :artifact/root)
+        expected-root
+        (event-or event
+                  :artifact/previous-content-root
+                  :artifact/previous-root)
         process-id (get event :process/id)
-        processes (get state :timeline/processes)
+        processes (get state :workspace/processes)
         process (get processes process-id)
-        artifacts (get state :timeline/artifacts)
+        artifacts (get state :workspace/artifacts)
         current (get artifacts artifact-id)
         current-root
         (if (= nil current)
           nil
-          (get current :artifact/root))
+          (get current :artifact/content-root))
         versions (artifact-versions-for state artifact-id)
         existing-version (get versions artifact-root)]
     (cond
@@ -181,38 +233,56 @@
 
       :else
       (let [version
-            {:record/type :timeline/artifact-version
-             :artifact/id artifact-id
-             :artifact/kind (get event :artifact/kind)
-             :artifact/root artifact-root
-             :artifact/previous-root current-root
-             :artifact/source-roots (get event :artifact/source-roots)
-             :artifact/process-id process-id
-             :artifact/schema-root (get event :artifact/schema-root)
-             :artifact/metadata (get event :artifact/metadata)
-             :artifact/published (verified-provenance event)}
-            all-versions (get state :timeline/artifact-versions)
+            (record/artifact-version
+             {:artifact/id artifact-id
+              :artifact/kind (get event :artifact/kind)
+              :artifact/content-root artifact-root
+              :artifact/previous-content-root current-root
+              :artifact/source-roots
+              (get event :artifact/source-roots)
+              :artifact/producer-run-id process-id
+              :artifact/producer-run-root nil
+              :artifact/schema-root (get event :artifact/schema-root)
+              :artifact/metadata (get event :artifact/metadata)
+              :artifact/published-evidence
+              (verified-evidence event)})
+            all-versions (get state :workspace/artifact-versions)
             with-current
-            (assoc state :timeline/artifacts
+            (assoc state :workspace/artifacts
                    (assoc artifacts artifact-id version))
             with-version
             (assoc
              with-current
-             :timeline/artifact-versions
+             :workspace/artifact-versions
              (assoc
               all-versions
               artifact-id
               (assoc versions artifact-root version)))]
-        {:ok (append-entry with-version event version)}))))
+        {:ok
+         (append-entry
+          with-version event
+          (artifact-reference state artifact-id artifact-root)
+          version)}))))
+
+(defn review-evidence-roots
+  [event]
+  (let [roots (get event :review/evidence-roots)]
+    (if (= nil roots)
+      (let [root (get event :review/evidence-root)]
+        (if (= nil root)
+          []
+          [root]))
+      roots)))
 
 (defn record-review
   [state event]
   (let [review-id (get event :review/id)
         artifact-id (get event :artifact/id)
-        artifact-root (get event :artifact/root)
-        artifacts (get state :timeline/artifacts)
+        artifact-root
+        (event-or event :artifact/content-root :artifact/root)
+        artifacts (get state :workspace/artifacts)
         artifact (get artifacts artifact-id)
-        reviews (get state :timeline/reviews)
+        reviews (get state :workspace/reviews)
         current-review (get reviews review-id)]
     (cond
       (= nil review-id)
@@ -222,7 +292,7 @@
       {:error :timeline/artifact-not-found}
 
       (= false
-         (= artifact-root (get artifact :artifact/root)))
+         (= artifact-root (get artifact :artifact/content-root)))
       {:error :timeline/stale-review-subject}
 
       (= false (= nil current-review))
@@ -230,17 +300,26 @@
 
       :else
       (let [review
-            {:record/type :timeline/review
-             :review/id review-id
-             :review/artifact-id artifact-id
-             :review/artifact-root artifact-root
-             :review/decision (get event :review/decision)
-             :review/evidence-root (get event :review/evidence-root)
-             :review/recorded (verified-provenance event)}
+            (record/review-decision
+             {:review/id review-id
+              :review/subject-id artifact-id
+              :review/subject-root artifact-root
+              :review/decision (get event :review/decision)
+              :review/evidence-roots
+              (review-evidence-roots event)
+              :review/process-run-id (get event :process/id)
+              :review/process-run-root nil
+              :review/recorded-evidence
+              (verified-evidence event)
+              :review/metadata (get event :review/metadata)})
             with-review
-            (assoc state :timeline/reviews
+            (assoc state :workspace/reviews
                    (assoc reviews review-id review))]
-        {:ok (append-entry with-review event review)}))))
+        {:ok
+         (append-entry
+          with-review event
+          (artifact-reference state artifact-id artifact-root)
+          review)}))))
 
 (defn apply-event
   [state event]
@@ -270,37 +349,41 @@
 
 (defn summary
   [state]
-  {:workspace/id (get state :timeline/workspace-id)
-   :workspace/kind (get state :timeline/workspace-kind)
-   :workspace/schema-root (get state :timeline/schema-root)
-   :timeline/status (get state :timeline/status)
-   :timeline/latest-entry (get state :timeline/latest-entry)
-   :timeline/processes (get state :timeline/processes)
-   :timeline/artifacts (get state :timeline/artifacts)
-   :timeline/reviews (get state :timeline/reviews)})
+  {:workspace/id (get state :workspace/id)
+   :workspace/kind (get state :workspace/kind)
+   :workspace/schema-root (get state :workspace/schema-root)
+   :workspace/status (get state :workspace/status)
+   :workspace/latest-entry-id (get state :workspace/latest-entry-id)
+   :workspace/processes (get state :workspace/processes)
+   :workspace/artifacts (get state :workspace/artifacts)
+   :workspace/reviews (get state :workspace/reviews)})
+
+(defn workspace
+  [state]
+  state)
 
 (defn processes
   [state]
-  (get state :timeline/processes))
+  (get state :workspace/processes))
 
 (defn artifacts
   [state]
-  (get state :timeline/artifacts))
+  (get state :workspace/artifacts))
 
 (defn artifact-versions
   [state]
-  (get state :timeline/artifact-versions))
+  (get state :workspace/artifact-versions))
 
 (defn reviews
   [state]
-  (get state :timeline/reviews))
+  (get state :workspace/reviews))
 
 (defn entries
   [state]
-  (get state :timeline/entries))
+  (get state :workspace/timeline-entries))
 
 (defn latest-entry
   [state]
   (get
-   (get state :timeline/entries)
-   (get state :timeline/latest-entry)))
+   (get state :workspace/timeline-entries)
+   (get state :workspace/latest-entry-id)))
