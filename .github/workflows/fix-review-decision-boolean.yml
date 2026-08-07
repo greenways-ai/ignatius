@@ -1,0 +1,70 @@
+name: Fix review decision booleans
+
+on:
+  push:
+    branches: [agent/fix-review-decision-boolean]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-review-decision-boolean
+
+      - name: Make review predicates return strict booleans
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("hal/src/ignatius/workspace_review.hal")
+          text = path.read_text()
+
+          replacements = {
+              '''(defn decision-valid?
+  "Checks the portable public decision text."
+  [decision]
+  (or (= decision "approve")
+      (= decision "reject")
+      (= decision "withdraw")))''': '''(defn decision-valid?
+  "Checks the portable public decision text and always returns a boolean."
+  [decision]
+  (if (or (= decision "approve")
+          (= decision "reject")
+          (= decision "withdraw"))
+    true
+    false))''',
+              '''(defn decision-value-valid?
+  "Checks one decoded canonical review decision value."
+  [decision]
+  (or (= decision :approve)
+      (= decision :reject)
+      (= decision :withdraw)))''': '''(defn decision-value-valid?
+  "Checks one decoded canonical decision and always returns a boolean."
+  [decision]
+  (if (or (= decision :approve)
+          (= decision :reject)
+          (= decision :withdraw))
+    true
+    false))''',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"missing review predicate marker:\n{old}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          rm .github/workflows/fix-review-decision-boolean.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hal/src/ignatius/workspace_review.hal \
+                  .github/workflows/fix-review-decision-boolean.yml
+          git commit -m "Return strict review decision booleans"
+          git push origin HEAD:agent/fix-review-decision-boolean
