@@ -1,0 +1,36 @@
+name: Integrate workspace ref admission v2
+
+on:
+  push:
+    branches: [agent/workspace-ref-admission]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-ref-admission
+
+      - name: Apply integration patch
+        run: |
+          set -euo pipefail
+          python scripts/integrate_workspace_ref_admission.py
+          rm .github/workflows/integrate-workspace-ref-admission.yml
+          rm .github/workflows/integrate-workspace-ref-admission-v2.yml
+          rm scripts/integrate_workspace_ref_admission.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md \
+                  db/src/gwdb/ledger/base.clj \
+                  db/src/ledger/build_contract.clj \
+                  db/test/gwdb/ledger/workspace_admission_test.clj \
+                  .github/workflows/verify.yml \
+                  .github/workflows/integrate-workspace-ref-admission.yml \
+                  .github/workflows/integrate-workspace-ref-admission-v2.yml \
+                  scripts/integrate_workspace_ref_admission.py
+          git commit -m "Integrate signed workspace ref admission"
+          git push origin HEAD:agent/workspace-ref-admission
