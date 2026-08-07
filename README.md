@@ -238,10 +238,23 @@ for that exact candidate. Each reviewer has an independent
 so stale decisions do not consume account sequence or global block height.
 
 Proposal visibility and reviewer statements do not by themselves authorize
-`main`. A later explicit workspace policy evaluates exact proposal and review
-roots before accepting a shared head. See
-[`docs/workspace-proposals.md`](docs/workspace-proposals.md) and
+`main`. See [`docs/workspace-proposals.md`](docs/workspace-proposals.md) and
 [`docs/workspace-reviews.md`](docs/workspace-reviews.md).
+
+## Policy-gated workspace main
+
+[`ignatius.workspace-acceptance`](hal/src/ignatius/workspace_acceptance.hal)
+defines the first executable shared-head law. A create-only `policy/main`
+attestation pins one authority and an exact ordered reviewer set. An acceptance
+attestation then pins the proposed candidate, policy root, current approval
+roots, and exact previous `main` root.
+
+V1 requires every listed reviewer to have a current `:approve` decision.
+Superseded approvals, rejects, withdrawals, unpublished candidates, non-genesis
+bootstrap attempts and non-fast-forward updates are rejected before ref CAS. The
+portable adapter proves the policy algebra; signed PostgreSQL admission is the
+next delivery slice. See
+[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md).
 
 ## Convex-style accounts and actors
 
