@@ -1,0 +1,75 @@
+name: Integrate exact workspace main selection binding v2
+
+on:
+  push:
+    branches: [agent/workspace-release-publication]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workspace-release-publication
+
+      - name: Bind releases to the exact successful main CAS
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/integrate_workspace_main_selection_binding.py ]; then
+            exit 0
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/integrate_workspace_main_selection_binding.py")
+          text = path.read_text()
+          old = '''if needle in doc:
+              doc = doc.replace(needle, replacement, 1)
+          elif "WorkspaceMainSelection" not in doc:
+              raise SystemExit("marker not found for release selection documentation")
+          doc_path.write_text(doc)'''
+          new = '''if needle in doc:
+              doc = doc.replace(needle, replacement, 1)
+          elif "WorkspaceMainSelection" not in doc:
+              start = doc.find("The fifth condition is stronger than structural validity.")
+              end = doc.find("\\n\\n## Create-only release ref", start)
+              if start < 0 or end < 0:
+                  raise SystemExit("marker not found for release selection documentation")
+              replacement_section = ''' + "'''" + '''The fifth condition is stronger than structural validity. A stale main attempt
+          may construct a perfectly valid immutable acceptance value before its ref CAS
+          conflicts. Such a value must not authorize a release.
+
+          ## Proving the exact accepted transition
+
+          `workspace-main-submit` records an append-only `WorkspaceMainSelection`
+          binding only after the exact main CAS, signed transaction, receipt, block
+          commit and receipt binding all succeed. The binding pins the workspace,
+          authority, expected and desired roots, selected policy, ref version, network,
+          transaction, receipt, block and recorded-at value.
+
+          Release admission reconstructs and validates that binding and requires its
+          block to remain on the current network-head ancestry. A generic transaction
+          that merely returns an acceptance-shaped root therefore cannot masquerade as
+          the transition that advanced `main`.''' + "'''" + '''
+              doc = doc[:start] + replacement_section + doc[end:]
+          doc_path.write_text(doc)'''
+          if old not in text:
+              raise SystemExit("documentation fallback marker not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          python scripts/integrate_workspace_main_selection_binding.py
+          rm scripts/integrate_workspace_main_selection_binding.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/src/gwdb/ledger/workspace_main.clj \
+                  db/src/gwdb/ledger/workspace_release.clj \
+                  db/test/gwdb/ledger/workspace_release_test.clj \
+                  docs/workspace-release-admission.md \
+                  scripts/integrate_workspace_main_selection_binding.py
+          git commit -m "Bind releases to the exact accepted main transition"
+          git push origin HEAD:agent/workspace-release-publication
