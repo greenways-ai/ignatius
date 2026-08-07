@@ -11862,298 +11862,6 @@ $$ LANGUAGE 'plpgsql';
 
 
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- gwdb.ledger.developer/developer-address-root [27] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_address_root(
-  i_address TEXT
-) RETURNS BYTEA AS $$
-
-  BEGIN
-    IF NOT (regexp_match(i_address,'^[a-z][a-z0-9._-]{0,62}$') IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/invalid_developer_address',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/invalid-developer-address'
-      ;
-    END IF;
-    RETURN "gw_ledger".put_string(i_address);
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.developer/developer-proposer-root [36] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_proposer_root() RETURNS BYTEA AS $$
-BEGIN
-  RETURN "gw_ledger".put_symbol('gwdb.ledger.developer');
-END;
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.developer/developer-genesis [42] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_genesis(
-  i_network TEXT,
-  i_timestamp BIGINT
-) RETURNS BYTEA AS $$
-
-  DECLARE
-    o_head JSONB;
-    v_block_root BYTEA;
-    v_state_root BYTEA;
-  BEGIN
-    o_head := "gw_ledger".head_lock(i_network);
-    IF NOT (o_head IS NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/developer_network_exists',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/developer-network-exists'
-      ;
-    END IF;
-    v_state_root := "gw_ledger".state_genesis();
-    v_block_root := "gw_ledger".block_commit(
-      i_network,
-      -1,
-      null,
-      0,
-      null,
-      v_state_root,
-      v_state_root,
-      i_timestamp,
-      "gw_ledger".developer_proposer_root(),
-      null,
-      jsonb_build_array()
-    );
-    RETURN v_block_root;
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.developer/developer-create-account [56] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_create_account(
-  i_network TEXT,
-  i_address TEXT,
-  i_timestamp BIGINT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_head JSONB;
-    v_account_root BYTEA;
-    v_address_root BYTEA;
-    v_block_root BYTEA;
-    v_existing BYTEA;
-    v_previous_height BIGINT;
-    v_previous_state BYTEA;
-    v_state_root BYTEA;
-  BEGIN
-    o_head := "gw_ledger".head_lock(i_network);
-    IF NOT (o_head IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/developer_network_missing',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/developer-network-missing'
-      ;
-    END IF;
-    v_previous_state := (o_head ->> 'state_root')::BYTEA;
-    v_previous_height := (o_head ->> 'height')::BIGINT;
-    v_address_root := "gw_ledger".developer_address_root(i_address);
-    v_existing := "gw_ledger".state_account_root(v_previous_state,v_address_root);
-    IF NOT (v_existing IS NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/developer_account_exists',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/developer-account-exists'
-      ;
-    END IF;
-    v_account_root := "gw_ledger".account_value_create("gw_ledger".put_nil());
-    v_state_root := "gw_ledger".state_assoc_account(
-      v_previous_state,
-      v_address_root,
-      v_account_root,
-      v_previous_height + 1
-    );
-    v_block_root := "gw_ledger".block_commit(
-      i_network,
-      v_previous_height,
-      v_previous_state,
-      v_previous_height + 1,
-      (o_head ->> 'block_root')::BYTEA,
-      v_previous_state,
-      v_state_root,
-      i_timestamp,
-      "gw_ledger".developer_proposer_root(),
-      null,
-      jsonb_build_array()
-    );
-    RETURN jsonb_build_object(
-      'address',
-      i_address,
-      'address_root',
-      encode(v_address_root,'hex'),
-      'state_root',
-      encode(v_state_root,'hex'),
-      'block_root',
-      encode(v_block_root,'hex')
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.developer/developer-submit-integer [85] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_submit_integer(
-  i_network TEXT,
-  i_address TEXT,
-  i_integer TEXT,
-  i_cost_limit BIGINT,
-  i_timestamp BIGINT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_bound JSONB;
-    o_head JSONB;
-    o_receipt JSONB;
-    v_account_root BYTEA;
-    v_address_root BYTEA;
-    v_block_root BYTEA;
-    v_previous_height BIGINT;
-    v_previous_state BYTEA;
-    v_receipt_root BYTEA;
-    v_sequence BIGINT;
-    v_state_root BYTEA;
-    v_transaction_root BYTEA;
-  BEGIN
-    o_head := "gw_ledger".head_lock(i_network);
-    IF NOT (o_head IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/developer_network_missing',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/developer-network-missing'
-      ;
-    END IF;
-    v_previous_state := (o_head ->> 'state_root')::BYTEA;
-    v_previous_height := (o_head ->> 'height')::BIGINT;
-    v_address_root := "gw_ledger".developer_address_root(i_address);
-    v_account_root := "gw_ledger".state_account_root(v_previous_state,v_address_root);
-    IF NOT (v_account_root IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
-        MESSAGE = 'ledger/missing-account'
-      ;
-    END IF;
-    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
-    v_transaction_root := "gw_ledger".transaction_put(
-      i_network,
-      v_address_root,
-      v_sequence,
-      "gw_ledger".constant("gw_ledger".put_integer(i_integer)),
-      null,
-      i_cost_limit,
-      "gw_ledger".put_integer('1'),
-      null
-    );
-    v_receipt_root := "gw_ledger".block_execute_transaction(
-      v_transaction_root,
-      i_network,
-      v_previous_state,
-      v_previous_height + 1,
-      i_timestamp
-    );
-    o_receipt := "gw_ledger".transaction_receipt_get(v_receipt_root);
-    v_state_root := (o_receipt ->> 'state_root')::BYTEA;
-    v_block_root := "gw_ledger".block_commit(
-      i_network,
-      v_previous_height,
-      v_previous_state,
-      v_previous_height + 1,
-      (o_head ->> 'block_root')::BYTEA,
-      v_previous_state,
-      v_state_root,
-      i_timestamp,
-      "gw_ledger".developer_proposer_root(),
-      null,
-      jsonb_build_array(encode(v_transaction_root,'hex'))
-    );
-    o_bound := "gw_ledger".block_transaction_bind(v_block_root,0,v_receipt_root);
-    RETURN jsonb_build_object(
-      'transaction_root',
-      encode(v_transaction_root,'hex'),
-      'receipt_root',
-      encode(v_receipt_root,'hex'),
-      'state_root',
-      encode(v_state_root,'hex'),
-      'block_root',
-      encode(v_block_root,'hex'),
-      'status',
-      (o_receipt ->> 'status')::TEXT
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
--- gwdb.ledger.developer/developer-head [125] 
-CREATE OR REPLACE FUNCTION "gw_ledger".developer_head(
-  i_network TEXT
-) RETURNS JSONB AS $$
-
-  DECLARE
-    o_head JSONB;
-  BEGIN
-    o_head := "gw_ledger".head_get(i_network);
-    IF NOT (o_head IS NOT NULL) THEN
-      RAISE EXCEPTION USING
-        DETAIL = (jsonb_build_object(
-          'status',
-          'error',
-          'tag',
-          'ledger/developer_network_missing',
-          'data',
-          null
-        ))::TEXT,
-        MESSAGE = 'ledger/developer-network-missing'
-      ;
-    END IF;
-    RETURN jsonb_build_object(
-      'network',
-      i_network,
-      'height',
-      (o_head ->> 'height')::BIGINT,
-      'block_root',
-      encode((o_head ->> 'block_root')::BYTEA,'hex'),
-      'state_root',
-      encode((o_head ->> 'state_root')::BYTEA,'hex')
-    );
-  END;
-
-$$ LANGUAGE 'plpgsql';
-
 -- gwdb.ledger.scoped-ref/ScopedRef [17] 
 DROP TABLE IF EXISTS "gw_ledger"."ScopedRef" CASCADE;
 CREATE TABLE IF NOT EXISTS "gw_ledger"."ScopedRef" (
@@ -13823,6 +13531,838 @@ CREATE OR REPLACE FUNCTION "gw_ledger".admission_submit_operation(
       encode(v_block_root,'hex'),
       'status',
       (o_receipt ->> 'status')::TEXT
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pgsodium";
+
+-- gwdb.ledger.workspace-admission/workspace-id-text [34] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_id_text(
+  i_workspace_id_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_workspace_id_root);
+    IF NOT (o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 5)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_workspace_id','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-id'
+      ;
+    END IF;
+    RETURN convert_from((o_cell ->> 'payload')::BYTEA,'UTF8');
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/personal-scope [48] 
+CREATE OR REPLACE FUNCTION "gw_ledger".personal_scope(
+  i_workspace_id_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN 'workspace/' || "gw_ledger".workspace_id_text(i_workspace_id_root);
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/personal-name [55] 
+CREATE OR REPLACE FUNCTION "gw_ledger".personal_name(
+  i_address_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  RETURN 'user/' || encode(i_address_root,'hex');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/workspace-ref-intent-value [63] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_ref_intent_value(
+  i_workspace_id_root BYTEA,
+  i_address_root BYTEA,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_authority BYTEA;
+    v_desired BYTEA;
+    v_empty_map BYTEA;
+    v_expected BYTEA;
+    v_extensions BYTEA;
+    v_name TEXT;
+    v_name_record BYTEA;
+    v_policy BYTEA;
+    v_record BYTEA;
+    v_scope TEXT;
+    v_scope_record BYTEA;
+    v_version BYTEA;
+    v_workspace BYTEA;
+  BEGIN
+    v_scope := "gw_ledger".personal_scope(i_workspace_id_root);
+    v_name := "gw_ledger".personal_name(i_address_root);
+    v_empty_map := "gw_ledger".put_map(jsonb_build_array());
+    v_record := "gw_ledger".record_start('workspace/ref-update-intent');
+    v_version := "gw_ledger".record_assoc(v_record,'record/version',"gw_ledger".put_integer_number(1));
+    v_extensions := "gw_ledger".record_assoc(v_version,'record/extensions',v_empty_map);
+    v_workspace := "gw_ledger".record_assoc(v_extensions,'workspace/id',i_workspace_id_root);
+    v_scope_record := "gw_ledger".record_assoc(v_workspace,'ref/scope',"gw_ledger".put_string(v_scope));
+    v_name_record := "gw_ledger".record_assoc(v_scope_record,'ref/name',"gw_ledger".put_string(v_name));
+    v_expected := "gw_ledger".record_assoc(
+      v_name_record,
+      'ref/expected-root',
+      "gw_ledger".optional_root(i_expected_root)
+    );
+    v_desired := "gw_ledger".record_assoc(v_expected,'ref/desired-root',i_desired_root);
+    v_authority := "gw_ledger".record_assoc(v_desired,'ref/authorization-root',i_address_root);
+    v_policy := "gw_ledger".record_assoc(
+      v_authority,
+      'ref/policy',
+      "gw_ledger".put_keyword('personal-fast-forward-v1')
+    );
+    RETURN "gw_ledger".record_assoc(v_policy,'ref/metadata',v_empty_map);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/workspace-ref-intent-valid [110] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_ref_intent_valid(
+  i_intent_root BYTEA,
+  i_workspace_id_root BYTEA,
+  i_address_root BYTEA,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN i_intent_root = "gw_ledger".workspace_ref_intent_value(
+    i_workspace_id_root,
+    i_address_root,
+    i_expected_root,
+    i_desired_root
+  );
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/workspace-ref-transition-error [125] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_ref_transition_error(
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA,
+  i_address_root BYTEA
+) RETURNS TEXT AS $$
+
+  DECLARE
+    o_desired JSONB;
+    o_expected JSONB;
+    o_workspace_id JSONB;
+  BEGIN
+    o_workspace_id := "gw_ledger".cell_by_hash(i_workspace_id_root);
+    o_desired := "gw_ledger".workspace_commit_row(i_desired_root);
+    o_expected := CASE WHEN i_expected_root IS NULL THEN null
+    ELSE "gw_ledger".workspace_commit_row(i_expected_root)
+    END;
+    IF o_workspace_id IS NULL OR NOT ((o_workspace_id ->> 'type_tag')::SMALLINT = 5) THEN
+      RETURN 'workspace/invalid-workspace-id';
+    ELSIF NOT "gw_ledger".ref_part_valid("gw_ledger".personal_scope(i_workspace_id_root)) THEN
+      RETURN 'workspace/invalid-personal-ref-scope';
+    ELSIF NOT "gw_ledger".ref_part_valid("gw_ledger".personal_name(i_address_root)) THEN
+      RETURN 'workspace/invalid-personal-ref-name';
+    ELSIF i_desired_root is null  THEN
+      RETURN 'workspace/missing-desired-commit-root';
+    ELSIF o_desired is null  THEN
+      RETURN 'workspace/desired-commit-not-found';
+    ELSIF NOT "gw_ledger".workspace_commit_valid(i_desired_root) THEN
+      RETURN 'workspace/invalid-desired-commit';
+    ELSIF NOT (i_workspace_id_root = (o_desired ->> 'workspace_id_root')::BYTEA) THEN
+      RETURN 'workspace/desired-commit-workspace-mismatch';
+    ELSIF i_expected_root IS NOT NULL AND o_expected IS NULL THEN
+      RETURN 'workspace/expected-commit-not-found';
+    ELSIF i_expected_root IS NOT NULL AND NOT "gw_ledger".workspace_commit_valid(i_expected_root) THEN
+      RETURN 'workspace/invalid-expected-commit';
+    ELSIF i_expected_root IS NOT NULL AND NOT (i_workspace_id_root = (o_expected ->> 'workspace_id_root')::BYTEA) THEN
+      RETURN 'workspace/expected-commit-workspace-mismatch';
+    ELSIF i_expected_root IS NOT NULL AND (i_expected_root = i_desired_root) THEN
+      RETURN 'workspace/noop-ref-update';
+    ELSIF i_expected_root IS NOT NULL AND NOT "gw_ledger".workspace_commit_ancestor(i_expected_root,i_desired_root) THEN
+      RETURN 'workspace/non-fast-forward-ref-update';
+    ELSE
+      RETURN null;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/workspace-ref-signing-request [197] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_ref_signing_request(
+  i_network TEXT,
+  i_public_key BYTEA,
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA,
+  i_cost_limit BIGINT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_head JSONB;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_controller_root BYTEA;
+    v_expected_controller BYTEA;
+    v_intent_root BYTEA;
+    v_op_root BYTEA;
+    v_payload BYTEA;
+    v_runtime_root BYTEA;
+    v_sequence BIGINT;
+    v_state_root BYTEA;
+    v_transition_error TEXT;
+  BEGIN
+    o_head := "gw_ledger".head_get(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/network_missing','data',null))::TEXT,
+        MESSAGE = 'ledger/network-missing'
+      ;
+    END IF;
+    IF NOT (i_cost_limit >= 1) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_cost_limit','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-cost-limit'
+      ;
+    END IF;
+    v_state_root := (o_head ->> 'state_root')::BYTEA;
+    v_address_root := "gw_ledger".admission_address_root(i_public_key);
+    v_account_root := "gw_ledger".state_account_root(v_state_root,v_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_controller_root := "gw_ledger".account_value_controller_root(v_account_root);
+    v_expected_controller := "gw_ledger".admission_controller_root(i_public_key);
+    IF NOT (v_controller_root = v_expected_controller) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/controller_mismatch','data',null))::TEXT,
+        MESSAGE = 'ledger/controller-mismatch'
+      ;
+    END IF;
+    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    v_transition_error := "gw_ledger".workspace_ref_transition_error(
+      i_workspace_id_root,
+      i_expected_root,
+      i_desired_root,
+      v_address_root
+    );
+    IF NOT (v_transition_error IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_ref_update',
+          'data',
+          v_transition_error
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-ref-update'
+      ;
+    END IF;
+    v_intent_root := "gw_ledger".workspace_ref_intent_value(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_desired_root
+    );
+    IF NOT ("gw_ledger".workspace_ref_intent_valid(
+      v_intent_root,
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_desired_root
+    )) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_ref_intent',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-ref-intent'
+      ;
+    END IF;
+    v_op_root := "gw_ledger".constant(v_intent_root);
+    v_runtime_root := "gw_ledger".put_integer('1');
+    v_payload := "gw_ledger".transaction_signing_payload(
+      i_network,
+      v_address_root,
+      v_sequence,
+      v_op_root,
+      null,
+      i_cost_limit,
+      v_runtime_root
+    );
+    RETURN jsonb_build_object(
+      'address',
+      encode(v_address_root,'hex'),
+      'sequence',
+      v_sequence,
+      'workspace_id_root',
+      encode(i_workspace_id_root,'hex'),
+      'scope',
+      "gw_ledger".personal_scope(i_workspace_id_root),
+      'name',
+      "gw_ledger".personal_name(v_address_root),
+      'expected_root',
+      "gw_ledger".root_hex(i_expected_root),
+      'desired_root',
+      encode(i_desired_root,'hex'),
+      'intent_root',
+      encode(v_intent_root,'hex'),
+      'operation_root',
+      encode(v_op_root,'hex'),
+      'signing_payload',
+      encode(v_payload,'hex')
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workspace-admission/workspace-ref-submit [261] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workspace_ref_submit(
+  i_network TEXT,
+  i_public_key BYTEA,
+  i_sequence BIGINT,
+  i_workspace_id_root BYTEA,
+  i_expected_root BYTEA,
+  i_desired_root BYTEA,
+  i_cost_limit BIGINT,
+  i_signature BYTEA,
+  i_timestamp BIGINT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_cas JSONB;
+    o_head JSONB;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_cas_status TEXT;
+    v_controller_root BYTEA;
+    v_current_sequence BIGINT;
+    v_expected_controller BYTEA;
+    v_intent_root BYTEA;
+    v_name TEXT;
+    v_op_root BYTEA;
+    v_previous_height BIGINT;
+    v_previous_state BYTEA;
+    v_runtime_root BYTEA;
+    v_scope TEXT;
+    v_signing_payload BYTEA;
+    v_transition_error TEXT;
+  BEGIN
+    o_head := "gw_ledger".head_lock(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/network_missing','data',null))::TEXT,
+        MESSAGE = 'ledger/network-missing'
+      ;
+    END IF;
+    IF NOT (i_cost_limit >= 1) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/invalid_cost_limit','data',null))::TEXT,
+        MESSAGE = 'ledger/invalid-cost-limit'
+      ;
+    END IF;
+    v_previous_state := (o_head ->> 'state_root')::BYTEA;
+    v_previous_height := (o_head ->> 'height')::BIGINT;
+    v_address_root := "gw_ledger".admission_address_root(i_public_key);
+    v_account_root := "gw_ledger".state_account_root(v_previous_state,v_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_controller_root := "gw_ledger".account_value_controller_root(v_account_root);
+    v_expected_controller := "gw_ledger".admission_controller_root(i_public_key);
+    IF NOT (v_controller_root = v_expected_controller) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/controller_mismatch','data',null))::TEXT,
+        MESSAGE = 'ledger/controller-mismatch'
+      ;
+    END IF;
+    v_current_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    IF NOT (v_current_sequence = i_sequence) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/sequence_conflict','data',null))::TEXT,
+        MESSAGE = 'ledger/sequence-conflict'
+      ;
+    END IF;
+    v_transition_error := "gw_ledger".workspace_ref_transition_error(
+      i_workspace_id_root,
+      i_expected_root,
+      i_desired_root,
+      v_address_root
+    );
+    IF NOT (v_transition_error IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_ref_update',
+          'data',
+          v_transition_error
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-ref-update'
+      ;
+    END IF;
+    v_scope := "gw_ledger".personal_scope(i_workspace_id_root);
+    v_name := "gw_ledger".personal_name(v_address_root);
+    v_intent_root := "gw_ledger".workspace_ref_intent_value(
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_desired_root
+    );
+    IF NOT ("gw_ledger".workspace_ref_intent_valid(
+      v_intent_root,
+      i_workspace_id_root,
+      v_address_root,
+      i_expected_root,
+      i_desired_root
+    )) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_ref_intent',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-ref-intent'
+      ;
+    END IF;
+    v_op_root := "gw_ledger".constant(v_intent_root);
+    v_runtime_root := "gw_ledger".put_integer('1');
+    v_signing_payload := "gw_ledger".transaction_signing_payload(
+      i_network,
+      v_address_root,
+      i_sequence,
+      v_op_root,
+      null,
+      i_cost_limit,
+      v_runtime_root
+    );
+    IF NOT ("gw_ledger".signature_verify(i_signature,v_signing_payload,i_public_key)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_workspace_ref_signature',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-workspace-ref-signature'
+      ;
+    END IF;
+    o_cas := "gw_ledger".scoped_ref_compare_and_set(v_scope,v_name,i_expected_root,i_desired_root,v_address_root);
+    v_cas_status := (o_cas ->> 'status')::TEXT;
+    IF NOT (v_cas_status = 'ok') THEN
+      RETURN o_cas || jsonb_build_object(
+        'address',
+        encode(v_address_root,'hex'),
+        'intent_root',
+        encode(v_intent_root,'hex'),
+        'sequence',
+        i_sequence
+      );
+    END IF;
+    DECLARE
+      o_bound JSONB;
+      o_receipt JSONB;
+      v_block_root BYTEA;
+      v_receipt_root BYTEA;
+      v_state_root BYTEA;
+      v_transaction_root BYTEA;
+    BEGIN
+      v_transaction_root := "gw_ledger".transaction_put(
+        i_network,
+        v_address_root,
+        i_sequence,
+        v_op_root,
+        null,
+        i_cost_limit,
+        v_runtime_root,
+        i_signature
+      );
+      v_receipt_root := "gw_ledger".block_execute_signed_transaction(
+        v_transaction_root,
+        i_network,
+        v_previous_state,
+        v_previous_height + 1,
+        i_timestamp
+      );
+      o_receipt := "gw_ledger".transaction_receipt_get(v_receipt_root);
+      IF NOT (o_receipt IS NOT NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_receipt','data',null))::TEXT,
+          MESSAGE = 'ledger/missing-receipt'
+        ;
+      END IF;
+      IF NOT (((o_receipt ->> 'status')::TEXT = 'ok') AND ((o_receipt ->> 'result_root')::BYTEA = v_intent_root)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workspace_ref_receipt_mismatch',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workspace-ref-receipt-mismatch'
+        ;
+      END IF;
+      v_state_root := (o_receipt ->> 'state_root')::BYTEA;
+      v_block_root := "gw_ledger".block_commit(
+        i_network,
+        v_previous_height,
+        v_previous_state,
+        v_previous_height + 1,
+        (o_head ->> 'block_root')::BYTEA,
+        v_previous_state,
+        v_state_root,
+        i_timestamp,
+        "gw_ledger".admission_proposer_root(),
+        null,
+        jsonb_build_array(encode(v_transaction_root,'hex'))
+      );
+      o_bound := "gw_ledger".block_transaction_bind(v_block_root,0,v_receipt_root);
+      RETURN jsonb_build_object(
+        'status',
+        'ok',
+        'address',
+        encode(v_address_root,'hex'),
+        'sequence',
+        i_sequence,
+        'scope',
+        v_scope,
+        'name',
+        v_name,
+        'expected_root',
+        "gw_ledger".root_hex(i_expected_root),
+        'desired_root',
+        encode(i_desired_root,'hex'),
+        'ref_version',
+        (o_cas ->> 'version')::BIGINT,
+        'intent_root',
+        encode(v_intent_root,'hex'),
+        'transaction_root',
+        encode(v_transaction_root,'hex'),
+        'receipt_root',
+        encode(v_receipt_root,'hex'),
+        'result_root',
+        encode((o_receipt ->> 'result_root')::BYTEA,'hex'),
+        'state_root',
+        encode(v_state_root,'hex'),
+        'block_root',
+        encode(v_block_root,'hex')
+      );
+    END;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- gwdb.ledger.developer/developer-address-root [27] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_address_root(
+  i_address TEXT
+) RETURNS BYTEA AS $$
+
+  BEGIN
+    IF NOT (regexp_match(i_address,'^[a-z][a-z0-9._-]{0,62}$') IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/invalid_developer_address',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/invalid-developer-address'
+      ;
+    END IF;
+    RETURN "gw_ledger".put_string(i_address);
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.developer/developer-proposer-root [36] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_proposer_root() RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".put_symbol('gwdb.ledger.developer');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.developer/developer-genesis [42] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_genesis(
+  i_network TEXT,
+  i_timestamp BIGINT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    o_head JSONB;
+    v_block_root BYTEA;
+    v_state_root BYTEA;
+  BEGIN
+    o_head := "gw_ledger".head_lock(i_network);
+    IF NOT (o_head IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/developer_network_exists',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/developer-network-exists'
+      ;
+    END IF;
+    v_state_root := "gw_ledger".state_genesis();
+    v_block_root := "gw_ledger".block_commit(
+      i_network,
+      -1,
+      null,
+      0,
+      null,
+      v_state_root,
+      v_state_root,
+      i_timestamp,
+      "gw_ledger".developer_proposer_root(),
+      null,
+      jsonb_build_array()
+    );
+    RETURN v_block_root;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.developer/developer-create-account [56] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_create_account(
+  i_network TEXT,
+  i_address TEXT,
+  i_timestamp BIGINT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_head JSONB;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_block_root BYTEA;
+    v_existing BYTEA;
+    v_previous_height BIGINT;
+    v_previous_state BYTEA;
+    v_state_root BYTEA;
+  BEGIN
+    o_head := "gw_ledger".head_lock(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/developer_network_missing',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/developer-network-missing'
+      ;
+    END IF;
+    v_previous_state := (o_head ->> 'state_root')::BYTEA;
+    v_previous_height := (o_head ->> 'height')::BIGINT;
+    v_address_root := "gw_ledger".developer_address_root(i_address);
+    v_existing := "gw_ledger".state_account_root(v_previous_state,v_address_root);
+    IF NOT (v_existing IS NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/developer_account_exists',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/developer-account-exists'
+      ;
+    END IF;
+    v_account_root := "gw_ledger".account_value_create("gw_ledger".put_nil());
+    v_state_root := "gw_ledger".state_assoc_account(
+      v_previous_state,
+      v_address_root,
+      v_account_root,
+      v_previous_height + 1
+    );
+    v_block_root := "gw_ledger".block_commit(
+      i_network,
+      v_previous_height,
+      v_previous_state,
+      v_previous_height + 1,
+      (o_head ->> 'block_root')::BYTEA,
+      v_previous_state,
+      v_state_root,
+      i_timestamp,
+      "gw_ledger".developer_proposer_root(),
+      null,
+      jsonb_build_array()
+    );
+    RETURN jsonb_build_object(
+      'address',
+      i_address,
+      'address_root',
+      encode(v_address_root,'hex'),
+      'state_root',
+      encode(v_state_root,'hex'),
+      'block_root',
+      encode(v_block_root,'hex')
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.developer/developer-submit-integer [85] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_submit_integer(
+  i_network TEXT,
+  i_address TEXT,
+  i_integer TEXT,
+  i_cost_limit BIGINT,
+  i_timestamp BIGINT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_bound JSONB;
+    o_head JSONB;
+    o_receipt JSONB;
+    v_account_root BYTEA;
+    v_address_root BYTEA;
+    v_block_root BYTEA;
+    v_previous_height BIGINT;
+    v_previous_state BYTEA;
+    v_receipt_root BYTEA;
+    v_sequence BIGINT;
+    v_state_root BYTEA;
+    v_transaction_root BYTEA;
+  BEGIN
+    o_head := "gw_ledger".head_lock(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/developer_network_missing',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/developer-network-missing'
+      ;
+    END IF;
+    v_previous_state := (o_head ->> 'state_root')::BYTEA;
+    v_previous_height := (o_head ->> 'height')::BIGINT;
+    v_address_root := "gw_ledger".developer_address_root(i_address);
+    v_account_root := "gw_ledger".state_account_root(v_previous_state,v_address_root);
+    IF NOT (v_account_root IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object('status','error','tag','ledger/missing_account','data',null))::TEXT,
+        MESSAGE = 'ledger/missing-account'
+      ;
+    END IF;
+    v_sequence := "gw_ledger".integer_bigint("gw_ledger".account_value_sequence_root(v_account_root));
+    v_transaction_root := "gw_ledger".transaction_put(
+      i_network,
+      v_address_root,
+      v_sequence,
+      "gw_ledger".constant("gw_ledger".put_integer(i_integer)),
+      null,
+      i_cost_limit,
+      "gw_ledger".put_integer('1'),
+      null
+    );
+    v_receipt_root := "gw_ledger".block_execute_transaction(
+      v_transaction_root,
+      i_network,
+      v_previous_state,
+      v_previous_height + 1,
+      i_timestamp
+    );
+    o_receipt := "gw_ledger".transaction_receipt_get(v_receipt_root);
+    v_state_root := (o_receipt ->> 'state_root')::BYTEA;
+    v_block_root := "gw_ledger".block_commit(
+      i_network,
+      v_previous_height,
+      v_previous_state,
+      v_previous_height + 1,
+      (o_head ->> 'block_root')::BYTEA,
+      v_previous_state,
+      v_state_root,
+      i_timestamp,
+      "gw_ledger".developer_proposer_root(),
+      null,
+      jsonb_build_array(encode(v_transaction_root,'hex'))
+    );
+    o_bound := "gw_ledger".block_transaction_bind(v_block_root,0,v_receipt_root);
+    RETURN jsonb_build_object(
+      'transaction_root',
+      encode(v_transaction_root,'hex'),
+      'receipt_root',
+      encode(v_receipt_root,'hex'),
+      'state_root',
+      encode(v_state_root,'hex'),
+      'block_root',
+      encode(v_block_root,'hex'),
+      'status',
+      (o_receipt ->> 'status')::TEXT
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.developer/developer-head [125] 
+CREATE OR REPLACE FUNCTION "gw_ledger".developer_head(
+  i_network TEXT
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_head JSONB;
+  BEGIN
+    o_head := "gw_ledger".head_get(i_network);
+    IF NOT (o_head IS NOT NULL) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/developer_network_missing',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/developer-network-missing'
+      ;
+    END IF;
+    RETURN jsonb_build_object(
+      'network',
+      i_network,
+      'height',
+      (o_head ->> 'height')::BIGINT,
+      'block_root',
+      encode((o_head ->> 'block_root')::BYTEA,'hex'),
+      'state_root',
+      encode((o_head ->> 'state_root')::BYTEA,'hex')
     );
   END;
 
