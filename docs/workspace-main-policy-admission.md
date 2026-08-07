@@ -81,6 +81,37 @@ a future explicit policy-rotation protocol selects them.
 Every projected row is verified by reconstructing the complete canonical
 attestation. The projection is an index, not policy identity.
 
+## Generated client contract
+
+The generated TypeScript surface exposes two operations:
+
+```ts
+workspaceMainPolicySigningRequest(
+  network,
+  publicKey,
+  workspaceIdRoot,
+  reviewerRootsRoot,
+  recordedAt,
+  costLimit
+)
+
+submitWorkspaceMainPolicy(
+  network,
+  publicKey,
+  sequence,
+  workspaceIdRoot,
+  reviewerRootsRoot,
+  recordedAt,
+  signature,
+  costLimit
+)
+```
+
+The signing response includes the exact `policy_root`, `operation_root` and
+`signing_payload`. The submission result is a discriminated success-or-conflict
+value, allowing clients to retain an unselected policy root without mistaking it
+for the active workspace policy.
+
 ## Deliberate boundary
 
 Publishing a policy does not advance `main`. The next slice will consume the
