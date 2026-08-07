@@ -59,13 +59,50 @@
 (def default-warmup-count 2)
 (def default-sample-count 7)
 
+(def byte-array-class
+  (class (byte-array 0)))
+
+(defn bytea-bytes
+  "Normalises the bytea shapes returned by supported JDBC drivers.
+
+  The ordinary PostgreSQL driver returns byte arrays. pgjdbc-ng streams bytea
+  through ByteBufInputStream. The benchmark owns this conversion boundary so
+  the canonical ledger implementation and its generated SQL remain untouched."
+  [value]
+  (cond
+    (nil? value)
+    nil
+
+    (instance? byte-array-class value)
+    value
+
+    (instance? java.io.InputStream value)
+    (with-open [input ^java.io.InputStream value
+                output (java.io.ByteArrayOutputStream.)]
+      (io/copy input output)
+      (.toByteArray output))
+
+    (instance? java.nio.ByteBuffer value)
+    (let [buffer (.duplicate ^java.nio.ByteBuffer value)
+          bytes (byte-array (.remaining buffer))]
+      (.get buffer bytes)
+      bytes)
+
+    :else
+    (throw
+     (ex-info
+      "unsupported JDBC bytea value"
+      {:value/class (.getName (class value))}))))
+
 (defn hex-bytes
   [text]
   (.parseHex (java.util.HexFormat/of) text))
 
 (defn bytes-hex
   [bytes]
-  (.formatHex (java.util.HexFormat/of) bytes))
+  (.formatHex
+   (java.util.HexFormat/of)
+   (bytea-bytes bytes)))
 
 (defn json-field
   [value field]
@@ -92,7 +129,8 @@
 
 (defn put-string-root
   [text]
-  (value/put-string text))
+  (bytea-bytes
+   (value/put-string text)))
 
 (defn map-shape
   [root]
@@ -152,7 +190,7 @@
         (timed
          #(-/benchmark-put-map
            (json/write-str (:root-pairs built))))
-        map-root (:result measured)
+        map-root (bytea-bytes (:result measured))
         middle-position (quot entry-count 2)]
     {:entry-count entry-count
      :map-root map-root
