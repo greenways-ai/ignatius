@@ -8,11 +8,13 @@
 (def review-policy :review-decision-v1)
 
 (defn decision-valid?
-  "Checks the portable public decision text."
+  "Checks the portable public decision text and always returns a boolean."
   [decision]
-  (or (= decision "approve")
-      (= decision "reject")
-      (= decision "withdraw")))
+  (if (or (= decision "approve")
+          (= decision "reject")
+          (= decision "withdraw"))
+    true
+    false))
 
 (defn decision-keyword
   "Converts public decision text into the canonical record keyword."
@@ -24,11 +26,13 @@
     :else nil))
 
 (defn decision-value-valid?
-  "Checks one decoded canonical review decision value."
+  "Checks one decoded canonical decision and always returns a boolean."
   [decision]
-  (or (= decision :approve)
-      (= decision :reject)
-      (= decision :withdraw)))
+  (if (or (= decision :approve)
+          (= decision :reject)
+          (= decision :withdraw))
+    true
+    false))
 
 (defn review-id
   [candidate-root reviewer-root]
