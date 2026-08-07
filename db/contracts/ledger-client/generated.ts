@@ -196,6 +196,50 @@ export interface HestiaDocumentProtocolApi {
   deliverDocument(documentId: string, delivery: DocumentDeliverySubmission): Promise<{ deliveryRoot: LedgerRoot }>;
 }
 
+export interface WorkspaceRefSigningRequest {
+  address: LedgerRoot;
+  sequence: number;
+  workspace_id_root: LedgerRoot;
+  scope: string;
+  name: string;
+  expected_root?: LedgerRoot;
+  desired_root: LedgerRoot;
+  intent_root: LedgerRoot;
+  operation_root: LedgerRoot;
+  signing_payload: string;
+}
+
+export type WorkspaceRefSubmission =
+  | {
+      status: "ok";
+      address: LedgerRoot;
+      sequence: number;
+      scope: string;
+      name: string;
+      expected_root?: LedgerRoot;
+      desired_root: LedgerRoot;
+      ref_version: number;
+      intent_root: LedgerRoot;
+      transaction_root: LedgerRoot;
+      receipt_root: LedgerRoot;
+      result_root: LedgerRoot;
+      state_root: LedgerRoot;
+      block_root: LedgerRoot;
+    }
+  | {
+      status: "conflict";
+      error: "storage/ref-conflict";
+      address: LedgerRoot;
+      sequence: number;
+      scope: string;
+      name: string;
+      expected_root?: LedgerRoot;
+      actual_root?: LedgerRoot;
+      desired_root: LedgerRoot;
+      version: number;
+      intent_root: LedgerRoot;
+    };
+
 export interface LedgerDeveloperApi {
   genesis(network: string): Promise<{ block_root: LedgerRoot }>;
   createAccount(network: string, address: string): Promise<DeveloperAccount>;
@@ -216,4 +260,6 @@ export interface LedgerSignedApi {
   submitOfflineDocumentCreate(submission: OfflineDocumentSubmission): Promise<{ revision_root: LedgerRoot; document: DocumentHead }>;
   submitOfflineDocumentEdit(submission: OfflineDocumentSubmission): Promise<{ revision_root: LedgerRoot; document: DocumentHead }>;
   submitOfflineTransaction(submission: OfflineTransactionSubmission): Promise<SignedSubmission & { result_root?: LedgerRoot; cost_used: number }>;
+  workspaceRefSigningRequest(network: string, publicKey: string, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, desiredRoot: LedgerRoot, costLimit?: number): Promise<WorkspaceRefSigningRequest>;
+  submitWorkspaceRef(network: string, publicKey: string, sequence: number, workspaceIdRoot: LedgerRoot, expectedRoot: LedgerRoot | undefined, desiredRoot: LedgerRoot, signature: string, costLimit?: number): Promise<WorkspaceRefSubmission>;
 }

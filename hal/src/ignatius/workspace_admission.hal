@@ -1,0 +1,134 @@
+(ns ignatius.workspace-admission
+  (:require [ignatius.record :as record]
+            [ignatius.workspace :as workspace]))
+
+(def intent-record-type :workspace/ref-update-intent)
+(def intent-record-version 1)
+(def personal-fast-forward-policy :personal-fast-forward-v1)
+
+(defn personal-ref-name
+  "Returns the only ref name writable by the first signed-admission policy."
+  [origin-root]
+  (workspace/user-ref-name origin-root))
+
+(defn personal-ref-update-intent
+  "Constructs the exact constrained personal-branch update intent.
+
+  Scope, name, authorization and policy are derived rather than accepted as
+  ambient client choices. Metadata and extensions are fixed to empty maps so
+  portable and PostgreSQL constructors produce the same v1 value."
+  [workspace-id origin-root expected-root desired-root]
+  (record/record-envelope
+   intent-record-type
+   {:workspace/id workspace-id
+    :ref/scope (workspace/workspace-scope workspace-id)
+    :ref/name (personal-ref-name origin-root)
+    :ref/expected-root expected-root
+    :ref/desired-root desired-root
+    :ref/authorization-root origin-root
+    :ref/policy personal-fast-forward-policy
+    :ref/metadata {}
+    :record/extensions {}}))
+
+(defn personal-intent-structure-error
+  "Validates fields whose meaning does not require a commit graph."
+  [origin-root intent]
+  (cond
+    (not (= intent-record-type (get intent :record/type)))
+    :workspace/invalid-ref-intent-record
+
+    (not (= intent-record-version (get intent :record/version)))
+    :workspace/unsupported-ref-intent-version
+
+    (= nil (get intent :workspace/id))
+    :workspace/missing-ref-workspace-id
+
+    (= nil origin-root)
+    :workspace/missing-ref-origin
+
+    (= nil (get intent :ref/desired-root))
+    :workspace/missing-desired-commit-root
+
+    (not
+     (= (workspace/workspace-scope (get intent :workspace/id))
+        (get intent :ref/scope)))
+    :workspace/ref-scope-not-derived
+
+    (not
+     (= (personal-ref-name origin-root)
+        (get intent :ref/name)))
+    :workspace/ref-name-not-personal
+
+    (not
+     (= origin-root
+        (get intent :ref/authorization-root)))
+    :workspace/ref-authorization-not-origin
+
+    (not
+     (= personal-fast-forward-policy
+        (get intent :ref/policy)))
+    :workspace/unsupported-ref-policy
+
+    (not (= {} (record/map-or-empty (get intent :ref/metadata))))
+    :workspace/ref-metadata-not-supported
+
+    (not (= {} (record/map-or-empty (get intent :record/extensions))))
+    :workspace/ref-extensions-not-supported
+
+    (= (get intent :ref/expected-root)
+       (get intent :ref/desired-root))
+    :workspace/noop-ref-update
+
+    :else nil))
+
+(defn personal-intent-graph-error
+  "Validates exact commit roots and fast-forward ancestry for one workspace."
+  [store intent]
+  (let [workspace-id (get intent :workspace/id)
+        expected-root (get intent :ref/expected-root)
+        desired-root (get intent :ref/desired-root)
+        desired (workspace/commit-at store desired-root)
+        expected
+        (if (= nil expected-root)
+          nil
+          (workspace/commit-at store expected-root))]
+    (cond
+      (= nil desired)
+      :workspace/desired-commit-not-found
+
+      (not (= workspace-id (get desired :workspace/id)))
+      :workspace/desired-commit-workspace-mismatch
+
+      (and (not (= nil expected-root))
+           (= nil expected))
+      :workspace/expected-commit-not-found
+
+      (and (not (= nil expected-root))
+           (not (= workspace-id (get expected :workspace/id))))
+      :workspace/expected-commit-workspace-mismatch
+
+      (and (not (= nil expected-root))
+           (not
+            (workspace/ancestor?
+             store expected-root desired-root)))
+      :workspace/non-fast-forward-ref-update
+
+      :else nil)))
+
+(defn validate-personal-ref-update
+  "Validates a signed origin's derived personal ref-update intent."
+  [store origin-root intent]
+  (let [structure-error
+        (personal-intent-structure-error origin-root intent)]
+    (if (not (= nil structure-error))
+      {:error structure-error}
+      (let [graph-error (personal-intent-graph-error store intent)]
+        (if (not (= nil graph-error))
+          {:error graph-error}
+          {:ok intent
+           :ref/scope (get intent :ref/scope)
+           :ref/name (get intent :ref/name)
+           :ref/expected-root (get intent :ref/expected-root)
+           :ref/desired-root (get intent :ref/desired-root)
+           :ref/authorization-root
+           (get intent :ref/authorization-root)})))))
