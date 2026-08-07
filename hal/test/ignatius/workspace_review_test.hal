@@ -77,16 +77,16 @@
 
 (def approve
   (review/review-decision-value
-   candidate-root reviewer-root :approve 10))
+   candidate-root reviewer-root "approve" 10))
 (def reject
   (review/review-decision-value
-   candidate-root reviewer-root :reject 20))
+   candidate-root reviewer-root "reject" 20))
 (def withdraw
   (review/review-decision-value
-   candidate-root reviewer-root :withdraw 30))
+   candidate-root reviewer-root "withdraw" 30))
 (def bob-approve
   (review/review-decision-value
-   candidate-root other-reviewer-root :approve 40))
+   candidate-root other-reviewer-root "approve" 40))
 
 (defn review-root-valid?
   [root value]
@@ -187,6 +187,11 @@
                [(get approve :review/subject-id)
                 (get approve :review/subject-root)]
                ["proposal/C1" "C1"])
+   (test/check "public text inputs lower to canonical decision keywords"
+               [(get approve :review/decision)
+                (get reject :review/decision)
+                (get withdraw :review/decision)]
+               [:approve :reject :withdraw])
    (test/check "review evidence pins signer and recorded-at"
                [(get-in approve
                         [:review/recorded-evidence :ledger/signer])
@@ -261,11 +266,11 @@
                  workspace-id candidate-root reviewer-root initial-intent)
                 :error)
                :workspace/review-proposal-not-published)
-   (test/check "all constrained decisions are accepted"
-               [(review/decision-valid? :approve)
-                (review/decision-valid? :reject)
-                (review/decision-valid? :withdraw)
-                (review/decision-valid? :maybe)]
+   (test/check "all constrained decision texts are accepted"
+               [(review/decision-valid? "approve")
+                (review/decision-valid? "reject")
+                (review/decision-valid? "withdraw")
+                (review/decision-valid? "maybe")]
                [true true true false])])
 
 (test/print-results results)
