@@ -48,6 +48,7 @@
         (pg/decode
          "0000000000000000000000000000000000000000000000000000000000000000"
          "hex")
+        _ (pg/t:delete scoped-ref/ScopedRef)
         (:jsonb o-capabilities) (scoped-ref/scoped-ref-capabilities)
         (:jsonb o-missing)
         (scoped-ref/scoped-ref-read
