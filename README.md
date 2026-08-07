@@ -89,36 +89,83 @@ See [`docs/contracts.md`](docs/contracts.md),
 compiler, HCV1/HCP1 publication pipeline, signed-event model, and work-order
 example.
 
+## Canonical build records
+
+[`ignatius.record`](hal/src/ignatius/record.hal) defines a versioned vocabulary
+of ordinary HCV1 values for complete signed builds:
+
+```text
+workspace/build
+process/definition · process/run · process/step · process/checkpoint
+artifact/identity · artifact/version
+reference/logical · timeline/entry · workspace/commit-candidate
+review/decision · attestation/claim
+execution/provenance · ledger/evidence
+```
+
+Every record has a pinned envelope:
+
+```clojure
+{:record/type :artifact/version
+ :record/version 1
+ :record/extensions {}
+ ...}
+```
+
+Stable IDs and exact immutable roots are different fields:
+
+```clojure
+{:artifact/id "scene/main"
+ :artifact/content-root scene-root-B
+ :artifact/previous-content-root scene-root-A
+ :artifact/producer-run-id "run/lighting-17"
+ :artifact/producer-run-root nil}
+```
+
+A stable ID identifies the conceptual scene, document, DOM tree, codebase or run.
+A root identifies one exact immutable version. Logical relationships that may be
+cyclic use `:reference/logical` values with an optional exact root pin, keeping
+the storage graph acyclic.
+
+The repository includes an executable schema catalog and one checked-in
+conformance vector for each record family. See
+[`docs/canonical-records.md`](docs/canonical-records.md),
+[`hal/src/ignatius/record_vectors.hal`](hal/src/ignatius/record_vectors.hal), and
+[`hal/test/ignatius/record_test.hal`](hal/test/ignatius/record_test.hal).
+
 ## Signed build timelines
 
 [`ignatius.timeline`](hal/src/ignatius/timeline.hal) is a reusable reducer for
-tracking a complete build through signed process runs, immutable artifact
-versions and reviews.
+tracking a complete build through canonical process runs, immutable artifact
+versions, reviews and linked timeline entries.
 
 ```clojure
 (contract/submit timeline
   {:action :process/start
-   :process/id "lighting-pass-17"
+   :process/id "run/lighting-17"
    :process/definition-root lighting-agent-root
    :process/input-roots [scene-root-A prompt-root]})
 
 (contract/submit timeline
   {:action :artifact/publish
    :artifact/id "scene/main"
-   :artifact/root scene-root-B
-   :artifact/previous-root scene-root-A
-   :process/id "lighting-pass-17"})
+   :artifact/content-root scene-root-B
+   :artifact/previous-content-root scene-root-A
+   :artifact/source-roots [texture-root prompt-root]
+   :process/id "run/lighting-17"})
 ```
 
-A stable artifact ID identifies the conceptual scene, DOM, document, codebase or
-other output. Its content root identifies one exact immutable version. Ignatius
-injects signer, transaction, timestamp and previous-head evidence, while stale
-artifact updates and reviews of obsolete roots are rejected.
+The contract state is a canonical `:workspace/build`. Accepted transitions emit
+`:process/run`, `:artifact/version`, `:review/decision`, `:timeline/entry` and
+`:ledger/evidence` values. Ignatius injects signer, transaction, timestamp,
+contract, template and previous-head evidence, while stale artifact updates and
+reviews of obsolete roots are rejected.
 
-The v1 contract keeps one linear authoritative head and uses existing HCV1 maps.
-Multi-parent workspace commits, scalable indexes, structural merges and portable
-execution remain separate, compatible phases. See
-[`docs/build-timelines.md`](docs/build-timelines.md) and
+The current contract keeps one linear authoritative head and uses ordinary HCV1
+maps. Multi-parent workspace commits, scalable indexes, structural merges and
+portable execution remain separate, compatible phases. Existing timeline
+instances remain pinned to their original immutable template and state shape.
+See [`docs/build-timelines.md`](docs/build-timelines.md) and
 [`docs/process-graph-roadmap.md`](docs/process-graph-roadmap.md).
 
 ## Convex-style accounts and actors
@@ -151,10 +198,10 @@ See [`docs/convex-actors.md`](docs/convex-actors.md) and
 ## Layout
 
 - `db/` — PostgreSQL ledger DSL, generated SQL and generated client contract
-- `hal/` — portable codec, runtime, transaction and offline-client semantics
+- `hal/` — portable codec, runtime, record, transaction and client semantics
 - `examples/` — Hara programs used to drive executable ledger demos
 - `extensions/` — optional chain cryptography and proof extensions
-- `docs/` — protocol notes and integration contracts
+- `docs/` — protocol notes, record specifications and integration contracts
 - `versions.edn` — immutable upstream source revisions used by the build
 
 ## Set up
@@ -200,8 +247,9 @@ generated SQL, or generated contracts.
 ## Application boundary
 
 Ignatius includes generic controller registration, signed transaction admission,
-execution, receipts, integrity verification, snapshots, process runs, stable
-artifact/version records, signed reviews and build-timeline provenance.
+execution, receipts, integrity verification, snapshots, canonical process and
+artifact records, signed reviews, attestations, build-timeline provenance and
+workspace commit candidates.
 
 It deliberately excludes:
 
