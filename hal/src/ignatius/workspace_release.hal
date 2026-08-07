@@ -1,0 +1,340 @@
+(ns ignatius.workspace-release
+  (:require [ignatius.record :as record]
+            [ignatius.storage :as storage]
+            [ignatius.workspace :as workspace]
+            [ignatius.workspace-acceptance :as acceptance]))
+
+(def release-claim :workspace/release-published-v1)
+(def release-policy :release-publication-v1)
+
+(defn release-id
+  [workspace-id version]
+  (str "release/" workspace-id "/" version))
+
+(defn release-ref-name
+  [version]
+  (workspace/release-ref-name version))
+
+(defn release-value
+  "Pins one immutable create-only release selection and its authority evidence."
+  [workspace-id authority-root version candidate-root
+   policy-root acceptance-root recorded-at]
+  (record/attestation-claim
+   {:attestation/id (release-id workspace-id version)
+    :attestation/claim release-claim
+    :attestation/subject-id (release-ref-name version)
+    :attestation/subject-root candidate-root
+    :attestation/context-root policy-root
+    :attestation/evidence-roots [acceptance-root]
+    :attestation/process-run-id nil
+    :attestation/process-run-root nil
+    :attestation/issuer-evidence
+    (acceptance/issuer-evidence authority-root recorded-at)
+    :attestation/scope :workspace/release
+    :attestation/audience :workspace/members
+    :attestation/valid-from recorded-at
+    :attestation/valid-until nil
+    :attestation/revokes-root nil
+    :attestation/metadata {}
+    :record/extensions
+    {:workspace/id workspace-id
+     :release/version version
+     :release/acceptance-root acceptance-root
+     :ref/expected-root nil
+     :ref/desired-root candidate-root
+     :ref/policy release-policy}}))
+
+(defn release-authority
+  [release]
+  (get-in release
+          [:attestation/issuer-evidence :ledger/signer]))
+
+(defn release-recorded-at
+  [release]
+  (get-in release
+          [:attestation/issuer-evidence :ledger/timestamp]))
+
+(defn release-version
+  [release]
+  (get-in release [:record/extensions :release/version]))
+
+(defn release-candidate-root
+  [release]
+  (get release :attestation/subject-root))
+
+(defn release-policy-root
+  [release]
+  (get release :attestation/context-root))
+
+(defn release-acceptance-root
+  [release]
+  (get-in release
+          [:record/extensions :release/acceptance-root]))
+
+(defn release-shape-error
+  [workspace-id authority-root release]
+  (let [version (release-version release)
+        candidate-root (release-candidate-root release)
+        policy-root (release-policy-root release)
+        acceptance-root (release-acceptance-root release)
+        evidence-roots
+        (record/vector-or-empty
+         (get release :attestation/evidence-roots))
+        recorded-at (release-recorded-at release)
+        evidence-error
+        (acceptance/evidence-shape-error
+         authority-root recorded-at
+         (get release :attestation/issuer-evidence))
+        extensions
+        (record/map-or-empty (get release :record/extensions))]
+    (cond
+      (= false (record/record-valid? release))
+      :workspace/invalid-release-record
+
+      (not (= :attestation/claim (get release :record/type)))
+      :workspace/invalid-release-record
+
+      (= nil version)
+      :workspace/missing-release-version
+
+      (= nil candidate-root)
+      :workspace/missing-release-candidate-root
+
+      (= nil policy-root)
+      :workspace/missing-release-policy-root
+
+      (= nil acceptance-root)
+      :workspace/missing-release-acceptance-root
+
+      (not (= (release-id workspace-id version)
+              (get release :attestation/id)))
+      :workspace/release-id-not-derived
+
+      (not (= release-claim
+              (get release :attestation/claim)))
+      :workspace/unsupported-release-claim
+
+      (not (= (release-ref-name version)
+              (get release :attestation/subject-id)))
+      :workspace/release-subject-id-mismatch
+
+      (not (= [acceptance-root] evidence-roots))
+      :workspace/release-evidence-root-mismatch
+
+      (not (= nil (get release :attestation/process-run-id)))
+      :workspace/release-process-not-supported
+
+      (not (= nil (get release :attestation/process-run-root)))
+      :workspace/release-process-not-supported
+
+      (not (= nil evidence-error))
+      evidence-error
+
+      (not (= :workspace/release
+              (get release :attestation/scope)))
+      :workspace/release-scope-mismatch
+
+      (not (= :workspace/members
+              (get release :attestation/audience)))
+      :workspace/release-audience-mismatch
+
+      (not (= recorded-at
+              (get release :attestation/valid-from)))
+      :workspace/release-valid-from-mismatch
+
+      (not (= nil (get release :attestation/valid-until)))
+      :workspace/release-expiry-not-supported
+
+      (not (= nil (get release :attestation/revokes-root)))
+      :workspace/release-revocation-not-supported
+
+      (not (= {} (record/map-or-empty
+                  (get release :attestation/metadata))))
+      :workspace/release-metadata-not-supported
+
+      (not (= extensions
+              {:workspace/id workspace-id
+               :release/version version
+               :release/acceptance-root acceptance-root
+               :ref/expected-root nil
+               :ref/desired-root candidate-root
+               :ref/policy release-policy}))
+      :workspace/release-extensions-not-supported
+
+      :else nil)))
+
+(defn acceptance-store
+  []
+  {:workspace/acceptance-store-version 1
+   :workspace/acceptances {}})
+
+(defn acceptance-at
+  [store root]
+  (get (get store :workspace/acceptances) root))
+
+(defn register-acceptance
+  "Indexes a decoded acceptance only after an injected root verifier succeeds."
+  [verify-root store root workspace-id authority-root value]
+  (let [error
+        (acceptance/acceptance-shape-error
+         workspace-id authority-root value)
+        existing (acceptance-at store root)]
+    (cond
+      (= nil root)
+      {:error :workspace/missing-main-acceptance-root}
+
+      (not (= nil error))
+      {:error error}
+
+      (= false (= true (verify-root root value)))
+      {:error :workspace/main-acceptance-root-mismatch
+       :acceptance/root root}
+
+      (not (= nil existing))
+      (if (= existing value)
+        {:ok store
+         :acceptance/root root
+         :acceptance/value value
+         :acceptance/created false}
+        {:error :workspace/main-acceptance-root-conflict
+         :acceptance/root root})
+
+      :else
+      {:ok
+       (assoc store :workspace/acceptances
+              (assoc (get store :workspace/acceptances)
+                     root value))
+       :acceptance/root root
+       :acceptance/value value
+       :acceptance/created true})))
+
+(defn release-store
+  []
+  {:workspace/release-store-version 1
+   :workspace/releases {}})
+
+(defn release-at
+  [store root]
+  (get (get store :workspace/releases) root))
+
+(defn register-release
+  "Indexes a decoded release only after an injected root verifier succeeds."
+  [verify-root store root workspace-id authority-root value]
+  (let [error (release-shape-error workspace-id authority-root value)
+        existing (release-at store root)]
+    (cond
+      (= nil root)
+      {:error :workspace/missing-release-root}
+
+      (not (= nil error))
+      {:error error}
+
+      (= false (= true (verify-root root value)))
+      {:error :workspace/release-root-mismatch
+       :release/root root}
+
+      (not (= nil existing))
+      (if (= existing value)
+        {:ok store
+         :release/root root
+         :release/value value
+         :release/created false}
+        {:error :workspace/release-root-conflict
+         :release/root root})
+
+      :else
+      {:ok
+       (assoc store :workspace/releases
+              (assoc (get store :workspace/releases) root value))
+       :release/root root
+       :release/value value
+       :release/created true})))
+
+(defn release-selection-error
+  [commit-store acceptance-store-value backend
+   workspace-id authority-root release]
+  (let [candidate-root (release-candidate-root release)
+        policy-root (release-policy-root release)
+        acceptance-root (release-acceptance-root release)
+        candidate (workspace/commit-at commit-store candidate-root)
+        accepted (acceptance-at acceptance-store-value acceptance-root)]
+    (cond
+      (= nil candidate)
+      :workspace/release-candidate-not-found
+
+      (not (= workspace-id (get candidate :workspace/id)))
+      :workspace/release-candidate-workspace-mismatch
+
+      (= false
+         (acceptance/policy-published?
+          backend workspace-id policy-root authority-root))
+      :workspace/release-policy-not-published
+
+      (not (= candidate-root
+              (acceptance/current-ref-root
+               backend workspace-id workspace/main-ref-name policy-root)))
+      :workspace/release-candidate-not-current-main
+
+      (= nil accepted)
+      :workspace/release-acceptance-not-found
+
+      (not (= nil
+              (acceptance/acceptance-shape-error
+               workspace-id authority-root accepted)))
+      :workspace/invalid-release-acceptance
+
+      (not (= candidate-root
+              (acceptance/acceptance-candidate-root accepted)))
+      :workspace/release-acceptance-candidate-mismatch
+
+      (not (= policy-root
+              (acceptance/acceptance-policy-root accepted)))
+      :workspace/release-acceptance-policy-mismatch
+
+      (not (= authority-root
+              (acceptance/acceptance-authority accepted)))
+      :workspace/release-acceptance-authority-mismatch
+
+      :else nil)))
+
+(defn validate-release
+  [commit-store acceptance-store-value backend
+   workspace-id authority-root release]
+  (let [shape-error
+        (release-shape-error workspace-id authority-root release)]
+    (if (not (= nil shape-error))
+      {:error shape-error}
+      (let [selection-error
+            (release-selection-error
+             commit-store acceptance-store-value backend
+             workspace-id authority-root release)]
+        (if (not (= nil selection-error))
+          {:error selection-error}
+          {:ok release
+           :ref/scope (workspace/workspace-scope workspace-id)
+           :ref/name (release-ref-name (release-version release))
+           :ref/expected-root nil
+           :ref/desired-root (release-candidate-root release)
+           :ref/authorization-root (release-policy-root release)})))))
+
+(defn select-memory-release
+  "Validates then publishes one immutable release version exactly once."
+  [commit-store acceptance-store-value release-store-value backend
+   workspace-id authority-root release-root]
+  (let [release (release-at release-store-value release-root)
+        validation
+        (if (= nil release)
+          {:error :workspace/release-not-found}
+          (validate-release
+           commit-store acceptance-store-value backend
+           workspace-id authority-root release))]
+    (if (not (= nil (get validation :error)))
+      validation
+      (storage/memory-compare-and-set-ref
+       backend
+       (storage/ref-update-request
+        (get validation :ref/scope)
+        (get validation :ref/name)
+        nil
+        (get validation :ref/desired-root)
+        (get validation :ref/authorization-root))))))
