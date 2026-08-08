@@ -1,0 +1,25 @@
+name: GitHub Agent Workflow
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile GitHub adapter
+        run: |
+          python3 -m py_compile \
+            scripts/ignatius_github_common.py \
+            scripts/ignatius_github_issue.py \
+            scripts/ignatius_github_outbox.py \
+            scripts/ignatius-github-event \
+            scripts/test-ignatius-github-event
+      - name: Test verified issue ingestion and durable replay
+        run: python3 scripts/test-ignatius-github-event
