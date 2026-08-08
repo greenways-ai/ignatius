@@ -4,11 +4,12 @@
 (def workflow-format-version 1)
 
 (defn event-plan
-  "Pure workflow planner. Host adapters supply facts; Hara supplies meaning."
+  "Pure workflow planner. Host adapters supply verified provider facts; Hara
+   supplies validation, canonical identities and Ignatius event meaning."
   [event]
   (case (get event :provider/event-kind)
     :github/issues
-    (github/plan-issue-open event)
+    (github/plan-issue event)
 
     :github/push
     (github/plan-push event)

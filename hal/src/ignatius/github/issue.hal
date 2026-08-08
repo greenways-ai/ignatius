@@ -1,0 +1,178 @@
+(ns ignatius.github.issue
+  (:require [ignatius.github.common :as common]))
+
+(def supported-actions
+  [:opened :edited :reopened :closed])
+
+(defn supported-action?
+  [action]
+  (reduce
+   (fn [found candidate]
+     (or found (= action candidate)))
+   false
+   supported-actions))
+
+(defn known-state?
+  [state]
+  (or (= "open" state)
+      (= "closed" state)))
+
+(defn expected-state
+  [action]
+  (case action
+    :opened "open"
+    :reopened "open"
+    :closed "closed"
+    :edited nil
+    nil))
+
+(defn state-valid?
+  [action state]
+  (let [expected (expected-state action)]
+    (and (known-state? state)
+         (or (nil? expected)
+             (= expected state)))))
+
+(defn snapshot-valid?
+  [snapshot]
+  (and
+   (map? snapshot)
+   (common/positive-integer? (get snapshot :repository/id))
+   (common/non-empty-string? (get snapshot :repository/node-id))
+   (common/non-empty-string? (get snapshot :repository/full-name))
+   (common/positive-integer? (get snapshot :issue/id))
+   (common/non-empty-string? (get snapshot :issue/node-id))
+   (common/positive-integer? (get snapshot :issue/number))
+   (common/non-empty-string? (get snapshot :issue/title))
+   (string? (get snapshot :issue/body))
+   (known-state? (get snapshot :issue/state))
+   (common/non-empty-string? (get snapshot :issue/author-login))
+   (common/non-empty-string? (get snapshot :issue/created-at))
+   (common/non-empty-string? (get snapshot :issue/updated-at))))
+
+(defn stable-id
+  [snapshot]
+  (str "github/"
+       (get snapshot :repository/full-name)
+       "/issues/"
+       (get snapshot :issue/number)))
+
+(defn metadata
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        action (get facts :provider/event-action)]
+    {:provider/event-id (get facts :provider/delivery-id)
+     :provider/event-kind :github/issues
+     :provider/event-action action
+     :github/repository-id (get snapshot :repository/id)
+     :github/repository-node-id (get snapshot :repository/node-id)
+     :github/repository (get snapshot :repository/full-name)
+     :github/issue-id (get snapshot :issue/id)
+     :github/issue-node-id (get snapshot :issue/node-id)
+     :github/issue-number (get snapshot :issue/number)
+     :github/issue-author (get snapshot :issue/author-login)
+     :github/issue-updated-at (get snapshot :issue/updated-at)
+     :github/issue-labels
+     (common/ordered-unique (get snapshot :issue/labels))
+     :github/snapshot-format :json/canonical-v1}))
+
+(defn resource-event
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        digest (get facts :snapshot/digest)
+        version (common/snapshot-version digest)
+        previous (get facts :resource/previous-version)
+        resource-id (stable-id snapshot)]
+    {:action :resource/register
+     :workspace/id (get facts :workspace/id)
+     :resource/id resource-id
+     :resource/kind :github/issue-snapshot
+     :resource/provider :github
+     :resource/version version
+     :resource/previous-version previous
+     :resource/parent-versions
+     (if (nil? previous) [] [previous])
+     :resource/locator
+     {:github/repository (get snapshot :repository/full-name)
+      :github/issue-number (get snapshot :issue/number)}
+     :resource/digest-algorithm :sha256
+     :resource/digest digest
+     :resource/size (get facts :snapshot/size)
+     :resource/metadata (metadata facts)}))
+
+(defn work-event
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        digest (get facts :snapshot/digest)
+        version (common/snapshot-version digest)
+        resource-id (stable-id snapshot)]
+    {:action :work/create
+     :workspace/id (get facts :workspace/id)
+     :work/id resource-id
+     :work/kind :agent/task
+     :work/title (get snapshot :issue/title)
+     :work/definition-root (get facts :work/definition-root)
+     :work/dependency-ids
+     (common/ordered-unique (get facts :work/dependency-ids))
+     :work/input-references
+     [(common/exact-resource-reference
+       (get facts :workspace/id)
+       resource-id
+       version)]
+     :work/metadata (metadata facts)}))
+
+(defn previous-version-valid?
+  [action previous]
+  (if (= :opened action)
+    (nil? previous)
+    (common/non-empty-string? previous)))
+
+(defn plan
+  "Plans exact issue resource and work events from verified provider facts.
+   The host supplies canonical snapshot bytes, digest and byte count as explicit
+   capabilities; Hara owns validation, identity derivation and event meaning."
+  [facts]
+  (let [action (get facts :provider/event-action)
+        snapshot (get facts :snapshot)
+        digest (get facts :snapshot/digest)
+        size (get facts :snapshot/size)
+        previous (get facts :resource/previous-version)]
+    (cond
+      (not= :github/issues (get facts :provider/event-kind))
+      {:error :github/issue-event-kind-mismatch}
+
+      (not (supported-action? action))
+      {:error :github/unsupported-issue-action}
+
+      (not (common/non-empty-string? (get facts :workspace/id)))
+      {:error :github/missing-workspace-id}
+
+      (not (common/non-empty-string? (get facts :provider/delivery-id)))
+      {:error :github/missing-delivery-id}
+
+      (not (snapshot-valid? snapshot))
+      {:error :github/invalid-issue-snapshot}
+
+      (not (state-valid? action (get snapshot :issue/state)))
+      {:error :github/issue-action-state-mismatch}
+
+      (not (common/digest? digest))
+      {:error :github/invalid-snapshot-digest}
+
+      (not (common/positive-integer? size))
+      {:error :github/invalid-snapshot-size}
+
+      (not (previous-version-valid? action previous))
+      {:error :github/invalid-issue-predecessor}
+
+      (and (= :opened action)
+           (not (common/non-empty-string?
+                 (get facts :work/definition-root))))
+      {:error :github/missing-work-definition}
+
+      (= :opened action)
+      [(resource-event facts)
+       (work-event facts)]
+
+      :else
+      [(resource-event facts)])))

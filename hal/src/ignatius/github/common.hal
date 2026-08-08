@@ -1,0 +1,64 @@
+(ns ignatius.github.common
+  (:require [ignatius.record :as record]))
+
+(def github-plan-format-version 1)
+
+(defn vector-or-empty
+  [value]
+  (if (nil? value) [] value))
+
+(defn non-empty-string?
+  [value]
+  (and (string? value)
+       (> (count value) 0)))
+
+(defn positive-integer?
+  [value]
+  (and (integer? value)
+       (> value 0)))
+
+(defn all-present?
+  [values]
+  (reduce
+   (fn [valid value]
+     (and valid (not (nil? value))))
+   true
+   values))
+
+(defn digest?
+  "Checks the bounded transport shape for a lowercase SHA-256 digest.
+   Character-level canonical-byte validation remains the responsibility of the
+   injected SHA-256 capability until the Hara canonical JSON slice lands."
+  [digest]
+  (and (string? digest)
+       (= 64 (count digest))))
+
+(defn snapshot-version
+  [digest]
+  (if (digest? digest)
+    (str "sha256:" digest)
+    nil))
+
+(defn ordered-unique
+  "Removes duplicates without importing provider-specific collection policy.
+   Provider facts are supplied in canonical provider order."
+  [values]
+  (get
+   (reduce
+    (fn [state value]
+      (if (= true (get (get state :seen) value))
+        state
+        {:seen (assoc (get state :seen) value true)
+         :values (conj (get state :values) value)}))
+    {:seen {} :values []}
+    (vector-or-empty values))
+   :values))
+
+(defn exact-resource-reference
+  [workspace resource-id version]
+  (record/logical-reference
+   {:reference/scope-id workspace
+    :reference/kind :resource/version
+    :reference/id resource-id
+    :reference/root version
+    :reference/metadata {}}))
