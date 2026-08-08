@@ -17,6 +17,7 @@ from ignatius_github_common import edn, parse_json, require_string, verify_signa
 from ignatius_github_issue import opened_events, update_events
 from ignatius_github_outbox import record_delivery
 from ignatius_github_pull import proposal_events
+from ignatius_github_pull_lifecycle import lifecycle_events
 from ignatius_github_push import push_events
 
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
@@ -82,6 +83,12 @@ def parser() -> argparse.ArgumentParser:
     proposal.add_argument("--candidate-root", required=True)
     proposal.add_argument("--origin-root", required=True)
     _version_arguments(proposal)
+
+    lifecycle = commands.add_parser("pull-request-lifecycle")
+    _common_arguments(lifecycle)
+    lifecycle.add_argument("--candidate-root", required=True)
+    lifecycle.add_argument("--origin-root", required=True)
+    lifecycle.add_argument("--previous-version", required=True)
     return root
 
 
@@ -101,7 +108,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     previous = getattr(args, "previous_version", None)
     if (
         args.command.startswith("issue-")
-        or args.command in {"check-completed", "pull-request-proposal"}
+        or args.command
+        in {"check-completed", "pull-request-proposal", "pull-request-lifecycle"}
     ) and previous is not None:
         if not _ISSUE_VERSION.fullmatch(previous):
             raise ValueError(
@@ -173,6 +181,16 @@ def main(argv: Iterable[str] | None = None) -> int:
                 commit_resource_id=args.commit_resource_id,
                 commit_version=args.commit_version,
                 previous_version=None if args.initial else args.previous_version,
+            )
+        elif args.command == "pull-request-lifecycle":
+            result = lifecycle_events(
+                payload,
+                workspace=args.workspace,
+                expected_repository=args.repository,
+                delivery_id=args.delivery_id,
+                candidate_root=args.candidate_root,
+                origin_root=args.origin_root,
+                previous_version=args.previous_version,
             )
         else:
             result = proposal_events(
