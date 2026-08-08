@@ -21,8 +21,10 @@ switch over.
 
 ## Compatibility vectors
 
-`hal/test/ignatius/github_compatibility_vectors.hal` freezes complete event
-vectors produced by the current Python planners:
+`hal/src/ignatius/github/compatibility_vectors.hal` freezes complete event
+vectors produced by the current Python planners. It is packaged Hara source so
+both the planner-parity suite and the `std.work` delivery suite consume exactly
+the same compatibility facts.
 
 | Vector | Python source | Snapshot digest |
 |---|---|---|
