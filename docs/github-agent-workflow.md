@@ -129,10 +129,78 @@ Run the complete fixture with:
 python3 scripts/test-ignatius-github-event
 ```
 
+## Exact branch and commit resources
+
+A signed GitHub push delivery identifies the repository, ref, previous provider
+head and new provider head. The push payload does not carry the complete Git
+commit object, so the host must enrich the delivery with the exact commit object
+returned by a capability-scoped GitHub or Git reader.
+
+```sh
+python3 scripts/ignatius-github-event push \
+  --workspace greenways/ignatius \
+  --repository greenways-ai/ignatius \
+  --delivery-id "$X_GITHUB_DELIVERY" \
+  --payload push-webhook.json \
+  --signature "$X_HUB_SIGNATURE_256" \
+  --commit-object commit-object.json \
+  --process-id github/greenways-ai/ignatius/issues/44 \
+  --previous-version <currently-selected-commit> \
+  --outbox-db var/ignatius-github.sqlite
+```
+
+The adapter requires the enriched commit SHA to equal the signed push `after`
+SHA, then pins the exact tree and ordered parent commit IDs. The emitted
+`:git/commit` resource contains:
+
+```text
+resource/version
+  exact Git commit object ID
+
+resource/previous-version
+  exact Ignatius resource version expected to be selected before this update
+
+resource/parent-versions
+  Git commit parents from the enriched commit object
+
+resource/locator
+  repository, full branch ref and exact tree object ID
+```
+
+The compare-and-set predecessor and Git ancestry are deliberately different.
+On a force push, `:resource/previous-version` remains the old selected branch
+head while `:resource/parent-versions` records the actual parents of the new
+commit. This preserves both selection history and content ancestry without
+pretending that one is the other.
+
+The optional `--process-id` attributes a newly registered output commit to the
+running work item that produced it. The canonical workflow reducer will still
+require the assignee to sign registration and later completion.
+
+The current slice accepts branch refs only. Branch deletion is provider state,
+not a new commit version, and is rejected until a separate ref-deletion policy
+is defined.
+
+The `--commit-object` file is a host-capability input. Production operators must
+obtain it from an authenticated GitHub API lookup or a verified local Git object
+reader for the signed `after` SHA. Arbitrary client-supplied JSON must not be
+promoted as provider evidence.
+
+Run the Git resource fixture with:
+
+```sh
+python3 scripts/test-ignatius-github-push
+```
+
+It covers normal updates, exact tree and parent retention, process attribution,
+force pushes, delivery replay, repository binding, deleted/tag/invalid refs,
+object-ID width checks, enrichment mismatch, duplicate JSON keys and malformed
+HMACs.
+
 ## Next slices
 
-- branch and commit snapshots enriched with exact Git tree IDs;
 - check runs as execution evidence and checkpoints;
 - pull requests as workspace proposals;
 - attributed and signed review decisions;
-- merged output registration and release evidence.
+- merged output registration and release evidence;
+- direct capability-scoped GitHub/Git enrichment without an intermediate file.
