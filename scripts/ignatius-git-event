@@ -15,6 +15,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass(frozen=True)
@@ -71,13 +72,26 @@ def run_git(repo: Path, *args: str, allow_failure: bool = False) -> str:
     return process.stdout.strip()
 
 
+def sanitize_remote(remote: str) -> str:
+    """Remove credentials, query strings and fragments from URL remotes."""
+    if not remote or "://" not in remote:
+        return remote
+    parsed = urlsplit(remote)
+    host = parsed.hostname or ""
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+
+
 def git_repository(repo: Path) -> dict[str, Any]:
     top = Path(run_git(repo, "rev-parse", "--show-toplevel"))
     commit = run_git(top, "rev-parse", "HEAD")
     tree = run_git(top, "rev-parse", "HEAD^{tree}")
     parents = run_git(top, "show", "-s", "--format=%P", "HEAD").split()
-    remote = run_git(
-        top, "config", "--get", "remote.origin.url", allow_failure=True
+    remote = sanitize_remote(
+        run_git(
+            top, "config", "--get", "remote.origin.url", allow_failure=True
+        )
     )
     ref = run_git(
         top, "symbolic-ref", "-q", "HEAD", allow_failure=True
@@ -330,7 +344,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         payload = args.build(args)
-    except (RuntimeError, ValueError) as error:
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        argparse.ArgumentTypeError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     print(edn(payload))
