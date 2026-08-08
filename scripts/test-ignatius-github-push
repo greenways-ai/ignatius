@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""Executable fixture for verified push enrichment into exact Git resources."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+PUSH_FIXTURE = ROOT / "examples" / "agent-workflow" / "github" / "push.json"
+COMMIT_FIXTURE = (
+    ROOT / "examples" / "agent-workflow" / "github" / "commit-object.json"
+)
+SECRET = "test-only-webhook-secret"
+OLD = "1111111111111111111111111111111111111111"
+HEAD = "2222222222222222222222222222222222222222"
+TREE = "3333333333333333333333333333333333333333"
+NEW_HEAD = "4444444444444444444444444444444444444444"
+NEW_TREE = "5555555555555555555555555555555555555555"
+NEW_PARENT = "6666666666666666666666666666666666666666"
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+
+def invoke(
+    body: bytes,
+    commit: bytes,
+    database: Path,
+    *extra: str,
+    delivery: str,
+    repository: str = "greenways-ai/ignatius",
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload_path = database.with_suffix(f".{delivery}.push.json")
+    commit_path = database.with_suffix(f".{delivery}.commit.json")
+    payload_path.write_bytes(body)
+    commit_path.write_bytes(commit)
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "push",
+        "--workspace",
+        "greenways/ignatius",
+        "--repository",
+        repository,
+        "--delivery-id",
+        delivery,
+        "--payload",
+        str(payload_path),
+        "--signature",
+        supplied_signature or signature(body),
+        "--commit-object",
+        str(commit_path),
+        "--outbox-db",
+        str(database),
+        *extra,
+    ]
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+
+
+def main() -> int:
+    body = PUSH_FIXTURE.read_bytes()
+    commit = COMMIT_FIXTURE.read_bytes()
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+        initial = invoke(
+            body,
+            commit,
+            database,
+            "--process-id",
+            "github/greenways-ai/ignatius/issues/44",
+            "--initial",
+            delivery="push-initial",
+        )
+        assert initial.returncode == 0, initial.stderr
+        replay = invoke(
+            body,
+            commit,
+            database,
+            "--process-id",
+            "github/greenways-ai/ignatius/issues/44",
+            "--initial",
+            delivery="push-initial",
+        )
+        assert replay.returncode == 0, replay.stderr
+        assert initial.stdout == replay.stdout
+
+        output = initial.stdout
+        assert ":action :resource/register" in output
+        assert (
+            ':resource/id "github/greenways-ai/ignatius/'
+            'refs/heads/agent/github-resource"' in output
+        )
+        assert ":resource/kind :git/commit" in output
+        assert f':resource/version "{HEAD}"' in output
+        assert ":resource/previous-version nil" in output
+        assert f':resource/parent-versions ["{OLD}"]' in output
+        assert f':git/tree "{TREE}"' in output
+        assert ':process/id "github/greenways-ai/ignatius/issues/44"' in output
+        assert ":provider/event-action :updated" in output
+        assert ":resource/digest-algorithm :git/sha1" in output
+        assert SECRET not in output
+        assert "Publish exact Git resource" not in output
+        assert "planner@example.com" not in output
+        assert ":installation" not in output
+        assert "api.github.com" not in output
+
+        force_payload = json.loads(body)
+        force_payload["before"] = HEAD
+        force_payload["after"] = NEW_HEAD
+        force_payload["forced"] = True
+        force_commit = json.loads(commit)
+        force_commit["sha"] = NEW_HEAD
+        force_commit["tree"]["sha"] = NEW_TREE
+        force_commit["parents"] = [{"sha": NEW_PARENT}]
+        force = invoke(
+            canonical(force_payload),
+            canonical(force_commit),
+            database,
+            "--previous-version",
+            HEAD,
+            delivery="push-force",
+        )
+        assert force.returncode == 0, force.stderr
+        assert f':resource/version "{NEW_HEAD}"' in force.stdout
+        assert f':resource/previous-version "{HEAD}"' in force.stdout
+        assert f':resource/parent-versions ["{NEW_PARENT}"]' in force.stdout
+        assert f':github/before "{HEAD}"' in force.stdout
+        assert f':git/tree "{NEW_TREE}"' in force.stdout
+        assert ":provider/event-action :force-updated" in force.stdout
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 2
+        snapshots = [
+            bytes(row[0])
+            for row in connection.execute(
+                "SELECT canonical_json FROM github_snapshot ORDER BY version"
+            )
+        ]
+        assert any(TREE.encode() in snapshot for snapshot in snapshots)
+        assert any(NEW_TREE.encode() in snapshot for snapshot in snapshots)
+        connection.close()
+
+        mismatch = json.loads(commit)
+        mismatch["sha"] = "7777777777777777777777777777777777777777"
+        require_failure(
+            invoke(
+                body,
+                canonical(mismatch),
+                database,
+                "--initial",
+                delivery="push-mismatch",
+            ),
+            "commit SHA mismatch",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                commit,
+                database,
+                "--initial",
+                delivery="push-wrong-repo",
+                repository="other/repo",
+            ),
+            "repository mismatch",
+        )
+
+        deleted = json.loads(body)
+        deleted["deleted"] = True
+        deleted["after"] = "0" * 40
+        require_failure(
+            invoke(
+                canonical(deleted),
+                commit,
+                database,
+                "--previous-version",
+                HEAD,
+                delivery="push-deleted",
+            ),
+            "deleted branch",
+        )
+
+        created = json.loads(body)
+        created["ref"] = "refs/heads/new-branch"
+        created["before"] = "0" * 40
+        created["created"] = True
+        created_result = invoke(
+            canonical(created),
+            commit,
+            database,
+            "--initial",
+            delivery="push-created",
+        )
+        assert created_result.returncode == 0, created_result.stderr
+        assert ":provider/event-action :created" in created_result.stdout
+        assert ":resource/previous-version nil" in created_result.stdout
+
+        require_failure(
+            invoke(
+                canonical(created),
+                commit,
+                database,
+                "--previous-version",
+                OLD,
+                delivery="push-created-with-previous",
+            ),
+            "created branch with previous version",
+        )
+
+        created_nonzero = dict(created)
+        created_nonzero["before"] = OLD
+        require_failure(
+            invoke(
+                canonical(created_nonzero),
+                commit,
+                database,
+                "--initial",
+                delivery="push-created-nonzero",
+            ),
+            "created branch with nonzero before",
+        )
+
+        created_forced = dict(created)
+        created_forced["forced"] = True
+        require_failure(
+            invoke(
+                canonical(created_forced),
+                commit,
+                database,
+                "--initial",
+                delivery="push-created-forced",
+            ),
+            "created branch marked forced",
+        )
+
+        update_zero = json.loads(body)
+        update_zero["before"] = "0" * 40
+        require_failure(
+            invoke(
+                canonical(update_zero),
+                commit,
+                database,
+                "--initial",
+                delivery="push-update-zero",
+            ),
+            "updated branch with zero before",
+        )
+
+        tag = json.loads(body)
+        tag["ref"] = "refs/tags/v1.0.0"
+        require_failure(
+            invoke(
+                canonical(tag),
+                commit,
+                database,
+                "--initial",
+                delivery="push-tag",
+            ),
+            "tag ref",
+        )
+
+        invalid_ref = json.loads(body)
+        invalid_ref["ref"] = "refs/heads/bad..branch"
+        require_failure(
+            invoke(
+                canonical(invalid_ref),
+                commit,
+                database,
+                "--initial",
+                delivery="push-invalid-ref",
+            ),
+            "invalid branch ref",
+        )
+
+        for invalid_branch, label in [
+            ("refs/heads/.hidden", "dot-prefixed branch component"),
+            ("refs/heads/@", "single-at branch"),
+            ("refs/heads/topic/.private", "nested dot-prefixed component"),
+            ("refs/heads/topic/end.lock", "lock-suffixed component"),
+        ]:
+            invalid = json.loads(body)
+            invalid["ref"] = invalid_branch
+            require_failure(
+                invoke(
+                    canonical(invalid),
+                    commit,
+                    database,
+                    "--initial",
+                    delivery=(
+                        "push-invalid-ref-"
+                        + hashlib.sha256(invalid_branch.encode()).hexdigest()[:8]
+                    ),
+                ),
+                label,
+            )
+
+        invalid_parent = json.loads(commit)
+        invalid_parent["parents"] = [{"sha": "aa"}]
+        require_failure(
+            invoke(
+                body,
+                canonical(invalid_parent),
+                database,
+                "--initial",
+                delivery="push-invalid-parent",
+            ),
+            "invalid parent hash",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                commit,
+                database,
+                "--previous-version",
+                "aa",
+                delivery="push-invalid-previous",
+            ),
+            "invalid previous version",
+        )
+
+        duplicate_payload = body[:-2] + b',"ref":"refs/heads/other"}\n'
+        require_failure(
+            invoke(
+                duplicate_payload,
+                commit,
+                database,
+                "--initial",
+                delivery="push-duplicate-payload",
+            ),
+            "duplicate push key",
+        )
+
+        duplicate_commit = commit[:-2] + b',"sha":"' + HEAD.encode() + b'"}\n'
+        require_failure(
+            invoke(
+                body,
+                duplicate_commit,
+                database,
+                "--initial",
+                delivery="push-duplicate-commit",
+            ),
+            "duplicate commit key",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                commit,
+                database,
+                "--initial",
+                delivery="push-bad-signature",
+                supplied_signature="sha256=00",
+            ),
+            "invalid signature",
+        )
+
+    print("GitHub push resource adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
