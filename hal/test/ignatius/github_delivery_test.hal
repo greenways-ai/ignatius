@@ -3,7 +3,7 @@
             [std.work.provider.memory :as memory]
             [ignatius.github.delivery :as delivery]
             [ignatius.github-workflow :as workflow]
-            [ignatius.github-compatibility-vectors :as vectors]))
+            [ignatius.github.compatibility-vectors :as vectors]))
 
 (def provider
   (memory/memory-store))
