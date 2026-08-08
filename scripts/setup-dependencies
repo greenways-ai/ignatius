@@ -32,39 +32,10 @@ checkout_revision() {
   git -C "$checkout" checkout --detach --force "$revision"
 }
 
-install_hara_layout_compatibility() {
-  local checkout="$1"
-  local manifest="$checkout/core/rust/Cargo.toml"
-  local legacy="$checkout/rust"
-  local exclude
-
-  if [[ ! -f "$manifest" ]]; then
-    echo "error: pinned Hara checkout has no core/rust/Cargo.toml" >&2
-    exit 1
-  fi
-
-  # Ignatius Verify historically consumed the Hara CLI at rust/. The current
-  # Hara repository moved that workspace to core/rust/. Keep one ignored local
-  # alias while downstream build consumers migrate without dirtying the pinned
-  # dependency checkout.
-  exclude="$(git -C "$checkout" rev-parse --git-path info/exclude)"
-  mkdir -p "$(dirname "$exclude")"
-  if ! grep -qxF '/rust' "$exclude" 2>/dev/null; then
-    printf '/rust\n' >> "$exclude"
-  fi
-
-  if [[ -e "$legacy" && ! -L "$legacy" ]]; then
-    echo "error: Hara compatibility path exists and is not a symlink: $legacy" >&2
-    exit 1
-  fi
-  ln -sfn core/rust "$legacy"
-}
-
 checkout_revision \
   "$HARA_REPOSITORY" \
   "$HARA_REVISION" \
   "$repo_root/.local/hara.lang"
-install_hara_layout_compatibility "$repo_root/.local/hara.lang"
 
 checkout_revision \
   "$FOUNDATION_REPOSITORY" \
