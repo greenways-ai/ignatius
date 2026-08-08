@@ -1,0 +1,114 @@
+(ns ignatius.github-push-test
+  (:require [std.lib.test :as test]
+            [ignatius.github.push :as push]
+            [ignatius.github-workflow :as workflow]))
+
+(def before
+  "1111111111111111111111111111111111111111")
+
+(def after
+  "2222222222222222222222222222222222222222")
+
+(def tree
+  "3333333333333333333333333333333333333333")
+
+(def digest
+  "3f5b0c42fe9f3ef181757d2f987782d69f393dd38b5902a9cd14db0ec94a2895")
+
+(def snapshot
+  {:repository/id 1323525281
+   :repository/node-id "R_kgDOTuNkoQ"
+   :repository/full-name "greenways-ai/ignatius"
+   :git/ref "refs/heads/agent/github-resource"
+   :git/branch "agent/github-resource"
+   :git/before before
+   :git/after after
+   :git/created false
+   :git/deleted false
+   :git/forced false
+   :git/commit-sha after
+   :git/tree tree
+   :git/parents [before]})
+
+(def facts
+  {:provider/event-kind :github/push
+   :provider/delivery-id "delivery-push"
+   :workspace/id "greenways/ignatius"
+   :snapshot snapshot
+   :snapshot/digest digest
+   :snapshot/size 484
+   :resource/previous-version before
+   :process/id "github/greenways-ai/ignatius/issues/44"})
+
+(def expected
+  [{:action :resource/register
+    :workspace/id "greenways/ignatius"
+    :resource/id
+    "github/greenways-ai/ignatius/refs/heads/agent/github-resource"
+    :resource/kind :git/commit
+    :resource/provider :github
+    :resource/version after
+    :resource/previous-version before
+    :resource/parent-versions [before]
+    :resource/locator
+    {:github/repository "greenways-ai/ignatius"
+     :git/ref "refs/heads/agent/github-resource"
+     :git/tree tree}
+    :resource/digest-algorithm :git/sha1
+    :resource/digest after
+    :resource/metadata
+    {:provider/event-id "delivery-push"
+     :provider/event-kind :github/push
+     :provider/event-action :updated
+     :github/repository-id 1323525281
+     :github/repository-node-id "R_kgDOTuNkoQ"
+     :github/repository "greenways-ai/ignatius"
+     :github/before before
+     :github/after after
+     :github/created false
+     :github/forced false
+     :git/tree tree
+     :git/parents [before]
+     :github/snapshot-version
+     (str "sha256:" digest)}
+    :process/id "github/greenways-ai/ignatius/issues/44"}])
+
+(def results
+  [(test/check "push planner preserves exact commit, tree and parent identity"
+               (push/plan facts)
+               expected)
+   (test/check "workflow facade delegates push planning to Hara"
+               (workflow/event-plan facts)
+               expected)
+   (test/check "ordinary update action is derived from provider facts"
+               (push/action snapshot)
+               :updated)
+   (test/check "force update action is derived without changing ancestry"
+               (push/action (assoc snapshot :git/forced true))
+               :force-updated)
+   (test/check "commit enrichment must match the signed after object"
+               (push/plan
+                (assoc facts
+                       :snapshot
+                       (assoc snapshot :git/commit-sha before)))
+               {:error :github/invalid-push-snapshot})
+   (test/check "branch deletion is provider state, not a commit version"
+               (push/plan
+                (assoc facts
+                       :snapshot
+                       (assoc snapshot :git/deleted true)))
+               {:error :github/invalid-push-selection})
+   (test/check "new branch requires the zero predecessor and no CAS version"
+               (push/plan
+                (assoc facts
+                       :snapshot
+                       (assoc snapshot :git/created true)))
+               {:error :github/invalid-push-selection})
+   (test/check "full ref must agree with the normalized branch"
+               (push/plan
+                (assoc facts
+                       :snapshot
+                       (assoc snapshot :git/ref "refs/tags/not-a-branch")))
+               {:error :github/invalid-push-snapshot})])
+
+(test/print-results results)

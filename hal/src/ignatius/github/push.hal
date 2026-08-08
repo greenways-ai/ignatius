@@ -1,0 +1,192 @@
+(ns ignatius.github.push
+  (:require [ignatius.github.common :as common]))
+
+(def zero-sha1
+  "0000000000000000000000000000000000000000")
+
+(def zero-sha256
+  "0000000000000000000000000000000000000000000000000000000000000000")
+
+(defn boolean-value?
+  [value]
+  (or (= true value)
+      (= false value)))
+
+(defn object-id-width
+  [value]
+  (if (string? value)
+    (let [width (count value)]
+      (if (or (= 40 width)
+              (= 64 width))
+        width
+        nil))
+    nil))
+
+(defn object-id?
+  [value]
+  (not (nil? (object-id-width value))))
+
+(defn zero-object-id?
+  [value]
+  (or (= zero-sha1 value)
+      (= zero-sha256 value)))
+
+(defn same-width?
+  [value width]
+  (= width (object-id-width value)))
+
+(defn parents-valid?
+  [parents width]
+  (reduce
+   (fn [valid parent]
+     (and valid (same-width? parent width)))
+   true
+   (common/vector-or-empty parents)))
+
+(defn action
+  [snapshot]
+  (cond
+    (= true (get snapshot :git/created)) :created
+    (= true (get snapshot :git/forced)) :force-updated
+    :else :updated))
+
+(defn object-format
+  [object-id]
+  (if (= 40 (object-id-width object-id))
+    :sha1
+    :sha256))
+
+(defn digest-algorithm
+  [object-id]
+  (if (= :sha1 (object-format object-id))
+    :git/sha1
+    :git/sha256))
+
+(defn snapshot-valid?
+  [snapshot]
+  (let [after (get snapshot :git/after)
+        width (object-id-width after)
+        before (get snapshot :git/before)
+        commit (get snapshot :git/commit-sha)
+        tree (get snapshot :git/tree)
+        branch (get snapshot :git/branch)
+        ref (get snapshot :git/ref)]
+    (and
+     (map? snapshot)
+     (common/positive-integer? (get snapshot :repository/id))
+     (common/non-empty-string? (get snapshot :repository/node-id))
+     (common/non-empty-string? (get snapshot :repository/full-name))
+     (common/non-empty-string? branch)
+     (= ref (str "refs/heads/" branch))
+     (boolean-value? (get snapshot :git/created))
+     (boolean-value? (get snapshot :git/deleted))
+     (boolean-value? (get snapshot :git/forced))
+     (not (nil? width))
+     (not (zero-object-id? after))
+     (same-width? before width)
+     (same-width? commit width)
+     (= commit after)
+     (same-width? tree width)
+     (parents-valid? (get snapshot :git/parents) width))))
+
+(defn selection-valid?
+  [snapshot previous]
+  (let [created (get snapshot :git/created)
+        forced (get snapshot :git/forced)
+        before (get snapshot :git/before)
+        after (get snapshot :git/after)
+        width (object-id-width after)]
+    (and
+     (not (= true (get snapshot :git/deleted)))
+     (not (and (= true created) (= true forced)))
+     (if (= true created)
+       (and (zero-object-id? before)
+            (nil? previous))
+       (and (not (zero-object-id? before))
+            (or (nil? previous)
+                (same-width? previous width)))))))
+
+(defn metadata
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        digest (get facts :snapshot/digest)]
+    {:provider/event-id (get facts :provider/delivery-id)
+     :provider/event-kind :github/push
+     :provider/event-action (action snapshot)
+     :github/repository-id (get snapshot :repository/id)
+     :github/repository-node-id (get snapshot :repository/node-id)
+     :github/repository (get snapshot :repository/full-name)
+     :github/before (get snapshot :git/before)
+     :github/after (get snapshot :git/after)
+     :github/created (get snapshot :git/created)
+     :github/forced (get snapshot :git/forced)
+     :git/tree (get snapshot :git/tree)
+     :git/parents (common/vector-or-empty (get snapshot :git/parents))
+     :github/snapshot-version (common/snapshot-version digest)}))
+
+(defn resource-event
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        after (get snapshot :git/after)
+        event
+        {:action :resource/register
+         :workspace/id (get facts :workspace/id)
+         :resource/id
+         (str "github/"
+              (get snapshot :repository/full-name)
+              "/"
+              (get snapshot :git/ref))
+         :resource/kind :git/commit
+         :resource/provider :github
+         :resource/version after
+         :resource/previous-version (get facts :resource/previous-version)
+         :resource/parent-versions
+         (common/vector-or-empty (get snapshot :git/parents))
+         :resource/locator
+         {:github/repository (get snapshot :repository/full-name)
+          :git/ref (get snapshot :git/ref)
+          :git/tree (get snapshot :git/tree)}
+         :resource/digest-algorithm (digest-algorithm after)
+         :resource/digest after
+         :resource/metadata (metadata facts)}]
+    (if (nil? (get facts :process/id))
+      event
+      (assoc event :process/id (get facts :process/id)))))
+
+(defn plan
+  "Plans an exact Git commit resource from a verified push delivery and an
+   independently enriched commit object. Git ancestry and Ignatius CAS
+   selection remain distinct fields."
+  [facts]
+  (let [snapshot (get facts :snapshot)
+        digest (get facts :snapshot/digest)
+        size (get facts :snapshot/size)
+        previous (get facts :resource/previous-version)]
+    (cond
+      (not= :github/push (get facts :provider/event-kind))
+      {:error :github/push-event-kind-mismatch}
+
+      (not (common/non-empty-string? (get facts :workspace/id)))
+      {:error :github/missing-workspace-id}
+
+      (not (common/non-empty-string? (get facts :provider/delivery-id)))
+      {:error :github/missing-delivery-id}
+
+      (not (snapshot-valid? snapshot))
+      {:error :github/invalid-push-snapshot}
+
+      (not (selection-valid? snapshot previous))
+      {:error :github/invalid-push-selection}
+
+      (not (common/digest? digest))
+      {:error :github/invalid-snapshot-digest}
+
+      (not (common/positive-integer? size))
+      {:error :github/invalid-snapshot-size}
+
+      (and (not (nil? (get facts :process/id)))
+           (not (common/non-empty-string? (get facts :process/id))))
+      {:error :github/invalid-process-id}
+
+      :else
+      [(resource-event facts)])))
