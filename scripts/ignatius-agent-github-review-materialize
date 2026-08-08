@@ -42,7 +42,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_origin_root=args.origin_root,
             redact_body=args.redact_body,
         )
-    except (MaterializationError, OSError, sqlite3.Error, UnicodeError, json.JSONDecodeError) as error:
+    except (
+        MaterializationError,
+        OSError,
+        ValueError,
+        sqlite3.Error,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as error:
         code = str(error) if isinstance(error, MaterializationError) else "materialization-failed"
         print(f"error: {code}", file=sys.stderr)
         return 2
