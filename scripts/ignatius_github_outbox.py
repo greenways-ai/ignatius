@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS github_snapshot (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS github_delivery (
-  delivery_id TEXT PRIMARY KEY KEY,
+  delivery_id TEXT PRIMARY KEY,
   body_sha256 TEXT NOT NULL,
   snapshot_version TEXT NOT NULL,
   event_vector_edn TEXT NOT NULL,
