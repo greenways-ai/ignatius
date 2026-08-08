@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Executable fixture for the first Agent Workflow GitHub adapter slice."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+FIXTURE = ROOT / "examples" / "agent-workflow" / "github" / "issues-opened.json"
+SECRET = "test-only-webhook-secret"
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+
+def invoke(body: bytes, database: Path, *extra: str, delivery: str = "delivery-0001") -> subprocess.CompletedProcess[str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "issue-opened",
+        "--workspace",
+        "greenways/ignatius",
+        "--repository",
+        "greenways-ai/ignatius",
+        "--definition-root",
+        "definition/github-issue-work-v1",
+        "--delivery-id",
+        delivery,
+        "--payload",
+        str(payload),
+        "--signature",
+        signature(body),
+        "--outbox-db",
+        str(database),
+        *extra,
+    ]
+    environment = {**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET}
+    return subprocess.run(command, text=True, capture_output=True, env=environment, check=False)
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def main() -> int:
+    body = FIXTURE.read_bytes()
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+        first = invoke(
+            body,
+            database,
+            "--dependency-work-id",
+            "github/greenways-ai/ignatius/issues/43",
+            "--dependency-work-id",
+            "github/greenways-ai/ignatius/issues/43",
+            "--initial",
+        )
+        assert first.returncode == 0, first.stderr
+        second = invoke(
+            body,
+            database,
+            "--dependency-work-id",
+            "github/greenways-ai/ignatius/issues/43",
+            "--dependency-work-id",
+            "github/greenways-ai/ignatius/issues/43",
+            "--initial",
+        )
+        assert second.returncode == 0, second.stderr
+        assert first.stdout == second.stdout
+
+        output = first.stdout
+        assert ":action :resource/register" in output
+        assert ":action :work/create" in output
+        assert ':work/id "github/greenways-ai/ignatius/issues/44"' in output
+        assert ':work/dependency-ids ["github/greenways-ai/ignatius/issues/43"]' in output
+        assert ':github/issue-labels ["agent-workflow" "phase-c"]' in output
+        assert SECRET not in output
+        assert "Create exact provider snapshots" not in output
+        assert ":installation" not in output
+        versions = re.findall(r':resource/version "(sha256:[0-9a-f]{64})"', output)
+        roots = re.findall(r':reference/root "(sha256:[0-9a-f]{64})"', output)
+        assert len(versions) == 1 and versions == roots
+
+        connection = sqlite3.connect(database)
+        assert connection.execute("SELECT count(*) FROM github_delivery").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM github_outbox").fetchone()[0] == 2
+        assert connection.execute("SELECT count(*) FROM github_snapshot").fetchone()[0] == 1
+        stored = bytes(connection.execute("SELECT canonical_json FROM github_snapshot").fetchone()[0])
+        assert b"Create exact provider snapshots" in stored
+        assert [row[0] for row in connection.execute("SELECT position FROM github_outbox ORDER BY position")] == [0, 1]
+        connection.close()
+
+        bad = json.loads(body)
+        bad["issue"]["title"] = "Tampered after signature"
+        tampered = json.dumps(bad, separators=(",", ":")).encode()
+        collision = invoke(tampered, database, "--initial")
+        require_failure(collision, "delivery collision")
+
+        wrong_repo = subprocess.run(
+            [sys.executable, str(SCRIPT), "issue-opened", "--workspace", "greenways/ignatius", "--repository", "other/repo", "--definition-root", "definition/github-issue-work-v1", "--delivery-id", "wrong-repo", "--payload", str(FIXTURE), "--signature", signature(body), "--initial"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+            check=False,
+        )
+        require_failure(wrong_repo, "repository mismatch")
+
+        pull_request = json.loads(body)
+        pull_request["issue"]["pull_request"] = {"url": "https://api.github.com/example"}
+        require_failure(
+            invoke(json.dumps(pull_request).encode(), database, "--initial", delivery="delivery-pr"),
+            "pull request issue",
+        )
+
+        duplicate = body[:-2] + b',"action":"opened"}\n'
+        require_failure(invoke(duplicate, database, "--initial", delivery="delivery-duplicate"), "duplicate JSON key")
+
+        invalid_signature = subprocess.run(
+            [sys.executable, str(SCRIPT), "issue-opened", "--workspace", "greenways/ignatius", "--repository", "greenways-ai/ignatius", "--definition-root", "definition/github-issue-work-v1", "--delivery-id", "bad-signature", "--payload", str(FIXTURE), "--signature", "sha256=00", "--initial"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+            check=False,
+        )
+        require_failure(invalid_signature, "invalid signature")
+
+    print("GitHub issue adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

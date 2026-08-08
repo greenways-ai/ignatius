@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Verify a GitHub webhook and emit unsigned provider-neutral Ignatius events."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Iterable
+
+from ignatius_github_common import edn, parse_json, verify_signature
+from ignatius_github_issue import opened_events
+from ignatius_github_outbox import record_delivery
+
+MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__)
+    commands = root.add_subparsers(dest="command", required=True)
+    opened = commands.add_parser("issue-opened")
+    opened.add_argument("--workspace", required=True)
+    opened.add_argument("--repository", required=True, help="expected owner/repository")
+    opened.add_argument("--definition-root", required=True)
+    opened.add_argument("--delivery-id", required=True)
+    opened.add_argument("--payload", default="-")
+    opened.add_argument("--signature", required=True)
+    opened.add_argument("--secret-env", default="GITHUB_WEBHOOK_SECRET")
+    opened.add_argument("--dependency-work-id", action="append", default=[])
+    version = opened.add_mutually_exclusive_group(required=True)
+    version.add_argument("--initial", action="store_true")
+    version.add_argument("--previous-version")
+    opened.add_argument("--outbox-db")
+    return root
+
+
+def read_payload(path: str) -> bytes:
+    body = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
+    if len(body) > MAX_PAYLOAD_BYTES:
+        raise ValueError("GitHub webhook payload exceeds 10 MiB")
+    return body
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if len(args.delivery_id) > 255:
+            raise ValueError("--delivery-id exceeds 255 characters")
+        secret = os.environ.get(args.secret_env)
+        if not secret:
+            raise ValueError(f"webhook secret environment variable {args.secret_env!r} is missing")
+        body = read_payload(args.payload)
+        verify_signature(body, args.signature, secret)
+        payload = parse_json(body)
+        result = opened_events(
+            payload,
+            workspace=args.workspace,
+            expected_repository=args.repository,
+            definition_root=args.definition_root,
+            delivery_id=args.delivery_id,
+            dependencies=args.dependency_work_id,
+            previous_version=None if args.initial else args.previous_version,
+        )
+        if args.outbox_db:
+            record_delivery(
+                args.outbox_db,
+                delivery_id=args.delivery_id,
+                body=body,
+                snapshot_version=result.snapshot_version,
+                snapshot_json=result.snapshot_json,
+                events=result.events,
+            )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, sqlite3.Error) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(edn(result.events))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

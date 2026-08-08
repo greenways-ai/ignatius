@@ -1,0 +1,35 @@
+{
+  "action": "opened",
+  "issue": {
+    "id": 88001,
+    "node_id": "I_kwDOExample",
+    "number": 44,
+    "title": "Implement GitHub issue ingestion",
+    "body": "Create exact provider snapshots and canonical work.",
+    "state": "open",
+    "user": {
+      "login": "planner-agent"
+    },
+    "created_at": "2026-08-08T06:00:00Z",
+    "updated_at": "2026-08-08T06:00:00Z",
+    "labels": [
+      {
+        "name": "agent-workflow"
+      },
+      {
+        "name": "phase-c"
+      }
+    ]
+  },
+  "repository": {
+    "id": 1323525281,
+    "node_id": "R_kgDOTuNkoQ",
+    "full_name": "greenways-ai/ignatius"
+  },
+  "sender": {
+    "login": "planner-agent"
+  },
+  "installation": {
+    "id": 123
+  }
+}
