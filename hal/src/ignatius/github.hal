@@ -1,0 +1,77 @@
+(ns ignatius.github
+  (:require [ignatius.record :as record]
+            [ignatius.timeline :as timeline]))
+
+;; Provider adapters provide verified external facts. This namespace owns the
+;; deterministic conversion into Ignatius event values.
+
+(def github-format-version 1)
+
+(defn snapshot-version
+  [snapshot]
+  (str "sha256:" (record/sha256-canonical snapshot)))
+
+(defn issue-resource
+  [workspace snapshot delivery-id]
+  (let [version (snapshot-version snapshot)]
+    {:action :resource/register
+     :workspace/id workspace
+     :resource/id
+     (str "github/"
+          (get snapshot :repository/full-name)
+          "/issues/"
+          (get snapshot :issue/number))
+     :resource/kind :github/issue-snapshot
+     :resource/provider :github
+     :resource/version version
+     :resource/metadata
+     {:provider/event-id delivery-id
+      :provider/event-kind :github/issues
+      :github/snapshot-format :json/canonical-v1}}))
+
+(defn issue-work
+  [workspace snapshot definition-root]
+  {:action :work/create
+   :workspace/id workspace
+   :work/id
+   (str "github/"
+        (get snapshot :repository/full-name)
+        "/issues/"
+        (get snapshot :issue/number))
+   :work/kind :agent/task
+   :work/title (get snapshot :issue/title)
+   :work/definition-root definition-root})
+
+(defn plan-issue-open
+  [{:keys [workspace snapshot delivery-id definition-root]}]
+  [(issue-resource workspace snapshot delivery-id)
+   (issue-work workspace snapshot definition-root)])
+
+(defn plan-push
+  [{:keys [workspace snapshot delivery-id]}]
+  [{:action :resource/register
+    :workspace/id workspace
+    :resource/id
+    (str "github/"
+         (get snapshot :repository/full-name)
+         "/refs/heads/"
+         (get snapshot :branch))
+    :resource/kind :git/commit
+    :resource/provider :github
+    :resource/version (get snapshot :after)
+    :resource/metadata
+    {:provider/event-id delivery-id
+     :provider/event-kind :github/push}}])
+
+(defn plan-check-complete
+  [{:keys [workspace snapshot work-id]}]
+  [{:action :resource/register
+    :workspace/id workspace
+    :resource/kind :github/check-run-snapshot
+    :resource/version (snapshot-version snapshot)
+    :resource/metadata
+    {:provider :github}}
+   {:action :work/checkpoint
+    :workspace/id workspace
+    :work/id work-id
+    :checkpoint/state-root (snapshot-version snapshot)}])
