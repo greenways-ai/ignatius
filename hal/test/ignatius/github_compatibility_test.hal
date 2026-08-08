@@ -1,7 +1,7 @@
 (ns ignatius.github-compatibility-test
   (:require [std.lib.test :as test]
             [ignatius.github-workflow :as workflow]
-            [ignatius.github-compatibility-vectors :as vectors]))
+            [ignatius.github.compatibility-vectors :as vectors]))
 
 (defn check-vector
   [vector]
