@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+from ignatius_github_check import completed_check_events
 from ignatius_github_common import edn, parse_json, require_string, verify_signature
 from ignatius_github_issue import opened_events, update_events
 from ignatius_github_outbox import record_delivery
@@ -67,6 +68,13 @@ def parser() -> argparse.ArgumentParser:
     )
     push.add_argument("--process-id")
     _version_arguments(push)
+
+    check = commands.add_parser("check-completed")
+    _common_arguments(check)
+    check.add_argument("--work-id", required=True)
+    check.add_argument("--commit-resource-id", required=True)
+    check.add_argument("--commit-version", required=True)
+    _version_arguments(check)
     return root
 
 
@@ -84,7 +92,10 @@ def _validate_args(args: argparse.Namespace) -> None:
     if len(args.delivery_id) > 255:
         raise ValueError("--delivery-id exceeds 255 characters")
     previous = getattr(args, "previous_version", None)
-    if args.command.startswith("issue-") and previous is not None:
+    if (
+        args.command.startswith("issue-")
+        or args.command == "check-completed"
+    ) and previous is not None:
         if not _ISSUE_VERSION.fullmatch(previous):
             raise ValueError(
                 "--previous-version must be sha256:<64 lowercase hex characters>"
@@ -128,7 +139,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 delivery_id=args.delivery_id,
                 previous_version=args.previous_version,
             )
-        else:
+        elif args.command == "push":
             commit_object = parse_json(
                 read_bytes(
                     args.commit_object,
@@ -144,6 +155,17 @@ def main(argv: Iterable[str] | None = None) -> int:
                 delivery_id=args.delivery_id,
                 previous_version=None if args.initial else args.previous_version,
                 process_id=args.process_id,
+            )
+        else:
+            result = completed_check_events(
+                payload,
+                workspace=args.workspace,
+                expected_repository=args.repository,
+                delivery_id=args.delivery_id,
+                work_id=args.work_id,
+                commit_resource_id=args.commit_resource_id,
+                commit_version=args.commit_version,
+                previous_version=None if args.initial else args.previous_version,
             )
         if args.outbox_db:
             record_delivery(
