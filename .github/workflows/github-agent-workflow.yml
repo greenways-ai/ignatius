@@ -26,7 +26,12 @@ jobs:
             scripts/test-ignatius-github-event \
             scripts/test-ignatius-github-push \
             scripts/test-ignatius-github-check \
-            scripts/test-ignatius-github-pull
+            scripts/test-ignatius-github-pull \
+            scripts/ignatius-agent \
+            scripts/ignatius_agent_status_common.py \
+            scripts/ignatius_agent_status_sqlite.py \
+            scripts/ignatius-agent-workflow-status \
+            scripts/test-ignatius-agent-workflow-status
       - name: Test issue creation, lifecycle snapshots and durable replay
         run: python3 scripts/test-ignatius-github-event
       - name: Test exact Git branch resources and force-push ancestry
@@ -35,3 +40,5 @@ jobs:
         run: python3 scripts/test-ignatius-github-check
       - name: Test exact pull-request snapshots and constrained proposal intents
         run: python3 scripts/test-ignatius-github-pull
+      - name: Test sanitized Agent Workflow operational status
+        run: scripts/test-ignatius-agent-workflow-status
