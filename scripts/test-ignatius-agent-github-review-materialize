@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""Executable fixture for signer-visible GitHub review materialization."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+EVENT = ROOT / "scripts" / "ignatius-github-event"
+COMMAND = ROOT / "scripts" / "ignatius-agent-github-review-materialize"
+ROUTER = ROOT / "scripts" / "ignatius-agent"
+FIXTURE = ROOT / "examples" / "agent-workflow" / "github" / "pull-request-opened.json"
+SECRET = "test-only-webhook-secret"
+WORKSPACE = "greenways/ignatius"
+REPOSITORY = "greenways-ai/ignatius"
+CANDIDATE = "a" * 64
+ORIGIN = "b" * 64
+REVIEW_ID = 880060
+REVIEW_BODY = "PRIVATE REVIEW BODY\nSecond line."
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+
+def review_payload(base: dict[str, Any], *, commit_id: str | None = None) -> bytes:
+    value = json.loads(json.dumps(base))
+    reviewer = {
+        "id": 420060,
+        "node_id": "U_kwDOReviewer60",
+        "login": "reviewer-agent",
+    }
+    value["action"] = "submitted"
+    value["sender"] = reviewer
+    value["review"] = {
+        "id": REVIEW_ID,
+        "node_id": "PRR_kwDOExampleReview60",
+        "user": reviewer,
+        "body": REVIEW_BODY,
+        "state": "approved",
+        "commit_id": commit_id or value["pull_request"]["head"]["sha"],
+        "submitted_at": "2026-08-08T09:30:00Z",
+        "author_association": "MEMBER",
+        "html_url": "https://github.example/private/review",
+        "_links": {"html": {"href": "PRIVATE REVIEW LINK"}},
+    }
+    value["installation"] = {"id": 123, "token": "PRIVATE INSTALLATION VALUE"}
+    return canonical(value)
+
+
+def invoke_event(body: bytes, database: Path, delivery: str) -> tuple[str, str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(EVENT),
+            "pull-request-review",
+            "--workspace",
+            WORKSPACE,
+            "--repository",
+            REPOSITORY,
+            "--delivery-id",
+            delivery,
+            "--payload",
+            str(payload),
+            "--signature",
+            signature(body),
+            "--candidate-root",
+            CANDIDATE,
+            "--origin-root",
+            ORIGIN,
+            "--initial",
+            "--outbox-db",
+            str(database),
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"event failed: {result.stdout!r} {result.stderr!r}")
+    versions = re.findall(r':resource/version "(sha256:[0-9a-f]{64})"', result.stdout)
+    if len(versions) != 1:
+        raise AssertionError(f"expected one snapshot version: {result.stdout!r}")
+    os.chmod(database, 0o600)
+    return versions[0], result.stdout
+
+
+def invoke(
+    database: Path,
+    version: str,
+    *,
+    redact: bool = False,
+    workspace: str = WORKSPACE,
+    repository: str = REPOSITORY,
+    candidate: str = CANDIDATE,
+    origin: str = ORIGIN,
+    router: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    command = ROUTER if router else COMMAND
+    prefix = [sys.executable, str(command)]
+    if router:
+        prefix.append("github-review-materialize")
+    arguments = [
+        *prefix,
+        "--database",
+        str(database),
+        "--snapshot-version",
+        version,
+        "--workspace",
+        workspace,
+        "--repository",
+        repository,
+        "--candidate-root",
+        candidate,
+        "--origin-root",
+        origin,
+    ]
+    if redact:
+        arguments.append("--redact-body")
+    return subprocess.run(arguments, capture_output=True, text=True, check=False)
+
+
+def require_success(result: subprocess.CompletedProcess[str], label: str) -> dict[str, Any]:
+    if result.returncode != 0:
+        raise AssertionError(f"{label} failed: {result.stdout!r} {result.stderr!r}")
+    return json.loads(result.stdout)
+
+
+def require_failure(
+    result: subprocess.CompletedProcess[str],
+    code: str,
+    label: str,
+) -> None:
+    if result.returncode != 2:
+        raise AssertionError(f"{label} unexpectedly returned {result.returncode}: {result.stdout!r}")
+    if result.stdout:
+        raise AssertionError(f"{label} disclosed stdout: {result.stdout!r}")
+    if result.stderr.strip() != f"error: {code}":
+        raise AssertionError(f"{label} returned {result.stderr!r}")
+
+
+def snapshot_database(path: Path, version: str, body: bytes, *, size: int | None = None) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE github_snapshot (
+          version TEXT PRIMARY KEY,
+          canonical_json BLOB NOT NULL,
+          size INTEGER NOT NULL
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO github_snapshot(version, canonical_json, size) VALUES (?, ?, ?)",
+        (version, body, len(body) if size is None else size),
+    )
+    connection.commit()
+    connection.close()
+    os.chmod(path, 0o600)
+
+
+def main() -> int:
+    base = json.loads(FIXTURE.read_bytes())
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        database = root / "github.sqlite"
+        version, _ = invoke_event(review_payload(base), database, "review-materialize-60")
+
+        before = database.stat()
+        direct = invoke(database, version)
+        packet = require_success(direct, "direct materialization")
+        after = database.stat()
+        assert (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        assert packet["protocol"] == "ignatius.github-review-materialization/1"
+        assert packet["source"] == {
+            "resource_id": f"github/{REPOSITORY}/pulls/60/reviews/{REVIEW_ID}",
+            "snapshot_version": version,
+            "snapshot_sha256": version.removeprefix("sha256:"),
+            "snapshot_size": packet["source"]["snapshot_size"],
+        }
+        assert packet["proposal"]["workspace_id"] == WORKSPACE
+        assert packet["proposal"]["candidate_root"] == CANDIDATE
+        assert packet["proposal"]["origin_root"] == ORIGIN
+        assert packet["proposal"]["ref_name"] == f"proposal/{CANDIDATE}"
+        assert packet["pull_request"]["head"]["sha"] == "4" * 40
+        assert packet["review"]["state"] == "approved"
+        assert packet["review"]["action"] == "submitted"
+        assert packet["review"]["current_head"] is True
+        assert packet["review"]["author"]["login"] == "reviewer-agent"
+        assert packet["review"]["actor"]["login"] == "reviewer-agent"
+        assert packet["review"]["body"] == {
+            "included": True,
+            "is_null": False,
+            "present": True,
+            "sha256": hashlib.sha256(REVIEW_BODY.encode()).hexdigest(),
+            "utf8_bytes": len(REVIEW_BODY.encode()),
+            "text": REVIEW_BODY,
+        }
+        assert packet["canonical_review"] == {
+            "policy": "review-decision-v1",
+            "subject_id": f"proposal/{CANDIDATE}",
+            "subject_root": CANDIDATE,
+            "allowed_decisions": ["approve", "reject", "withdraw"],
+            "selected_decision": None,
+            "reviewer_root": None,
+            "expected_review_root": None,
+            "signing_required": True,
+            "provider_state_authoritative": False,
+        }
+        assert "PRIVATE INSTALLATION VALUE" not in direct.stdout
+        assert "PRIVATE REVIEW LINK" not in direct.stdout
+        assert SECRET not in direct.stdout
+        assert str(database) not in direct.stdout
+
+        replay = invoke(database, version)
+        assert replay.returncode == 0
+        assert replay.stdout == direct.stdout
+
+        routed = invoke(database, version, router=True)
+        assert routed.returncode == 0
+        assert routed.stdout == direct.stdout
+
+        redacted = require_success(invoke(database, version, redact=True), "redacted materialization")
+        assert redacted["review"]["body"]["included"] is False
+        assert redacted["review"]["body"]["text"] is None
+        assert redacted["review"]["body"]["sha256"] == packet["review"]["body"]["sha256"]
+        assert REVIEW_BODY not in canonical(redacted).decode()
+
+        stale_database = root / "stale.sqlite"
+        stale_version, _ = invoke_event(
+            review_payload(base, commit_id="3" * 40),
+            stale_database,
+            "review-materialize-stale-60",
+        )
+        stale = require_success(invoke(stale_database, stale_version), "stale materialization")
+        assert stale["review"]["commit_sha"] == "3" * 40
+        assert stale["review"]["current_head"] is False
+        assert stale["canonical_review"]["selected_decision"] is None
+
+        require_failure(
+            invoke(database, version, workspace="other/workspace"),
+            "workspace-mismatch",
+            "workspace mismatch",
+        )
+        require_failure(
+            invoke(database, version, repository="other/repo"),
+            "repository-mismatch",
+            "repository mismatch",
+        )
+        require_failure(
+            invoke(database, version, candidate="c" * 64),
+            "candidate-root-mismatch",
+            "candidate mismatch",
+        )
+        require_failure(
+            invoke(database, version, origin="d" * 64),
+            "origin-root-mismatch",
+            "origin mismatch",
+        )
+        require_failure(
+            invoke(database, "sha256:" + "0" * 64),
+            "snapshot-not-found",
+            "missing snapshot",
+        )
+        require_failure(
+            invoke(database, "sha256:aa"),
+            "invalid-snapshot-version",
+            "invalid snapshot version",
+        )
+
+        os.chmod(database, 0o644)
+        require_failure(
+            invoke(database, version),
+            "database-not-private",
+            "public database mode",
+        )
+        os.chmod(database, 0o600)
+
+        symlink = root / "github-link.sqlite"
+        symlink.symlink_to(database)
+        require_failure(
+            invoke(symlink, version),
+            "database-symlink",
+            "database symlink",
+        )
+
+        sidecar_target = root / "sidecar-target"
+        sidecar_target.write_text("private")
+        os.chmod(sidecar_target, 0o600)
+        sidecar = Path(str(database) + "-wal")
+        sidecar.symlink_to(sidecar_target)
+        require_failure(
+            invoke(database, version),
+            "database-sidecar-symlink",
+            "sidecar symlink",
+        )
+        sidecar.unlink()
+
+        canonical_snapshot = sqlite3.connect(database).execute(
+            "SELECT canonical_json FROM github_snapshot WHERE version = ?", (version,)
+        ).fetchone()[0]
+
+        mismatch_database = root / "mismatch.sqlite"
+        mismatch_version = "sha256:" + "1" * 64
+        snapshot_database(mismatch_database, mismatch_version, bytes(canonical_snapshot))
+        require_failure(
+            invoke(mismatch_database, mismatch_version),
+            "snapshot-version-mismatch",
+            "version mismatch",
+        )
+
+        noncanonical_database = root / "noncanonical.sqlite"
+        noncanonical_body = json.dumps(json.loads(bytes(canonical_snapshot)), indent=2).encode()
+        noncanonical_version = "sha256:" + hashlib.sha256(noncanonical_body).hexdigest()
+        snapshot_database(noncanonical_database, noncanonical_version, noncanonical_body)
+        require_failure(
+            invoke(noncanonical_database, noncanonical_version),
+            "snapshot-json-not-canonical",
+            "noncanonical snapshot",
+        )
+
+        wrong_shape_database = root / "wrong-shape.sqlite"
+        wrong_shape_body = canonical({"kind": "issue"})
+        wrong_shape_version = "sha256:" + hashlib.sha256(wrong_shape_body).hexdigest()
+        snapshot_database(wrong_shape_database, wrong_shape_version, wrong_shape_body)
+        require_failure(
+            invoke(wrong_shape_database, wrong_shape_version),
+            "invalid-snapshot-shape",
+            "wrong snapshot kind",
+        )
+
+        wrong_size_database = root / "wrong-size.sqlite"
+        snapshot_database(wrong_size_database, version, bytes(canonical_snapshot), size=17)
+        require_failure(
+            invoke(wrong_size_database, version),
+            "snapshot-size-mismatch",
+            "wrong snapshot size",
+        )
+
+        oversized_value = json.loads(bytes(canonical_snapshot))
+        oversized_value["review"]["body"] = "x" * (1024 * 1024 + 1)
+        oversized_body = canonical(oversized_value)
+        oversized_version = "sha256:" + hashlib.sha256(oversized_body).hexdigest()
+        oversized_database = root / "oversized.sqlite"
+        snapshot_database(oversized_database, oversized_version, oversized_body)
+        require_failure(
+            invoke(oversized_database, oversized_version),
+            "review-body-too-large",
+            "oversized review body",
+        )
+
+    print("GitHub review materialization fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

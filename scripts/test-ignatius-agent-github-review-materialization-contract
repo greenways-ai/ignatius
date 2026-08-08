@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Pin the end-to-end review materialization protocol-limit disclosure."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+COMMAND = ROOT / "scripts" / "ignatius-agent-github-review-materialize"
+WORKSPACE = "greenways/ignatius"
+REPOSITORY = "greenways-ai/ignatius"
+CANDIDATE = "a" * 64
+ORIGIN = "b" * 64
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def snapshot() -> bytes:
+    repository = {
+        "id": 200060,
+        "node_id": "R_kwDOExample60",
+        "full_name": REPOSITORY,
+    }
+    reviewer = {
+        "id": 420060,
+        "node_id": "U_kwDOReviewer60",
+        "login": "reviewer-agent",
+    }
+    return canonical(
+        {
+            "repository": repository,
+            "pull_request": {
+                "id": 700060,
+                "node_id": "PR_kwDOExample60",
+                "number": 60,
+                "state": "open",
+                "draft": False,
+                "merged": False,
+                "head": {
+                    "repository": repository,
+                    "ref": "agent/review-materialization",
+                    "sha": "4" * 40,
+                },
+                "base": {
+                    "repository": repository,
+                    "ref": "main",
+                    "sha": "2" * 40,
+                },
+            },
+            "review": {
+                "id": 880060,
+                "node_id": "PRR_kwDOExampleReview60",
+                "author": reviewer,
+                "body": "Exact provider review body.",
+                "state": "approved",
+                "commit_id": "4" * 40,
+                "submitted_at": "2026-08-08T09:30:00Z",
+                "author_association": "MEMBER",
+            },
+            "actor": reviewer,
+            "proposal": {
+                "workspace_id": WORKSPACE,
+                "candidate_root": CANDIDATE,
+                "origin_root": ORIGIN,
+            },
+            "lifecycle": {"action": "submitted"},
+        }
+    )
+
+
+def main() -> int:
+    body = snapshot()
+    version = "sha256:" + hashlib.sha256(body).hexdigest()
+    with tempfile.TemporaryDirectory() as temporary:
+        database = Path(temporary) / "github.sqlite"
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE github_snapshot (
+                  version TEXT PRIMARY KEY,
+                  canonical_json BLOB NOT NULL,
+                  size INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO github_snapshot(version, canonical_json, size) VALUES (?, ?, ?)",
+                (version, body, len(body)),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        os.chmod(database, 0o600)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(COMMAND),
+                "--database",
+                str(database),
+                "--snapshot-version",
+                version,
+                "--workspace",
+                WORKSPACE,
+                "--repository",
+                REPOSITORY,
+                "--candidate-root",
+                CANDIDATE,
+                "--origin-root",
+                ORIGIN,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"materialization failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
+        value = json.loads(result.stdout)
+        assert value["source"]["snapshot_version"] == version
+        assert value["review"]["state"] == "approved"
+        assert value["canonical_review"]["selected_decision"] is None
+        assert value["canonical_review"]["reviewer_root"] is None
+        assert value["canonical_review"]["expected_review_root"] is None
+        assert value["canonical_review"]["provider_state_authoritative"] is False
+        assert value["canonical_review_protocol"] == {
+            "evidence_roots": [],
+            "provider_snapshot_binding": None,
+            "provider_snapshot_binding_supported": False,
+            "recorded_at": None,
+            "process_run_id": None,
+            "process_run_root": None,
+        }
+
+    print("GitHub review materialization contract fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

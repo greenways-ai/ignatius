@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Materialize one exact GitHub review snapshot for an Ignatius signer."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Any, Sequence
+
+from ignatius_agent_github_review_materialize import MaterializationError, materialize_review
+from ignatius_github_common import canonical_json
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__)
+    root.add_argument("--database", required=True, help="private GitHub ingress SQLite store")
+    root.add_argument("--snapshot-version", required=True)
+    root.add_argument("--workspace", required=True)
+    root.add_argument("--repository", required=True)
+    root.add_argument("--candidate-root", required=True)
+    root.add_argument("--origin-root", required=True)
+    root.add_argument(
+        "--redact-body",
+        action="store_true",
+        help="retain the exact body digest and size but omit body text",
+    )
+    return root
+
+
+def current_review_limits(value: dict[str, Any]) -> None:
+    """Expose constraints enforced by the current canonical review protocol."""
+    value["canonical_review_protocol"] = {
+        "evidence_roots": [],
+        "provider_snapshot_binding": None,
+        "provider_snapshot_binding_supported": False,
+        "recorded_at": None,
+        "process_run_id": None,
+        "process_run_root": None,
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        value = materialize_review(
+            Path(args.database),
+            args.snapshot_version,
+            expected_workspace=args.workspace,
+            expected_repository=args.repository,
+            expected_candidate_root=args.candidate_root,
+            expected_origin_root=args.origin_root,
+            redact_body=args.redact_body,
+        )
+        current_review_limits(value)
+    except (
+        MaterializationError,
+        OSError,
+        ValueError,
+        sqlite3.Error,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as error:
+        code = str(error) if isinstance(error, MaterializationError) else "materialization-failed"
+        print(f"error: {code}", file=sys.stderr)
+        return 2
+    print(canonical_json(value).decode("utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
