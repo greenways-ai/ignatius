@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify GitHub issue webhooks and emit unsigned provider-neutral Ignatius events."""
+"""Verify GitHub webhooks and emit unsigned provider-neutral Ignatius events."""
 
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ from typing import Iterable
 from ignatius_github_common import edn, parse_json, require_string, verify_signature
 from ignatius_github_issue import opened_events, update_events
 from ignatius_github_outbox import record_delivery
+from ignatius_github_push import push_events
 
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
-_VERSION = re.compile(r"^sha256:[0-9a-f]{64}$")
+MAX_ENRICHMENT_BYTES = 2 * 1024 * 1024
+_ISSUE_VERSION = re.compile(r"^sha256:[0-9a-f]{64}$")
 _UPDATE_COMMANDS = {
     "issue-edited": "edited",
     "issue-reopened": "reopened",
@@ -35,6 +37,12 @@ def _common_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--outbox-db")
 
 
+def _version_arguments(command: argparse.ArgumentParser) -> None:
+    version = command.add_mutually_exclusive_group(required=True)
+    version.add_argument("--initial", action="store_true")
+    version.add_argument("--previous-version")
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -43,21 +51,29 @@ def parser() -> argparse.ArgumentParser:
     _common_arguments(opened)
     opened.add_argument("--definition-root", required=True)
     opened.add_argument("--dependency-work-id", action="append", default=[])
-    version = opened.add_mutually_exclusive_group(required=True)
-    version.add_argument("--initial", action="store_true")
-    version.add_argument("--previous-version")
+    _version_arguments(opened)
 
     for name in _UPDATE_COMMANDS:
         update = commands.add_parser(name)
         _common_arguments(update)
         update.add_argument("--previous-version", required=True)
+
+    push = commands.add_parser("push")
+    _common_arguments(push)
+    push.add_argument(
+        "--commit-object",
+        required=True,
+        help="JSON returned by GitHub's Get a commit object endpoint",
+    )
+    push.add_argument("--process-id")
+    _version_arguments(push)
     return root
 
 
-def read_payload(path: str) -> bytes:
+def read_bytes(path: str, *, maximum: int, label: str) -> bytes:
     body = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
-    if len(body) > MAX_PAYLOAD_BYTES:
-        raise ValueError("GitHub webhook payload exceeds 10 MiB")
+    if len(body) > maximum:
+        raise ValueError(f"{label} exceeds {maximum} bytes")
     return body
 
 
@@ -68,8 +84,11 @@ def _validate_args(args: argparse.Namespace) -> None:
     if len(args.delivery_id) > 255:
         raise ValueError("--delivery-id exceeds 255 characters")
     previous = getattr(args, "previous_version", None)
-    if previous is not None and not _VERSION.fullmatch(previous):
-        raise ValueError("--previous-version must be sha256:<64 lowercase hex characters>")
+    if args.command.startswith("issue-") and previous is not None:
+        if not _ISSUE_VERSION.fullmatch(previous):
+            raise ValueError(
+                "--previous-version must be sha256:<64 lowercase hex characters>"
+            )
     if args.command == "issue-opened":
         require_string(args.definition_root, "--definition-root")
 
@@ -80,8 +99,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         _validate_args(args)
         secret = os.environ.get(args.secret_env)
         if not secret:
-            raise ValueError(f"webhook secret environment variable {args.secret_env!r} is missing")
-        body = read_payload(args.payload)
+            raise ValueError(
+                f"webhook secret environment variable {args.secret_env!r} is missing"
+            )
+        body = read_bytes(
+            args.payload,
+            maximum=MAX_PAYLOAD_BYTES,
+            label="GitHub webhook payload",
+        )
         verify_signature(body, args.signature, secret)
         payload = parse_json(body)
         if args.command == "issue-opened":
@@ -94,7 +119,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 dependencies=args.dependency_work_id,
                 previous_version=None if args.initial else args.previous_version,
             )
-        else:
+        elif args.command in _UPDATE_COMMANDS:
             result = update_events(
                 payload,
                 action=_UPDATE_COMMANDS[args.command],
@@ -102,6 +127,23 @@ def main(argv: Iterable[str] | None = None) -> int:
                 expected_repository=args.repository,
                 delivery_id=args.delivery_id,
                 previous_version=args.previous_version,
+            )
+        else:
+            commit_object = parse_json(
+                read_bytes(
+                    args.commit_object,
+                    maximum=MAX_ENRICHMENT_BYTES,
+                    label="GitHub commit object",
+                )
+            )
+            result = push_events(
+                payload,
+                commit_object,
+                workspace=args.workspace,
+                expected_repository=args.repository,
+                delivery_id=args.delivery_id,
+                previous_version=None if args.initial else args.previous_version,
+                process_id=args.process_id,
             )
         if args.outbox_db:
             record_delivery(
