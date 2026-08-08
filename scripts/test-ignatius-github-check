@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Executable fixture for completed check evidence and signed checkpoints."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+FIXTURE = (
+    ROOT
+    / "examples"
+    / "agent-workflow"
+    / "github"
+    / "check-run-completed.json"
+)
+SECRET = "test-only-webhook-secret"
+HEAD = "2222222222222222222222222222222222222222"
+WORK = "github/greenways-ai/ignatius/issues/44"
+COMMIT_RESOURCE = (
+    "github/greenways-ai/ignatius/refs/heads/agent/github-resource"
+)
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(
+        SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+
+
+def invoke(
+    body: bytes,
+    database: Path,
+    *extra: str,
+    delivery: str,
+    repository: str = "greenways-ai/ignatius",
+    commit_version: str = HEAD,
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "check-completed",
+        "--workspace",
+        "greenways/ignatius",
+        "--repository",
+        repository,
+        "--delivery-id",
+        delivery,
+        "--payload",
+        str(payload),
+        "--signature",
+        supplied_signature or signature(body),
+        "--work-id",
+        WORK,
+        "--commit-resource-id",
+        COMMIT_RESOURCE,
+        "--commit-version",
+        commit_version,
+        "--outbox-db",
+        str(database),
+        *extra,
+    ]
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def snapshot_version(output: str) -> str:
+    values = re.findall(
+        r':resource/version "(sha256:[0-9a-f]{64})"', output
+    )
+    if len(values) != 1:
+        raise AssertionError(f"expected one check snapshot version, got {values!r}")
+    return values[0]
+
+
+def main() -> int:
+    body = FIXTURE.read_bytes()
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+        initial = invoke(
+            body,
+            database,
+            "--initial",
+            delivery="check-completed-1",
+        )
+        assert initial.returncode == 0, initial.stderr
+        replay = invoke(
+            body,
+            database,
+            "--initial",
+            delivery="check-completed-1",
+        )
+        assert replay.returncode == 0, replay.stderr
+        assert initial.stdout == replay.stdout
+
+        output = initial.stdout
+        version = snapshot_version(output)
+        digest = version.split(":", 1)[1]
+        resource_id = (
+            "github/greenways-ai/ignatius/check-runs/93079488449"
+        )
+        checkpoint_id = f"{resource_id}/checkpoints/{digest}"
+        assert output.index(":action :resource/register") < output.index(
+            ":action :work/checkpoint"
+        )
+        assert f':resource/id "{resource_id}"' in output
+        assert ":resource/kind :github/check-run-snapshot" in output
+        assert f':resource/version "{version}"' in output
+        assert f':process/id "{WORK}"' in output
+        assert f':work/id "{WORK}"' in output
+        assert f':checkpoint/id "{checkpoint_id}"' in output
+        assert f':checkpoint/state-root "{version}"' in output
+        assert f':checkpoint/receipt-root "{version}"' in output
+        assert f':reference/id "{COMMIT_RESOURCE}"' in output
+        assert f':reference/root "{HEAD}"' in output
+        assert f':reference/id "{resource_id}"' in output
+        assert output.count(f':reference/root "{version}"') == 1
+        assert ":github/check-conclusion :success" in output
+        assert ":github/check-status :completed" in output
+        assert "All verification completed" not in output
+        assert "full signed workspace suite" not in output
+        assert "api.github.com" not in output
+        assert "github.com/features/actions" not in output
+        assert ":installation" not in output
+        assert SECRET not in output
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 1
+        stored = bytes(
+            connection.execute(
+                "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                (version,),
+            ).fetchone()[0]
+        )
+        assert b"All verification completed" in stored
+        assert b"full signed workspace suite" in stored
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT position FROM github_outbox ORDER BY position"
+            )
+        ] == [0, 1]
+        connection.close()
+
+        changed = json.loads(body)
+        changed["check_run"]["conclusion"] = "failure"
+        changed["check_run"]["completed_at"] = "2026-08-08T08:20:00Z"
+        changed["check_run"]["output"]["summary"] = "One verification failed."
+        updated = invoke(
+            canonical(changed),
+            database,
+            "--previous-version",
+            version,
+            delivery="check-completed-2",
+        )
+        assert updated.returncode == 0, updated.stderr
+        updated_version = snapshot_version(updated.stdout)
+        assert updated_version != version
+        assert f':resource/previous-version "{version}"' in updated.stdout
+        assert f':resource/parent-versions ["{version}"]' in updated.stdout
+        assert ":github/check-conclusion :failure" in updated.stdout
+        assert ":action :work/checkpoint" in updated.stdout
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 4
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 2
+        connection.close()
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="check-head-mismatch",
+                commit_version="7" * 40,
+            ),
+            "head SHA mismatch",
+        )
+
+        wrong_action = json.loads(body)
+        wrong_action["action"] = "created"
+        require_failure(
+            invoke(
+                canonical(wrong_action),
+                database,
+                "--initial",
+                delivery="check-wrong-action",
+            ),
+            "wrong action",
+        )
+
+        in_progress = json.loads(body)
+        in_progress["check_run"]["status"] = "in_progress"
+        in_progress["check_run"]["conclusion"] = None
+        require_failure(
+            invoke(
+                canonical(in_progress),
+                database,
+                "--initial",
+                delivery="check-in-progress",
+            ),
+            "in-progress check",
+        )
+
+        invalid_conclusion = json.loads(body)
+        invalid_conclusion["check_run"]["conclusion"] = "maybe"
+        require_failure(
+            invoke(
+                canonical(invalid_conclusion),
+                database,
+                "--initial",
+                delivery="check-invalid-conclusion",
+            ),
+            "invalid conclusion",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="check-wrong-repository",
+                repository="other/repo",
+            ),
+            "repository mismatch",
+        )
+
+        negative_annotations = json.loads(body)
+        negative_annotations["check_run"]["output"][
+            "annotations_count"
+        ] = -1
+        require_failure(
+            invoke(
+                canonical(negative_annotations),
+                database,
+                "--initial",
+                delivery="check-negative-annotations",
+            ),
+            "negative annotations count",
+        )
+
+        invalid_timestamp = json.loads(body)
+        invalid_timestamp["check_run"]["completed_at"] = "not-a-time"
+        require_failure(
+            invoke(
+                canonical(invalid_timestamp),
+                database,
+                "--initial",
+                delivery="check-invalid-time",
+            ),
+            "invalid completed timestamp",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--previous-version",
+                "not-a-version",
+                delivery="check-invalid-previous",
+            ),
+            "invalid previous version",
+        )
+
+        duplicate = body[:-2] + b',"action":"completed"}\n'
+        require_failure(
+            invoke(
+                duplicate,
+                database,
+                "--initial",
+                delivery="check-duplicate-key",
+            ),
+            "duplicate JSON key",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="check-bad-signature",
+                supplied_signature="sha256=00",
+            ),
+            "invalid signature",
+        )
+
+    print("GitHub check-run checkpoint adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
