@@ -62,9 +62,11 @@ Its major sections are:
   proposal ref;
 - `pull_request`: exact provider identities, state, refs and Git object IDs;
 - `review`: exact author, action actor, provider state, reviewed commit,
-  submitted time, author association and body evidence; and
+  submitted time, author association and body evidence;
 - `canonical_review`: the constrained handoff to Ignatius's existing signed
-  review protocol.
+  review protocol; and
+- `canonical_review_protocol`: limitations of the currently admitted canonical
+  review record.
 
 The canonical handoff is intentionally incomplete:
 
@@ -86,6 +88,43 @@ canonical decision, use their signer-derived reviewer root, name the exact
 current reviewer ref as the compare-and-set expectation, inspect the standard
 signing payload, and sign through the already implemented workspace review
 transaction.
+
+## Current canonical evidence-binding limit
+
+The current `review-decision-v1` validator requires:
+
+```text
+review/evidence-roots = []
+review/process-run-id = nil
+review/process-run-root = nil
+review/metadata = {}
+```
+
+It rejects non-empty review evidence roots. Therefore this materialization names
+and verifies the exact GitHub snapshot for signer inspection, but the existing
+signed decision cannot yet contain a cryptographic reference back to that
+provider snapshot.
+
+The output makes this limitation explicit:
+
+```json
+{
+  "canonical_review_protocol": {
+    "evidence_roots": [],
+    "provider_snapshot_binding": null,
+    "provider_snapshot_binding_supported": false,
+    "recorded_at": null,
+    "process_run_id": null,
+    "process_run_root": null
+  }
+}
+```
+
+This slice must not be described as a signed provider-evidence binding. A later
+canonical protocol change must introduce one closed, validated evidence
+reference before an admitted review can claim that property. Until then, the
+source snapshot and the canonical review remain adjacent but distinct exact
+objects.
 
 ## Review body handling
 
@@ -162,4 +201,6 @@ JSON checks, closed snapshot-shape validation and bounded oversized-body
 rejection.
 
 The fixture also asserts that no selected canonical decision, reviewer root or
-expected review root is inferred from provider state.
+expected review root is inferred from provider state. The emitted protocol-limit
+object separately records that the current canonical review cannot bind the
+provider snapshot as review evidence.
