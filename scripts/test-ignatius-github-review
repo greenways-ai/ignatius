@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+"""Executable fixture for exact GitHub pull-request review snapshots."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+FIXTURE = (
+    ROOT
+    / "examples"
+    / "agent-workflow"
+    / "github"
+    / "pull-request-opened.json"
+)
+SECRET = "test-only-webhook-secret"
+CANDIDATE = "a" * 64
+ORIGIN = "b" * 64
+REVIEW_ID = 880060
+REVIEW_NODE_ID = "PRR_kwDOExampleReview60"
+REVIEWER = {
+    "id": 420060,
+    "node_id": "U_kwDOReviewer60",
+    "login": "reviewer-agent",
+}
+MAINTAINER = {
+    "id": 430060,
+    "node_id": "U_kwDOMaintainer60",
+    "login": "maintainer-agent",
+}
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(
+        SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+
+
+def invoke(
+    body: bytes,
+    database: Path,
+    *,
+    delivery: str,
+    initial: bool = False,
+    previous_version: str | None = None,
+    repository: str = "greenways-ai/ignatius",
+    candidate_root: str = CANDIDATE,
+    origin_root: str = ORIGIN,
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    version_args = (
+        ["--initial"]
+        if initial
+        else ["--previous-version", previous_version or ""]
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "pull-request-review",
+            "--workspace",
+            "greenways/ignatius",
+            "--repository",
+            repository,
+            "--delivery-id",
+            delivery,
+            "--payload",
+            str(payload),
+            "--signature",
+            supplied_signature or signature(body),
+            "--candidate-root",
+            candidate_root,
+            "--origin-root",
+            origin_root,
+            *version_args,
+            "--outbox-db",
+            str(database),
+        ],
+        text=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+
+
+def require_success(result: subprocess.CompletedProcess[str], label: str) -> str:
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{label} failed\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+        )
+    return result.stdout
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def snapshot_version(output: str) -> str:
+    values = re.findall(
+        r':resource/version "(sha256:[0-9a-f]{64})"', output
+    )
+    if len(values) != 1:
+        raise AssertionError(f"expected one review snapshot, got {values!r}")
+    return values[0]
+
+
+def review_payload(
+    base: dict[str, Any],
+    *,
+    action: str,
+    state: str,
+    body: str | None,
+    commit_id: str | None = None,
+    submitted_at: str = "2026-08-08T09:30:00Z",
+    review_id: int = REVIEW_ID,
+    sender: dict[str, Any] = REVIEWER,
+    author: dict[str, Any] = REVIEWER,
+    association: str = "MEMBER",
+) -> bytes:
+    value = json.loads(json.dumps(base))
+    value["action"] = action
+    value["sender"] = sender
+    value["review"] = {
+        "id": review_id,
+        "node_id": REVIEW_NODE_ID if review_id == REVIEW_ID else f"PRR_{review_id}",
+        "user": author,
+        "body": body,
+        "state": state,
+        "commit_id": commit_id or value["pull_request"]["head"]["sha"],
+        "submitted_at": submitted_at,
+        "author_association": association,
+        "html_url": "https://github.example/private/review",
+        "pull_request_url": "https://api.github.example/private/pull",
+        "_links": {"html": {"href": "PRIVATE REVIEW LINK"}},
+    }
+    value["installation"] = {"id": 123, "token": "PRIVATE INSTALLATION VALUE"}
+    return canonical(value)
+
+
+def main() -> int:
+    base = json.loads(FIXTURE.read_bytes())
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+
+        submitted_body = review_payload(
+            base,
+            action="submitted",
+            state="approved",
+            body="PRIVATE APPROVAL BODY",
+        )
+        submitted_result = invoke(
+            submitted_body,
+            database,
+            delivery="review-submitted-60",
+            initial=True,
+        )
+        submitted_output = require_success(submitted_result, "submitted review")
+        submitted_version = snapshot_version(submitted_output)
+        assert submitted_output.count(":action :resource/register") == 1
+        assert ":workspace/ref-update-intent" not in submitted_output
+        assert ":review/decision" not in submitted_output
+        assert ":work/complete" not in submitted_output
+        assert ":workspace/main" not in submitted_output
+        assert ":workspace/release" not in submitted_output
+        assert ":resource/previous-version nil" in submitted_output
+        assert ":resource/parent-versions []" in submitted_output
+        assert ":resource/kind :github/pull-request-review-snapshot" in submitted_output
+        assert ":provider/event-kind :github/pull-request-review" in submitted_output
+        assert ":provider/event-action :submitted" in submitted_output
+        assert f":github/review-id {REVIEW_ID}" in submitted_output
+        assert ':github/review-author "reviewer-agent"' in submitted_output
+        assert ":github/review-state :approved" in submitted_output
+        assert ":github/review-current-head true" in submitted_output
+        assert ":github/review-body-present true" in submitted_output
+        assert f':ignatius/candidate-root "{CANDIDATE}"' in submitted_output
+        assert f':ignatius/proposal-origin-root "{ORIGIN}"' in submitted_output
+        assert "PRIVATE APPROVAL BODY" not in submitted_output
+        assert "PRIVATE REVIEW LINK" not in submitted_output
+        assert "PRIVATE INSTALLATION VALUE" not in submitted_output
+        assert SECRET not in submitted_output
+
+        replay = invoke(
+            submitted_body,
+            database,
+            delivery="review-submitted-60",
+            initial=True,
+        )
+        assert require_success(replay, "submitted replay") == submitted_output
+
+        edited_body = review_payload(
+            base,
+            action="edited",
+            state="approved",
+            body="PRIVATE EDITED APPROVAL BODY",
+            submitted_at="2026-08-08T09:31:00Z",
+        )
+        edited_result = invoke(
+            edited_body,
+            database,
+            delivery="review-edited-60",
+            previous_version=submitted_version,
+        )
+        edited_output = require_success(edited_result, "edited review")
+        edited_version = snapshot_version(edited_output)
+        assert f':resource/previous-version "{submitted_version}"' in edited_output
+        assert f':resource/parent-versions ["{submitted_version}"]' in edited_output
+        assert ":provider/event-action :edited" in edited_output
+        assert "PRIVATE EDITED APPROVAL BODY" not in edited_output
+
+        dismissed_body = review_payload(
+            base,
+            action="dismissed",
+            state="dismissed",
+            body="PRIVATE EDITED APPROVAL BODY",
+            submitted_at="2026-08-08T09:31:00Z",
+            sender=MAINTAINER,
+        )
+        dismissed_result = invoke(
+            dismissed_body,
+            database,
+            delivery="review-dismissed-60",
+            previous_version=edited_version,
+        )
+        dismissed_output = require_success(dismissed_result, "dismissed review")
+        dismissed_version = snapshot_version(dismissed_output)
+        assert ":provider/event-action :dismissed" in dismissed_output
+        assert ":github/review-state :dismissed" in dismissed_output
+        assert ':github/review-actor "maintainer-agent"' in dismissed_output
+        assert ':github/review-author "reviewer-agent"' in dismissed_output
+        assert ":review/decision" not in dismissed_output
+
+        stale_body = review_payload(
+            base,
+            action="submitted",
+            state="changes_requested",
+            body="PRIVATE STALE REVIEW BODY",
+            commit_id="3" * 40,
+            submitted_at="2026-08-08T09:40:00Z",
+            review_id=REVIEW_ID + 1,
+        )
+        stale_result = invoke(
+            stale_body,
+            database,
+            delivery="review-stale-submitted-60",
+            initial=True,
+        )
+        stale_output = require_success(stale_result, "stale submitted review")
+        stale_version = snapshot_version(stale_output)
+        assert ":github/review-state :changes_requested" in stale_output
+        assert ":github/review-current-head false" in stale_output
+        assert f':github/review-commit-sha "{"3" * 40}"' in stale_output
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 4
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 4
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 4
+        stored_submitted = json.loads(
+            bytes(
+                connection.execute(
+                    "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                    (submitted_version,),
+                ).fetchone()[0]
+            )
+        )
+        assert stored_submitted["review"]["body"] == "PRIVATE APPROVAL BODY"
+        assert stored_submitted["review"]["state"] == "approved"
+        assert stored_submitted["review"]["commit_id"] == "4" * 40
+        stored_dismissed = json.loads(
+            bytes(
+                connection.execute(
+                    "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                    (dismissed_version,),
+                ).fetchone()[0]
+            )
+        )
+        assert stored_dismissed["actor"]["login"] == "maintainer-agent"
+        assert stored_dismissed["review"]["author"]["login"] == "reviewer-agent"
+        stored_stale = json.loads(
+            bytes(
+                connection.execute(
+                    "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                    (stale_version,),
+                ).fetchone()[0]
+            )
+        )
+        assert stored_stale["review"]["commit_id"] == "3" * 40
+        assert stored_stale["pull_request"]["head"]["sha"] == "4" * 40
+        connection.close()
+
+        require_failure(
+            invoke(
+                submitted_body,
+                database,
+                delivery="review-submitted-with-previous",
+                previous_version=submitted_version,
+            ),
+            "submitted review with previous version",
+        )
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="review-edited-initial",
+                initial=True,
+            ),
+            "edited review without predecessor",
+        )
+        require_failure(
+            invoke(
+                dismissed_body,
+                database,
+                delivery="review-dismissed-initial",
+                initial=True,
+            ),
+            "dismissed review without predecessor",
+        )
+
+        submitted_dismissed = review_payload(
+            base,
+            action="submitted",
+            state="dismissed",
+            body=None,
+        )
+        require_failure(
+            invoke(
+                submitted_dismissed,
+                database,
+                delivery="review-submitted-dismissed",
+                initial=True,
+            ),
+            "submitted dismissed state",
+        )
+        dismissed_approved = review_payload(
+            base,
+            action="dismissed",
+            state="approved",
+            body=None,
+            sender=MAINTAINER,
+        )
+        require_failure(
+            invoke(
+                dismissed_approved,
+                database,
+                delivery="review-dismissed-approved",
+                previous_version=edited_version,
+            ),
+            "dismissed approved state",
+        )
+        pending = review_payload(
+            base,
+            action="submitted",
+            state="pending",
+            body=None,
+        )
+        require_failure(
+            invoke(
+                pending,
+                database,
+                delivery="review-pending",
+                initial=True,
+            ),
+            "pending review state",
+        )
+
+        wrong_sender = review_payload(
+            base,
+            action="submitted",
+            state="commented",
+            body=None,
+            sender=MAINTAINER,
+        )
+        require_failure(
+            invoke(
+                wrong_sender,
+                database,
+                delivery="review-wrong-sender",
+                initial=True,
+            ),
+            "submitted sender mismatch",
+        )
+
+        bad_commit = json.loads(submitted_body)
+        bad_commit["review"]["commit_id"] = "44"
+        require_failure(
+            invoke(
+                canonical(bad_commit),
+                database,
+                delivery="review-bad-commit",
+                initial=True,
+            ),
+            "invalid review commit",
+        )
+        bad_time = json.loads(submitted_body)
+        bad_time["review"]["submitted_at"] = "not-a-time"
+        require_failure(
+            invoke(
+                canonical(bad_time),
+                database,
+                delivery="review-bad-time",
+                initial=True,
+            ),
+            "invalid review time",
+        )
+        bad_body = json.loads(submitted_body)
+        bad_body["review"]["body"] = 17
+        require_failure(
+            invoke(
+                canonical(bad_body),
+                database,
+                delivery="review-bad-body",
+                initial=True,
+            ),
+            "invalid review body",
+        )
+        bad_association = json.loads(submitted_body)
+        bad_association["review"]["author_association"] = "ADMINISTRATOR"
+        require_failure(
+            invoke(
+                canonical(bad_association),
+                database,
+                delivery="review-bad-association",
+                initial=True,
+            ),
+            "invalid author association",
+        )
+        wrong_number = json.loads(submitted_body)
+        wrong_number["number"] = 61
+        require_failure(
+            invoke(
+                canonical(wrong_number),
+                database,
+                delivery="review-number-mismatch",
+                initial=True,
+            ),
+            "number mismatch",
+        )
+        wrong_base = json.loads(submitted_body)
+        wrong_base["pull_request"]["base"]["repo"]["full_name"] = "other/repo"
+        require_failure(
+            invoke(
+                canonical(wrong_base),
+                database,
+                delivery="review-base-mismatch",
+                initial=True,
+            ),
+            "base repository mismatch",
+        )
+        open_merged = json.loads(submitted_body)
+        open_merged["pull_request"]["merged"] = True
+        require_failure(
+            invoke(
+                canonical(open_merged),
+                database,
+                delivery="review-open-merged",
+                initial=True,
+            ),
+            "open merged pull request",
+        )
+
+        require_failure(
+            invoke(
+                submitted_body,
+                database,
+                delivery="review-invalid-candidate",
+                initial=True,
+                candidate_root="aa",
+            ),
+            "invalid candidate root",
+        )
+        require_failure(
+            invoke(
+                submitted_body,
+                database,
+                delivery="review-invalid-origin",
+                initial=True,
+                origin_root="bb",
+            ),
+            "invalid origin root",
+        )
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="review-invalid-previous",
+                previous_version="sha256:aa",
+            ),
+            "invalid previous version",
+        )
+
+        duplicate = submitted_body[:-1] + b',"action":"submitted"}'
+        require_failure(
+            invoke(
+                duplicate,
+                database,
+                delivery="review-duplicate-key",
+                initial=True,
+            ),
+            "duplicate JSON key",
+        )
+        require_failure(
+            invoke(
+                submitted_body,
+                database,
+                delivery="review-bad-signature",
+                initial=True,
+                supplied_signature="sha256=00",
+            ),
+            "invalid signature",
+        )
+
+    print("GitHub pull-request review adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
