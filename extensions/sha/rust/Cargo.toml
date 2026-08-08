@@ -9,7 +9,7 @@ rust-version = "1.78"
 crate-type = ["cdylib"]
 
 [dependencies]
-hara-wasm = { path = "../../../.local/hara.lang/rust" }
+hara-wasm = { path = "../../../.local/hara.lang/core/rust" }
 sha2 = "0.10"
 
 [workspace]
