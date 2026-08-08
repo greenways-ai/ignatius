@@ -197,10 +197,61 @@ force pushes, delivery replay, repository binding, deleted/tag/invalid refs,
 object-ID width checks, enrichment mismatch, duplicate JSON keys and malformed
 HMACs.
 
+## Completed checks as evidence and checkpoints
+
+A completed GitHub check run is provider evidence about one exact commit. It is
+not an agent signature and cannot complete work by itself. The adapter emits an
+ordered pair for an authorised assignee to sign:
+
+```text
+1. resource/register
+   exact retained :github/check-run-snapshot attributed to the running work
+
+2. work/checkpoint
+   exact commit reference + exact check snapshot reference
+```
+
+```sh
+python3 scripts/ignatius-github-event check-completed \
+  --workspace greenways/ignatius \
+  --repository greenways-ai/ignatius \
+  --delivery-id "$X_GITHUB_DELIVERY" \
+  --payload check-run-webhook.json \
+  --signature "$X_HUB_SIGNATURE_256" \
+  --work-id github/greenways-ai/ignatius/issues/44 \
+  --commit-resource-id \
+    github/greenways-ai/ignatius/refs/heads/agent/github-resource \
+  --commit-version <exact-check-head-sha> \
+  --initial \
+  --outbox-db var/ignatius-github.sqlite
+```
+
+The command accepts only `action=completed` with `status=completed`, validates
+GitHub's documented conclusion set, and requires the supplied commit resource
+version to equal `check_run.head_sha`. The full selected check output contributes
+to the retained snapshot digest, but arbitrary summaries, text, URLs and
+installation fields do not enter emitted canonical metadata.
+
+The checkpoint state and receipt roots identify the exact check snapshot. Its
+resource references pin both the checked commit and the retained provider
+snapshot. Applying the event still requires the work to be running and the
+transaction signer to be its assignee; these laws remain in the canonical
+workflow reducer.
+
+A failed, cancelled or timed-out check is still useful checkpoint evidence. It
+does not become `work/complete`; policy and the agent decide whether to retry,
+replace, or complete with different evidence.
+
+Run the fixture with:
+
+```sh
+python3 scripts/test-ignatius-github-check
+```
+
 ## Next slices
 
-- check runs as execution evidence and checkpoints;
 - pull requests as workspace proposals;
 - attributed and signed review decisions;
 - merged output registration and release evidence;
-- direct capability-scoped GitHub/Git enrichment without an intermediate file.
+- direct capability-scoped GitHub/Git enrichment without an intermediate file;
+- polling reconciliation for missed issue, push and check webhooks.
