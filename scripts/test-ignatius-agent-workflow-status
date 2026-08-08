@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Executable fixture for the value-sanitized Agent Workflow status command."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any, Sequence
+
+NOW = "2026-08-08T12:00:00Z"
+
+
+def run(command: Sequence[str], *, expected: int) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    if result.returncode != expected:
+        raise AssertionError(
+            f"command returned {result.returncode}, expected {expected}\n"
+            f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+        )
+    return result
+
+
+def parse(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    return json.loads(result.stdout)
+
+
+def create_database(path: Path, schema: str, rows: Sequence[tuple[str, tuple[Any, ...]]]) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(schema)
+        for statement, parameters in rows:
+            connection.execute(statement, parameters)
+        connection.commit()
+    finally:
+        connection.close()
+    path.chmod(0o600)
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    status = Path(args[0] if args else "scripts/ignatius-agent-workflow-status").absolute()
+    router = status.parent / "ignatius-agent"
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        healthy = root / "healthy.sqlite"
+        attention = root / "attention.sqlite"
+        blocked = root / "blocked.sqlite"
+        unsafe = root / "unsafe.sqlite"
+        empty = root / "empty.sqlite"
+
+        create_database(
+            healthy,
+            """
+            CREATE TABLE github_snapshot (
+              version TEXT PRIMARY KEY,
+              canonical_json BLOB NOT NULL,
+              size INTEGER NOT NULL
+            );
+            CREATE TABLE github_delivery (
+              delivery_id TEXT PRIMARY KEY,
+              body_sha256 TEXT NOT NULL,
+              snapshot_version TEXT NOT NULL,
+              event_vector_edn TEXT NOT NULL
+            );
+            CREATE TABLE github_outbox (
+              id INTEGER PRIMARY KEY,
+              delivery_id TEXT NOT NULL,
+              position INTEGER NOT NULL,
+              event_edn TEXT NOT NULL,
+              state TEXT NOT NULL,
+              attempts INTEGER NOT NULL,
+              transaction_root TEXT,
+              delivered_at TEXT
+            );
+            """,
+            [
+                (
+                    "INSERT INTO github_snapshot VALUES (?, ?, ?)",
+                    ("sha256:" + "a" * 64, b'{"private":"snapshot"}', 22),
+                ),
+                (
+                    "INSERT INTO github_delivery VALUES (?, ?, ?, ?)",
+                    ("delivery-private", "b" * 64, "sha256:" + "a" * 64, "PRIVATE-EVENT"),
+                ),
+                (
+                    "INSERT INTO github_outbox VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        1,
+                        "delivery-private",
+                        0,
+                        "PRIVATE-EVENT",
+                        "delivered",
+                        0,
+                        "root-private",
+                        NOW,
+                    ),
+                ),
+            ],
+        )
+        healthy_before = file_sha256(healthy)
+        healthy_result = run(
+            [str(status), "--strict", "--now", NOW, f"ingress={healthy}"],
+            expected=0,
+        )
+        healthy_report = parse(healthy_result)
+        assert healthy_report["protocol"] == "ignatius.agent-workflow-status/1"
+        assert healthy_report["health"] == "healthy"
+        assert healthy_report["summary"]["successful"] == 1
+        assert healthy_report["summary"]["pending"] == 0
+        assert healthy_report["databases"][0]["file"]["mode"] == "0600"
+        assert healthy_report["databases"][0]["file"]["private"] is True
+        assert str(healthy) not in healthy_result.stdout
+        assert "PRIVATE-EVENT" not in healthy_result.stdout
+        assert "delivery-private" not in healthy_result.stdout
+        assert "root-private" not in healthy_result.stdout
+        assert file_sha256(healthy) == healthy_before
+
+        create_database(
+            attention,
+            """
+            CREATE TABLE github_effect_outbox (
+              effect_id TEXT PRIMARY KEY,
+              effect_bytes BLOB NOT NULL,
+              state TEXT NOT NULL,
+              attempts INTEGER NOT NULL,
+              fencing_generation INTEGER NOT NULL,
+              lease_expires_at TEXT,
+              next_attempt_at TEXT
+            );
+            """,
+            [
+                (
+                    "INSERT INTO github_effect_outbox VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "effect-secret-1",
+                        b"SECRET-EFFECT-BYTES",
+                        "pending",
+                        2,
+                        7,
+                        None,
+                        "2026-08-08T11:59:00Z",
+                    ),
+                ),
+                (
+                    "INSERT INTO github_effect_outbox VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "effect-secret-2",
+                        b"SECRET-EFFECT-BYTES-2",
+                        "delivering",
+                        1,
+                        8,
+                        "2026-08-08T11:58:00Z",
+                        None,
+                    ),
+                ),
+                (
+                    "INSERT INTO github_effect_outbox VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    ("effect-secret-3", b"SECRET-EFFECT-BYTES-3", "delivered", 0, 9, None, None),
+                ),
+            ],
+        )
+        attention_result = run(
+            [str(status), "--strict", "--now", NOW, f"effects={attention}"],
+            expected=1,
+        )
+        attention_report = parse(attention_result)
+        assert attention_report["health"] == "attention"
+        summary = attention_report["summary"]
+        assert summary["pending"] == 1
+        assert summary["in_flight"] == 1
+        assert summary["successful"] == 1
+        assert summary["due_attempts"] == 1
+        assert summary["expired_leases"] == 1
+        table = [
+            item
+            for item in attention_report["databases"][0]["tables"]
+            if item.get("name") == "github_effect_outbox"
+        ][0]
+        assert table["attempts"] == {
+            "rows": 3,
+            "minimum": 0,
+            "maximum": 2,
+            "total": 3,
+            "negative": 0,
+        }
+        assert table["fencing_generations"] == {
+            "rows": 3,
+            "minimum": 7,
+            "maximum": 9,
+            "total": 24,
+            "negative": 0,
+        }
+        assert "SECRET-EFFECT-BYTES" not in attention_result.stdout
+        assert "effect-secret" not in attention_result.stdout
+
+        create_database(
+            blocked,
+            """
+            CREATE TABLE worker_execution (
+              id TEXT PRIMARY KEY,
+              state TEXT NOT NULL,
+              attempts INTEGER NOT NULL,
+              fencing_generation INTEGER NOT NULL,
+              payload BLOB NOT NULL
+            );
+            """,
+            [
+                (
+                    "INSERT INTO worker_execution VALUES (?, ?, ?, ?, ?)",
+                    ("work-secret-1", "dead_letter", 4, 11, b"SECRET-WORK-PAYLOAD"),
+                ),
+                (
+                    "INSERT INTO worker_execution VALUES (?, ?, ?, ?, ?)",
+                    ("work-secret-2", "PRIVATE-UNKNOWN-STATE", 0, 12, b"SECRET-WORK-PAYLOAD-2"),
+                ),
+            ],
+        )
+        blocked_result = run(
+            [str(status), "--now", NOW, f"worker={blocked}"],
+            expected=0,
+        )
+        blocked_report = parse(blocked_result)
+        assert blocked_report["health"] == "blocked"
+        assert blocked_report["summary"]["terminal_failure"] == 1
+        assert blocked_report["summary"]["unknown"] == 1
+        assert "PRIVATE-UNKNOWN-STATE" not in blocked_result.stdout
+        assert "SECRET-WORK-PAYLOAD" not in blocked_result.stdout
+        run(
+            [str(status), "--strict", "--now", NOW, f"worker={blocked}"],
+            expected=2,
+        )
+
+        create_database(
+            unsafe,
+            """
+            CREATE TABLE "unsafe table PRIVATE-NAME" (
+              state TEXT NOT NULL,
+              payload TEXT NOT NULL
+            );
+            INSERT INTO "unsafe table PRIVATE-NAME" VALUES ('pending', 'SECRET-UNSAFE-PAYLOAD');
+            """,
+            [],
+        )
+        unsafe_result = run(
+            [str(status), "--now", NOW, f"unsafe={unsafe}"],
+            expected=0,
+        )
+        unsafe_report = parse(unsafe_result)
+        assert unsafe_report["health"] == "blocked"
+        unsafe_table = unsafe_report["databases"][0]["tables"][0]
+        assert "name_sha256" in unsafe_table
+        assert "name" not in unsafe_table
+        assert "PRIVATE-NAME" not in unsafe_result.stdout
+        assert "SECRET-UNSAFE-PAYLOAD" not in unsafe_result.stdout
+
+        create_database(empty, "CREATE TABLE metadata (key TEXT, value TEXT);", [])
+        empty_result = run(
+            [str(status), "--strict", "--now", NOW, f"metadata={empty}"],
+            expected=2,
+        )
+        assert "no-operational-state-table" in parse(empty_result)["databases"][0]["reasons"]
+
+        insecure = root / "insecure.sqlite"
+        shutil.copy2(healthy, insecure)
+        insecure.chmod(0o644)
+        insecure_result = run(
+            [str(status), "--strict", "--now", NOW, f"ingress={insecure}"],
+            expected=2,
+        )
+        assert "database-mode-not-private" in parse(insecure_result)["databases"][0]["reasons"]
+
+        symlink = root / "database-link.sqlite"
+        symlink.symlink_to(healthy)
+        symlink_result = run(
+            [str(status), "--strict", "--now", NOW, f"ingress={symlink}"],
+            expected=2,
+        )
+        symlink_report = parse(symlink_result)
+        assert symlink_report["databases"][0]["reasons"] == ["database-symlink"]
+        assert str(symlink) not in symlink_result.stdout
+
+        aggregate_result = run(
+            [
+                str(status),
+                "--now",
+                NOW,
+                f"ingress={healthy}",
+                f"effects={attention}",
+                f"worker={blocked}",
+            ],
+            expected=0,
+        )
+        aggregate = parse(aggregate_result)
+        assert aggregate["health"] == "blocked"
+        assert aggregate["summary"]["databases"] == 3
+        assert aggregate["summary"]["healthy"] == 1
+        assert aggregate["summary"]["attention"] == 1
+        assert aggregate["summary"]["blocked"] == 1
+
+        routed_result = run(
+            [str(router), "workflow-status", "--strict", "--now", NOW, f"ingress={healthy}"],
+            expected=0,
+        )
+        assert parse(routed_result) == healthy_report
+
+        routed_copy = root / "router"
+        target_link = root / "ignatius-agent-workflow-status"
+        shutil.copy2(router, routed_copy)
+        target_link.symlink_to(status)
+        routed_copy.chmod(0o755)
+        rejected_route = run(
+            [str(routed_copy), "workflow-status", "--now", NOW, f"ingress={healthy}"],
+            expected=2,
+        )
+        assert "non-symlink" in rejected_route.stderr
+
+        invalid = run(
+            [str(status), "--now", NOW, f"INVALID ROLE={healthy}"],
+            expected=2,
+        )
+        assert invalid.stdout == ""
+        assert str(healthy) not in invalid.stderr
+
+        duplicate_role = run(
+            [
+                str(status),
+                "--now",
+                NOW,
+                f"ingress={healthy}",
+                f"ingress={attention}",
+            ],
+            expected=2,
+        )
+        assert duplicate_role.stdout == ""
+        assert str(healthy) not in duplicate_role.stderr
+        assert str(attention) not in duplicate_role.stderr
+
+    print("Ignatius Agent Workflow status fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

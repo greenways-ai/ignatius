@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Report a value-sanitized health view over Agent Workflow SQLite stores."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from typing import Sequence
+
+from ignatius_agent_status_common import (
+    HEALTH_RANK,
+    PROTOCOL,
+    canonical_json,
+    merge_health,
+    parse_binding,
+    parse_clock,
+)
+from ignatius_agent_status_sqlite import inspect_database, summarize_databases
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__)
+    root.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 for attention and 2 for blocked health",
+    )
+    root.add_argument(
+        "--now",
+        help="RFC 3339 timestamp used for lease and retry evaluation",
+    )
+    root.add_argument(
+        "database",
+        nargs="+",
+        metavar="ROLE=PATH",
+        help="operational SQLite database binding; repeat as needed",
+    )
+    return root
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        clock = parse_clock(args.now)
+        bindings = [parse_binding(value) for value in args.database]
+        roles = [binding.role for binding in bindings]
+        if len(roles) != len(set(roles)):
+            raise ValueError("database roles must be unique")
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    databases = [inspect_database(binding, clock) for binding in bindings]
+    health = merge_health(*(database["health"] for database in databases))
+    report = {
+        "protocol": PROTOCOL,
+        "generated_at": clock.iso,
+        "health": health,
+        "summary": summarize_databases(databases),
+        "databases": databases,
+    }
+    print(canonical_json(report))
+    if not args.strict:
+        return 0
+    return HEALTH_RANK[health]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
