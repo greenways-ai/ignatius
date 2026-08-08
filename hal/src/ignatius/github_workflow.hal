@@ -7,14 +7,16 @@
   "Pure workflow planner. Host adapters supply verified provider facts; Hara
    supplies validation, canonical identities and Ignatius event meaning."
   [event]
-  (case (get event :provider/event-kind)
-    :github/issues
-    (github/plan-issue event)
+  (let [kind (get event :provider/event-kind)]
+    (cond
+      (= :github/issues kind)
+      (github/plan-issue event)
 
-    :github/push
-    (github/plan-push event)
+      (= :github/push kind)
+      (github/plan-push event)
 
-    :github/check-run
-    (github/plan-check-complete event)
+      (= :github/check-run kind)
+      (github/plan-check-complete event)
 
-    {:error :github/unsupported-event}))
+      :else
+      {:error :github/unsupported-event})))
