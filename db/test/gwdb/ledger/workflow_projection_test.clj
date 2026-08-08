@@ -1,0 +1,436 @@
+(ns gwdb.ledger.workflow-projection-test
+  (:use code.test)
+  (:require [tahto.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.workspace :as workspace]
+            [gwdb.ledger.workflow-projection :as projection]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.workspace :as workspace]
+             [gwdb.ledger.workflow-projection :as projection]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:teardown :postgres)
+          (l/rt:setup :postgres)]
+  :teardown [(l/rt:teardown :postgres)
+             (l/rt:stop)]})
+
+(defn.pg ^{:- [:bytea]}
+  empty-map
+  {:added "0.12"}
+  []
+  (return (value/put-map (pg/jsonb-build-array))))
+
+(defn.pg ^{:- [:bytea]}
+  empty-vector
+  {:added "0.12"}
+  []
+  (return (value/put-vector (pg/jsonb-build-array))))
+
+(defn.pg ^{:- [:bytea]}
+  vector-one
+  {:added "0.12"}
+  [:bytea i-root]
+  (return
+   (value/put-vector
+    (pg/jsonb-build-array (pg/encode i-root "hex")))))
+
+(defn.pg ^{:- [:bytea]}
+  base-record
+  {:added "0.12"}
+  [:text i-kind]
+  (let [(:bytea v-record) (workspace/record-start i-kind)
+        (:bytea v-version)
+        (workspace/record-assoc
+         v-record "record/version" (value/put-integer-number 1))]
+    (return
+     (workspace/record-assoc
+      v-version "record/extensions" (-/empty-map)))))
+
+(defn.pg ^{:- [:bytea]}
+  evidence
+  {:added "0.12"}
+  [:bigint i-timestamp]
+  (let [(:bytea v-record) (-/base-record "ledger/evidence")]
+    (return
+     (workspace/record-assoc
+      v-record "ledger/timestamp"
+      (value/put-integer-number i-timestamp)))))
+
+(defn.pg ^{:- [:bytea]}
+  reference
+  {:added "0.12"}
+  [:bytea i-workspace-id-root
+   :bytea i-resource-id-root
+   :bytea i-version-root]
+  (let [(:bytea v-record) (-/base-record "reference/logical")
+        (:bytea v-scope)
+        (workspace/record-assoc
+         v-record "reference/scope-id" i-workspace-id-root)
+        (:bytea v-kind)
+        (workspace/record-assoc
+         v-scope "reference/kind"
+         (value/put-keyword "resource/version"))
+        (:bytea v-id)
+        (workspace/record-assoc
+         v-kind "reference/id" i-resource-id-root)]
+    (return
+     (workspace/record-assoc
+      v-id "reference/root" i-version-root))))
+
+(defn.pg ^{:- [:bytea]}
+  work-extension-map
+  {:added "0.12"}
+  [:text i-title
+   :bytea i-dependencies-root
+   :bytea i-inputs-root
+   :bytea i-outputs-root
+   :bytea i-assignee-root]
+  (let [(:bytea v-map) (-/empty-map)
+        (:bytea v-item)
+        (workspace/record-assoc
+         v-map "work/item" (value/put-boolean true))
+        (:bytea v-title)
+        (workspace/record-assoc
+         v-item "work/title" (value/put-string i-title))
+        (:bytea v-kind)
+        (workspace/record-assoc
+         v-title "work/kind" (value/put-keyword "code/change"))
+        (:bytea v-dependencies)
+        (workspace/record-assoc
+         v-kind "work/dependency-ids" i-dependencies-root)
+        (:bytea v-inputs)
+        (workspace/record-assoc
+         v-dependencies "work/input-references" i-inputs-root)
+        (:bytea v-outputs)
+        (workspace/record-assoc
+         v-inputs "work/output-references" i-outputs-root)]
+    (return
+     (workspace/record-assoc
+      v-outputs "work/assignee"
+      (workspace/optional-root i-assignee-root)))))
+
+(defn.pg ^{:- [:bytea]}
+  work-run
+  {:added "0.12"}
+  [:bytea i-workspace-id-root
+   :bytea i-work-id-root
+   :bytea i-definition-root
+   :text i-status
+   :text i-title
+   :bytea i-dependencies-root
+   :bytea i-inputs-root
+   :bytea i-outputs-root
+   :bytea i-assignee-root]
+  (let [(:bytea v-record) (-/base-record "process/run")
+        (:bytea v-extensions)
+        (-/work-extension-map
+         i-title i-dependencies-root i-inputs-root
+         i-outputs-root i-assignee-root)
+        (:bytea v-with-extensions)
+        (workspace/record-assoc
+         v-record "record/extensions" v-extensions)
+        (:bytea v-id)
+        (workspace/record-assoc
+         v-with-extensions "run/id" i-work-id-root)
+        (:bytea v-workspace)
+        (workspace/record-assoc
+         v-id "run/workspace-id" i-workspace-id-root)
+        (:bytea v-definition)
+        (workspace/record-assoc
+         v-workspace "run/definition-root" i-definition-root)
+        (:bytea v-status)
+        (workspace/record-assoc
+         v-definition "run/status" (value/put-keyword i-status))
+        (:bytea v-result)
+        (workspace/record-assoc
+         v-status "run/result-root"
+         (pg/case (== i-status "complete")
+                  (value/put-string "result/a")
+                  :else (value/put-nil)))
+        (:bytea v-receipt)
+        (workspace/record-assoc
+         v-result "run/receipt-root"
+         (pg/case (== i-status "complete")
+                  (value/put-string "receipt/a")
+                  :else (value/put-nil)))
+        (:bytea v-started)
+        (workspace/record-assoc
+         v-receipt "run/started-evidence"
+         (pg/case (== i-status "running")
+                  (-/evidence 6)
+                  :else (value/put-nil)))]
+    (return
+     (workspace/record-assoc
+      v-started "run/completed-evidence"
+      (pg/case (== i-status "complete")
+               (-/evidence 4)
+               :else (value/put-nil))))))
+
+(defn.pg ^{:- [:bytea]}
+  artifact-version
+  {:added "0.12"}
+  [:bytea i-resource-id-root
+   :bytea i-version-root
+   :bytea i-producer-work-id-root]
+  (let [(:bytea v-record) (-/base-record "artifact/version")
+        (:bytea v-extensions) (-/empty-map)
+        (:bytea v-provider)
+        (workspace/record-assoc
+         v-extensions "resource/provider" (value/put-keyword "git"))
+        (:bytea v-locator)
+        (workspace/record-assoc
+         v-provider "resource/locator" (-/empty-map))
+        (:bytea v-algorithm)
+        (workspace/record-assoc
+         v-locator "resource/digest-algorithm"
+         (value/put-keyword "git/sha1"))
+        (:bytea v-digest)
+        (workspace/record-assoc
+         v-algorithm "resource/digest" i-version-root)
+        (:bytea v-size)
+        (workspace/record-assoc
+         v-digest "resource/size" (value/put-integer-number 42))
+        (:bytea v-with-extensions)
+        (workspace/record-assoc
+         v-record "record/extensions" v-size)
+        (:bytea v-id)
+        (workspace/record-assoc
+         v-with-extensions "artifact/id" i-resource-id-root)
+        (:bytea v-kind)
+        (workspace/record-assoc
+         v-id "artifact/kind" (value/put-keyword "git/commit"))
+        (:bytea v-content)
+        (workspace/record-assoc
+         v-kind "artifact/content-root" i-version-root)
+        (:bytea v-previous)
+        (workspace/record-assoc
+         v-content "artifact/previous-content-root" (value/put-nil))
+        (:bytea v-producer)
+        (workspace/record-assoc
+         v-previous "artifact/producer-run-id" i-producer-work-id-root)]
+    (return
+     (workspace/record-assoc
+      v-producer "artifact/published-evidence" (-/evidence 4)))))
+
+(defn.pg ^{:- [:bytea]}
+  checkpoint
+  {:added "0.12"}
+  [:bytea i-checkpoint-id-root :bytea i-work-id-root]
+  (let [(:bytea v-record) (-/base-record "process/checkpoint")
+        (:bytea v-id)
+        (workspace/record-assoc
+         v-record "checkpoint/id" i-checkpoint-id-root)
+        (:bytea v-run)
+        (workspace/record-assoc
+         v-id "checkpoint/run-id" i-work-id-root)
+        (:bytea v-state)
+        (workspace/record-assoc
+         v-run "checkpoint/state-root" (value/put-string "state/d/1"))
+        (:bytea v-receipt)
+        (workspace/record-assoc
+         v-state "checkpoint/receipt-root"
+         (value/put-string "receipt/checkpoint/d/1"))]
+    (return
+     (workspace/record-assoc
+      v-receipt "checkpoint/evidence" (-/evidence 7)))))
+
+(defn.pg ^{:- [:bytea]}
+  demo-state
+  {:added "0.12"}
+  []
+  (let [(:bytea v-workspace-id) (value/put-string "greenways/ignatius")
+        (:bytea v-alice) (value/put-string "alice")
+        (:bytea v-work-a-id) (value/put-string "work/a")
+        (:bytea v-work-b-id) (value/put-string "work/b")
+        (:bytea v-work-c-id) (value/put-string "work/c")
+        (:bytea v-work-d-id) (value/put-string "work/d")
+        (:bytea v-resource-id) (value/put-string "git/demo/agent/a")
+        (:bytea v-version) (value/put-string "commit-B")
+        (:bytea v-reference)
+        (-/reference v-workspace-id v-resource-id v-version)
+        (:bytea v-reference-vector) (-/vector-one v-reference)
+        (:bytea v-work-a)
+        (-/work-run
+         v-workspace-id v-work-a-id (value/put-string "definition/a")
+         "complete" "Implement A"
+         (-/empty-vector) (-/empty-vector) v-reference-vector v-alice)
+        (:bytea v-work-b)
+        (-/work-run
+         v-workspace-id v-work-b-id (value/put-string "definition/b")
+         "open" "Implement B"
+         (-/vector-one v-work-a-id) v-reference-vector
+         (-/empty-vector) nil)
+        (:bytea v-work-c)
+        (-/work-run
+         v-workspace-id v-work-c-id (value/put-string "definition/c")
+         "open" "Implement C"
+         (-/vector-one v-work-b-id) (-/empty-vector)
+         (-/empty-vector) nil)
+        (:bytea v-work-d)
+        (-/work-run
+         v-workspace-id v-work-d-id (value/put-string "definition/d")
+         "running" "Implement D"
+         (-/empty-vector) (-/empty-vector)
+         (-/empty-vector) v-alice)
+        (:bytea v-processes-0) (-/empty-map)
+        (:bytea v-processes-1)
+        (value/map-assoc v-processes-0 v-work-a-id v-work-a)
+        (:bytea v-processes-2)
+        (value/map-assoc v-processes-1 v-work-b-id v-work-b)
+        (:bytea v-processes-3)
+        (value/map-assoc v-processes-2 v-work-c-id v-work-c)
+        (:bytea v-processes)
+        (value/map-assoc v-processes-3 v-work-d-id v-work-d)
+        (:bytea v-artifact)
+        (-/artifact-version v-resource-id v-version v-work-a-id)
+        (:bytea v-current-resources)
+        (value/map-assoc (-/empty-map) v-resource-id v-artifact)
+        (:bytea v-version-map)
+        (value/map-assoc (-/empty-map) v-version v-artifact)
+        (:bytea v-resource-versions)
+        (value/map-assoc (-/empty-map) v-resource-id v-version-map)
+        (:bytea v-checkpoint-id) (value/put-string "checkpoint/d/1")
+        (:bytea v-checkpoint)
+        (-/checkpoint v-checkpoint-id v-work-d-id)
+        (:bytea v-checkpoints)
+        (value/map-assoc (-/empty-map) v-checkpoint-id v-checkpoint)
+        (:bytea v-record) (-/base-record "workspace/build")
+        (:bytea v-id)
+        (workspace/record-assoc v-record "workspace/id" v-workspace-id)
+        (:bytea v-kind)
+        (workspace/record-assoc
+         v-id "workspace/kind" (value/put-keyword "agent/workflow"))
+        (:bytea v-process-map)
+        (workspace/record-assoc
+         v-kind "workspace/processes" v-processes)
+        (:bytea v-current)
+        (workspace/record-assoc
+         v-process-map "workspace/artifacts" v-current-resources)
+        (:bytea v-versions)
+        (workspace/record-assoc
+         v-current "workspace/artifact-versions" v-resource-versions)
+        (:bytea v-checkpoint-map)
+        (workspace/record-assoc
+         v-versions "workspace/checkpoints" v-checkpoints)]
+    (return
+     (workspace/record-assoc
+      v-checkpoint-map "workspace/latest-entry-id"
+      (value/put-string "tx-checkpoint-d")))))
+
+(defn.pg ^{:- [:jsonb]}
+  run-demo
+  {:added "0.12"}
+  []
+  (let [(:bytea v-state-root) (-/demo-state)
+        (:bytea v-workspace-id-root)
+        (workspace/field v-state-root "workspace/id")
+        (:bytea v-work-a-id) (value/put-string "work/a")
+        (:bytea v-work-c-id) (value/put-string "work/c")
+        (:bytea v-work-d-id) (value/put-string "work/d")
+        (:bytea v-alice) (value/put-string "alice")
+        (:jsonb v-rebuild)
+        (projection/workflow-projection-rebuild v-state-root)
+        (:jsonb v-ready)
+        (projection/workflow-ready-work v-workspace-id-root)
+        (:jsonb v-blocked)
+        (projection/workflow-blocked-work v-workspace-id-root)
+        (:jsonb v-running)
+        (projection/workflow-running-work v-workspace-id-root)
+        (:jsonb v-alice-work)
+        (projection/workflow-work-for-assignee
+         v-workspace-id-root v-alice)
+        (:jsonb v-blockers)
+        (projection/workflow-blocking-dependencies
+         v-workspace-id-root v-work-c-id)
+        (:jsonb v-checkpoint)
+        (projection/workflow-latest-checkpoint
+         v-workspace-id-root v-work-d-id)
+        (:jsonb v-resources)
+        (projection/workflow-resources-for-work
+         v-workspace-id-root v-work-a-id)
+        (:boolean v-valid)
+        (projection/workflow-projection-valid v-state-root)
+        _ (pg/t:delete
+           projection/WorkflowDependency
+           {:where {:workspace-id-root v-workspace-id-root
+                    :work-id-root v-work-c-id}})
+        (:boolean v-invalid-after-delete)
+        (projection/workflow-projection-valid v-state-root)
+        (:jsonb v-rebuilt-again)
+        (projection/workflow-projection-rebuild v-state-root)
+        (:boolean v-valid-after-rebuild)
+        (projection/workflow-projection-valid v-state-root)]
+    (return
+     (pg/jsonb-build-object
+      "work_count" (:->> v-rebuild "work_count")
+      "dependency_count" (:->> v-rebuild "dependency_count")
+      "reference_count" (:->> v-rebuild "reference_count")
+      "resource_version_count" (:->> v-rebuild "resource_version_count")
+      "checkpoint_count" (:->> v-rebuild "checkpoint_count")
+      "ready_id" (:->> (:-> v-ready 0) "work_id")
+      "blocked_id" (:->> (:-> v-blocked 0) "work_id")
+      "running_id" (:->> (:-> v-running 0) "work_id")
+      "alice_work_count" (pg/jsonb-array-length v-alice-work)
+      "blocking_dependency_id"
+      (:->> (:-> v-blockers 0) "dependency_id")
+      "checkpoint_id" (:->> v-checkpoint "checkpoint_id")
+      "checkpoint_timestamp" (:->> v-checkpoint "ledger_timestamp")
+      "resource_id" (:->> (:-> v-resources 0) "resource_id")
+      "resource_version"
+      (:->> (:-> v-resources 0) "resource_version")
+      "resource_current" (:->> (:-> v-resources 0) "current")
+      "valid" v-valid
+      "invalid_after_delete" v-invalid-after-delete
+      "valid_after_rebuild" v-valid-after-rebuild
+      "idempotent_state_root"
+      (== (:bytea (:->> v-rebuilt-again "state_root")) v-state-root)))))
+
+^{:refer gwdb.ledger.workflow-projection/workflow-projection-rebuild
+  :added "0.12"}
+(fact "PostgreSQL rebuilds and queries collaborative workflow projections"
+  (!.pg
+   [:select (:->> (-/run-demo) "work_count")]
+   [:select (:->> (-/run-demo) "dependency_count")]
+   [:select (:->> (-/run-demo) "reference_count")]
+   [:select (:->> (-/run-demo) "resource_version_count")]
+   [:select (:->> (-/run-demo) "checkpoint_count")]
+   [:select (:->> (-/run-demo) "ready_id")]
+   [:select (:->> (-/run-demo) "blocked_id")]
+   [:select (:->> (-/run-demo) "running_id")]
+   [:select (:->> (-/run-demo) "alice_work_count")]
+   [:select (:->> (-/run-demo) "blocking_dependency_id")]
+   [:select (:->> (-/run-demo) "checkpoint_id")]
+   [:select (:->> (-/run-demo) "checkpoint_timestamp")]
+   [:select (:->> (-/run-demo) "resource_id")]
+   [:select (:->> (-/run-demo) "resource_version")]
+   [:select (:->> (-/run-demo) "resource_current")]
+   [:select (:->> (-/run-demo) "valid")]
+   [:select (:->> (-/run-demo) "invalid_after_delete")]
+   [:select (:->> (-/run-demo) "valid_after_rebuild")]
+   [:select (:->> (-/run-demo) "idempotent_state_root")])
+  => '(4 2 2 1 1
+       "work/b" "work/c" "work/d" "2" "work/b"
+       "checkpoint/d/1" "7"
+       "git/demo/agent/a" "commit-B" "true"
+       "true" "false" "true" "true"))
