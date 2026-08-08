@@ -65,14 +65,20 @@
   "Encodes ordered child roots from a JSON array by explicit array position."
   {:added "0.1"}
   [:jsonb i-child-roots :integer i-position :integer i-count]
-  (cond (>= i-position i-count)
-        (return "")
-        :else
-        (let [(:bytea v-child-root) (-/child-root-at i-child-roots i-position)
-              (:text v-child-hex) (pg/encode v-child-root "hex")
-              (:text v-tail)
-              (-/sequence-payload-tail i-child-roots (+ i-position 1) i-count)]
-          (return (|| v-child-hex v-tail)))))
+  (let [(:integer v-position) i-position
+        (:text v-tail) ""
+        (:bytea v-child-root) nil
+        (:text v-child-hex) nil]
+    (while (< v-position i-count)
+      (:= v-child-root
+          (-/child-root-at i-child-roots v-position))
+      (:= v-child-hex
+          (pg/encode v-child-root "hex"))
+      (:= v-tail
+          (|| v-tail v-child-hex))
+      (:= v-position
+          (+ v-position 1)))
+    (return v-tail)))
 
 (defn.pg ^{:- [:bytea]} sequence-payload
   "Canonical payload for ordered list/vector child references.
@@ -92,27 +98,41 @@
   "Validates a set order using full canonical child bytes."
   {:added "0.1"}
   [:jsonb i-child-roots :integer i-position :integer i-count]
-  (cond (>= (+ i-position 1) i-count)
-        (return true)
-        :else
-        (let [(:bytea v-left) (-/child-root-at i-child-roots i-position)
-              (:bytea v-right) (-/child-root-at i-child-roots (+ i-position 1))]
-          (return (and (< (-/compare v-left v-right) 0)
-                       (-/roots-strictly-ordered
-                        i-child-roots (+ i-position 1) i-count))))))
+  (let [(:integer v-position) i-position
+        (:boolean v-ordered) true
+        (:bytea v-left) nil
+        (:bytea v-right) nil]
+    (while (and v-ordered
+                (< (+ v-position 1) i-count))
+      (:= v-left
+          (-/child-root-at i-child-roots v-position))
+      (:= v-right
+          (-/child-root-at i-child-roots (+ v-position 1)))
+      (:= v-ordered
+          (< (-/compare v-left v-right) 0))
+      (:= v-position
+          (+ v-position 1)))
+    (return v-ordered)))
 
 (defn.pg ^{:- [:boolean]} map-keys-strictly-ordered
   "Validates map keys in canonical order and rejects duplicate keys."
   {:added "0.1"}
   [:jsonb i-child-roots :integer i-position :integer i-count]
-  (cond (>= (+ i-position 2) i-count)
-        (return true)
-        :else
-        (let [(:bytea v-left) (-/child-root-at i-child-roots i-position)
-              (:bytea v-right) (-/child-root-at i-child-roots (+ i-position 2))]
-          (return (and (< (-/compare v-left v-right) 0)
-                       (-/map-keys-strictly-ordered
-                        i-child-roots (+ i-position 2) i-count))))))
+  (let [(:integer v-position) i-position
+        (:boolean v-ordered) true
+        (:bytea v-left) nil
+        (:bytea v-right) nil]
+    (while (and v-ordered
+                (< (+ v-position 2) i-count))
+      (:= v-left
+          (-/child-root-at i-child-roots v-position))
+      (:= v-right
+          (-/child-root-at i-child-roots (+ v-position 2)))
+      (:= v-ordered
+          (< (-/compare v-left v-right) 0))
+      (:= v-position
+          (+ v-position 2)))
+    (return v-ordered)))
 
 (defn.pg ^{:- [:bytea]} set-payload
   "Canonical set payload from roots already sorted by canonical value bytes."

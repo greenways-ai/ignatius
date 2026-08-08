@@ -157,15 +157,24 @@
   "Builds the derived reference index for one canonical ordered compound root."
   {:added "0.1"}
   [:bytea i-parent-root :jsonb i-child-roots :integer i-position :integer i-count]
-  (cond (>= i-position i-count)
-        (return nil)
-        :else
-        (let [(:text v-child-hex) (:->> i-child-roots i-position)
-              (:bytea v-child-root) (pg/decode v-child-hex "hex")
-              o-ref (cell/cell-ref-put i-parent-root i-position "element" v-child-root)
-              o-next (-/sequence-refs-put
-                      i-parent-root i-child-roots (+ i-position 1) i-count)]
-          (return o-ref))))
+  (let [(:integer v-position) i-position
+        (:text v-child-hex) nil
+        (:bytea v-child-root) nil
+        o-ref nil
+        o-result nil]
+    (while (< v-position i-count)
+      (:= v-child-hex
+          (:->> i-child-roots v-position))
+      (:= v-child-root
+          (pg/decode v-child-hex "hex"))
+      (:= o-ref
+          (cell/cell-ref-put
+           i-parent-root v-position "element" v-child-root))
+      (cond (== v-position i-position)
+            (:= o-result o-ref))
+      (:= v-position
+          (+ v-position 1)))
+    (return o-result)))
 
 (defn.pg ^{:- [:bytea]} put-list
   "Stores a list from ordered child roots through the HCV1 compound codec."
@@ -256,20 +265,34 @@
   "Builds role-specific references for canonical map key/value pairs."
   {:added "0.1"}
   [:bytea i-parent-root :jsonb i-child-roots :integer i-position :integer i-count]
-  (cond (>= i-position i-count)
-        (return nil)
-        :else
-        (let [(:text v-key-hex) (:->> i-child-roots i-position)
-              (:text v-value-hex) (:->> i-child-roots (+ i-position 1))
-              (:bytea v-key-root) (pg/decode v-key-hex "hex")
-              (:bytea v-value-root) (pg/decode v-value-hex "hex")
-              o-key-ref (cell/cell-ref-put
-                         i-parent-root (/ i-position 2) "key" v-key-root)
-              o-value-ref (cell/cell-ref-put
-                           i-parent-root (/ i-position 2) "value" v-value-root)
-              o-next (-/map-refs-put
-                      i-parent-root i-child-roots (+ i-position 2) i-count)]
-          (return o-value-ref))))
+  (let [(:integer v-position) i-position
+        (:text v-key-hex) nil
+        (:text v-value-hex) nil
+        (:bytea v-key-root) nil
+        (:bytea v-value-root) nil
+        o-key-ref nil
+        o-value-ref nil
+        o-result nil]
+    (while (< v-position i-count)
+      (:= v-key-hex
+          (:->> i-child-roots v-position))
+      (:= v-value-hex
+          (:->> i-child-roots (+ v-position 1)))
+      (:= v-key-root
+          (pg/decode v-key-hex "hex"))
+      (:= v-value-root
+          (pg/decode v-value-hex "hex"))
+      (:= o-key-ref
+          (cell/cell-ref-put
+           i-parent-root (/ v-position 2) "key" v-key-root))
+      (:= o-value-ref
+          (cell/cell-ref-put
+           i-parent-root (/ v-position 2) "value" v-value-root))
+      (cond (== v-position i-position)
+            (:= o-result o-value-ref))
+      (:= v-position
+          (+ v-position 2)))
+    (return o-result)))
 
 (defn.pg ^{:- [:bytea]} put-map
   "Stores canonical-order key/value root pairs as an immutable map value."
@@ -285,16 +308,23 @@
   "Appends the authoritative ordered map references from position onward."
   {:added "0.1"}
   [:bytea i-map-root :integer i-position :integer i-count :jsonb i-out]
-  (cond (>= i-position i-count)
-        (return i-out)
-        :else
-        (let [(:bytea v-key) (cell/cell-ref-child i-map-root i-position "key")
-              (:bytea v-value) (cell/cell-ref-child i-map-root i-position "value")
-              (:jsonb v-next) (|| i-out
-                                  (pg/jsonb-build-array
-                                   (pg/encode v-key "hex")
-                                   (pg/encode v-value "hex")))]
-          (return (-/map-copy-tail i-map-root (+ i-position 1) i-count v-next)))))
+  (let [(:integer v-position) i-position
+        (:jsonb v-out) i-out
+        (:bytea v-key) nil
+        (:bytea v-value) nil]
+    (while (< v-position i-count)
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-value
+          (cell/cell-ref-child i-map-root v-position "value"))
+      (:= v-out
+          (|| v-out
+              (pg/jsonb-build-array
+               (pg/encode v-key "hex")
+               (pg/encode v-value "hex"))))
+      (:= v-position
+          (+ v-position 1)))
+    (return v-out)))
 
 (defn.pg ^{:- [:jsonb]} map-assoc-roots
   "Builds canonical map pairs by replacing or inserting one ordered key."
@@ -305,31 +335,43 @@
    :integer i-position
    :integer i-count
    :jsonb i-out]
-  (cond (>= i-position i-count)
-        (return (|| i-out
-                    (pg/jsonb-build-array
-                     (pg/encode i-key-root "hex")
-                     (pg/encode i-value-root "hex"))))
-        :else
-        (let [(:bytea v-key) (cell/cell-ref-child i-map-root i-position "key")
-              (:bytea v-value) (cell/cell-ref-child i-map-root i-position "value")
-              (:integer v-order) (codec-value/compare i-key-root v-key)
-              (:jsonb v-inserted) (|| i-out
-                                      (pg/jsonb-build-array
-                                       (pg/encode i-key-root "hex")
-                                       (pg/encode i-value-root "hex")))]
-          (cond (== v-order 0)
-                (return (-/map-copy-tail i-map-root (+ i-position 1) i-count v-inserted))
-                (< v-order 0)
-                (return (-/map-copy-tail i-map-root i-position i-count v-inserted))
-                :else
-                (let [(:jsonb v-next) (|| i-out
-                                           (pg/jsonb-build-array
-                                            (pg/encode v-key "hex")
-                                            (pg/encode v-value "hex")))]
-                  (return (-/map-assoc-roots
-                           i-map-root i-key-root i-value-root
-                           (+ i-position 1) i-count v-next)))))))
+  (let [(:integer v-position) i-position
+        (:jsonb v-out) i-out
+        (:jsonb v-inserted)
+        (pg/jsonb-build-array
+         (pg/encode i-key-root "hex")
+         (pg/encode i-value-root "hex"))
+        (:boolean v-done) false
+        (:bytea v-key) nil
+        (:bytea v-value) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-value
+          (cell/cell-ref-child i-map-root v-position "value"))
+      (:= v-order
+          (codec-value/compare i-key-root v-key))
+      (cond (== v-order 0)
+            (do (:= v-out (|| v-out v-inserted))
+                (:= v-position (+ v-position 1))
+                (:= v-done true))
+            (< v-order 0)
+            (do (:= v-out (|| v-out v-inserted))
+                (:= v-done true))
+            :else
+            (do (:= v-out
+                    (|| v-out
+                        (pg/jsonb-build-array
+                         (pg/encode v-key "hex")
+                         (pg/encode v-value "hex"))))
+                (:= v-position (+ v-position 1)))))
+    (cond v-done
+          (return (-/map-copy-tail
+                   i-map-root v-position i-count v-out))
+          :else
+          (return (|| v-out v-inserted)))))
 
 (defn.pg ^{:- [:bytea]} map-assoc
   "Returns the immutable canonical map formed by associating one root pair."
@@ -349,18 +391,27 @@
   "Looks up one root key using the map's committed canonical key order."
   {:added "0.2"}
   [:bytea i-map-root :bytea i-key-root :integer i-position :integer i-count]
-  (cond (>= i-position i-count)
-        (return nil)
-        :else
-        (let [(:bytea v-key) (cell/cell-ref-child i-map-root i-position "key")
-              (:integer v-order) (codec-value/compare i-key-root v-key)]
-          (cond (== v-order 0)
-                (return (cell/cell-ref-child i-map-root i-position "value"))
-                (< v-order 0)
-                (return nil)
-                :else
-                (return (-/map-get-at i-map-root i-key-root
-                                      (+ i-position 1) i-count))))))
+  (let [(:integer v-position) i-position
+        (:boolean v-done) false
+        (:bytea v-result) nil
+        (:bytea v-key) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-order
+          (codec-value/compare i-key-root v-key))
+      (cond (== v-order 0)
+            (do (:= v-result
+                    (cell/cell-ref-child
+                     i-map-root v-position "value"))
+                (:= v-done true))
+            (< v-order 0)
+            (:= v-done true)
+            :else
+            (:= v-position (+ v-position 1))))
+    (return v-result)))
 
 (defn.pg ^{:- [:bytea]} map-get
   "Returns a map value root, or NULL when the canonical key is absent."
@@ -377,16 +428,25 @@
   "Checks an ordered canonical set by full HCV byte comparison."
   {:added "0.2"}
   [:bytea i-set-root :bytea i-value-root :integer i-position :integer i-count]
-  (cond (>= i-position i-count)
-        (return false)
-        :else
-        (let [(:bytea v-current) (cell/cell-ref-child i-set-root i-position "element")
-              (:integer v-order) (codec-value/compare i-value-root v-current)]
-          (cond (== v-order 0) (return true)
-                (< v-order 0) (return false)
-                :else (return (-/set-contains-at
-                               i-set-root i-value-root
-                               (+ i-position 1) i-count))))))
+  (let [(:integer v-position) i-position
+        (:boolean v-found) false
+        (:boolean v-done) false
+        (:bytea v-current) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-current
+          (cell/cell-ref-child i-set-root v-position "element"))
+      (:= v-order
+          (codec-value/compare i-value-root v-current))
+      (cond (== v-order 0)
+            (do (:= v-found true)
+                (:= v-done true))
+            (< v-order 0)
+            (:= v-done true)
+            :else
+            (:= v-position (+ v-position 1))))
+    (return v-found)))
 
 (defn.pg ^{:- [:boolean]} set-contains
   "Returns whether a canonical set contains a semantic root."
