@@ -1,0 +1,476 @@
+#!/usr/bin/env python3
+"""Executable fixture for exact pull-request lifecycle snapshots."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+FIXTURE = (
+    ROOT
+    / "examples"
+    / "agent-workflow"
+    / "github"
+    / "pull-request-opened.json"
+)
+SECRET = "test-only-webhook-secret"
+CANDIDATE = "a" * 64
+ORIGIN = "b" * 64
+INITIAL_VERSION = "sha256:" + "1" * 64
+MERGE_COMMIT = "8" * 40
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(
+        SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+
+
+def invoke(
+    body: bytes,
+    database: Path,
+    *,
+    delivery: str,
+    previous_version: str,
+    repository: str = "greenways-ai/ignatius",
+    candidate_root: str = CANDIDATE,
+    origin_root: str = ORIGIN,
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "pull-request-lifecycle",
+            "--workspace",
+            "greenways/ignatius",
+            "--repository",
+            repository,
+            "--delivery-id",
+            delivery,
+            "--payload",
+            str(payload),
+            "--signature",
+            supplied_signature or signature(body),
+            "--candidate-root",
+            candidate_root,
+            "--origin-root",
+            origin_root,
+            "--previous-version",
+            previous_version,
+            "--outbox-db",
+            str(database),
+        ],
+        text=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+
+
+def require_success(result: subprocess.CompletedProcess[str], label: str) -> str:
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{label} failed\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+        )
+    return result.stdout
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def snapshot_version(output: str) -> str:
+    values = re.findall(
+        r':resource/version "(sha256:[0-9a-f]{64})"', output
+    )
+    if len(values) != 1:
+        raise AssertionError(f"expected one pull-request snapshot, got {values!r}")
+    return values[0]
+
+
+def lifecycle_payload(
+    base: dict[str, Any],
+    *,
+    action: str,
+    updated_at: str,
+    state: str = "open",
+    draft: bool = False,
+    merged: bool = False,
+    closed_at: str | None = None,
+    merged_at: str | None = None,
+    merge_commit_sha: str | None = None,
+) -> bytes:
+    value = json.loads(json.dumps(base))
+    value["action"] = action
+    pull = value["pull_request"]
+    pull["state"] = state
+    pull["draft"] = draft
+    pull["merged"] = merged
+    pull["updated_at"] = updated_at
+    pull["closed_at"] = closed_at
+    pull["merged_at"] = merged_at
+    pull["merge_commit_sha"] = merge_commit_sha
+    return canonical(value)
+
+
+def main() -> int:
+    base = json.loads(FIXTURE.read_bytes())
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+
+        edited_body = lifecycle_payload(
+            base,
+            action="edited",
+            updated_at="2026-08-08T09:15:00Z",
+        )
+        edited = json.loads(edited_body)
+        edited["pull_request"]["title"] = "PRIVATE EDITED TITLE"
+        edited["pull_request"]["body"] = "PRIVATE EDITED BODY"
+        edited_body = canonical(edited)
+        edited_result = invoke(
+            edited_body,
+            database,
+            delivery="pull-edited-60",
+            previous_version=INITIAL_VERSION,
+        )
+        edited_output = require_success(edited_result, "edited lifecycle")
+        edited_version = snapshot_version(edited_output)
+        assert edited_output.count(":action :resource/register") == 1
+        assert ":workspace/ref-update-intent" not in edited_output
+        assert ":work/complete" not in edited_output
+        assert f':resource/previous-version "{INITIAL_VERSION}"' in edited_output
+        assert f':resource/parent-versions ["{INITIAL_VERSION}"]' in edited_output
+        assert ":provider/event-action :edited" in edited_output
+        assert ":github/pull-request-state :open" in edited_output
+        assert ":github/pull-request-draft false" in edited_output
+        assert ":github/pull-request-merged false" in edited_output
+        assert ":github/snapshot-kind :pull-request-lifecycle-v1" in edited_output
+        assert f':ignatius/candidate-root "{CANDIDATE}"' in edited_output
+        assert f':ignatius/proposal-origin-root "{ORIGIN}"' in edited_output
+        assert "PRIVATE EDITED TITLE" not in edited_output
+        assert "PRIVATE EDITED BODY" not in edited_output
+        assert ":installation" not in edited_output
+        assert SECRET not in edited_output
+
+        draft_body = lifecycle_payload(
+            edited,
+            action="converted_to_draft",
+            updated_at="2026-08-08T09:20:00Z",
+            draft=True,
+        )
+        draft_result = invoke(
+            draft_body,
+            database,
+            delivery="pull-draft-60",
+            previous_version=edited_version,
+        )
+        draft_output = require_success(draft_result, "draft lifecycle")
+        draft_version = snapshot_version(draft_output)
+        assert ":provider/event-action :converted_to_draft" in draft_output
+        assert ":github/pull-request-draft true" in draft_output
+        assert f':resource/previous-version "{edited_version}"' in draft_output
+
+        closed_body = lifecycle_payload(
+            json.loads(draft_body),
+            action="closed",
+            updated_at="2026-08-08T09:25:00Z",
+            state="closed",
+            draft=True,
+            closed_at="2026-08-08T09:25:00Z",
+        )
+        closed_result = invoke(
+            closed_body,
+            database,
+            delivery="pull-closed-unmerged-60",
+            previous_version=draft_version,
+        )
+        closed_output = require_success(closed_result, "closed lifecycle")
+        closed_version = snapshot_version(closed_output)
+        assert ":github/pull-request-state :closed" in closed_output
+        assert ":github/pull-request-merged false" in closed_output
+        assert ':github/pull-request-closed-at "2026-08-08T09:25:00Z"' in closed_output
+        assert ":github/pull-request-merged-at nil" in closed_output
+
+        reopened_body = lifecycle_payload(
+            json.loads(closed_body),
+            action="reopened",
+            updated_at="2026-08-08T09:30:00Z",
+        )
+        reopened_result = invoke(
+            reopened_body,
+            database,
+            delivery="pull-reopened-60",
+            previous_version=closed_version,
+        )
+        reopened_output = require_success(reopened_result, "reopened lifecycle")
+        reopened_version = snapshot_version(reopened_output)
+        assert ":provider/event-action :reopened" in reopened_output
+        assert ":github/pull-request-state :open" in reopened_output
+        assert ":github/pull-request-closed-at nil" in reopened_output
+
+        merged_body = lifecycle_payload(
+            json.loads(reopened_body),
+            action="closed",
+            updated_at="2026-08-08T09:40:00Z",
+            state="closed",
+            closed_at="2026-08-08T09:40:00Z",
+            merged=True,
+            merged_at="2026-08-08T09:40:00Z",
+            merge_commit_sha=MERGE_COMMIT,
+        )
+        merged_result = invoke(
+            merged_body,
+            database,
+            delivery="pull-closed-merged-60",
+            previous_version=reopened_version,
+        )
+        merged_output = require_success(merged_result, "merged lifecycle")
+        merged_version = snapshot_version(merged_output)
+        assert ":provider/event-action :closed" in merged_output
+        assert ":github/pull-request-state :closed" in merged_output
+        assert ":github/pull-request-merged true" in merged_output
+        assert ':github/pull-request-merged-at "2026-08-08T09:40:00Z"' in merged_output
+        assert f':github/pull-request-merge-commit-sha "{MERGE_COMMIT}"' in merged_output
+        assert ":work/complete" not in merged_output
+        assert ":workspace/main" not in merged_output
+        assert ":workspace/release" not in merged_output
+
+        replay = invoke(
+            merged_body,
+            database,
+            delivery="pull-closed-merged-60",
+            previous_version=reopened_version,
+        )
+        assert require_success(replay, "merged replay") == merged_output
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 5
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 5
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 5
+        stored_edited = bytes(
+            connection.execute(
+                "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                (edited_version,),
+            ).fetchone()[0]
+        )
+        assert b"PRIVATE EDITED TITLE" in stored_edited
+        assert b"PRIVATE EDITED BODY" in stored_edited
+        stored_merged = json.loads(
+            bytes(
+                connection.execute(
+                    "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                    (merged_version,),
+                ).fetchone()[0]
+            )
+        )
+        assert stored_merged["pull_request"]["merged"] is True
+        assert stored_merged["pull_request"]["merge_commit_sha"] == MERGE_COMMIT
+        assert stored_merged["lifecycle"] == {"action": "closed"}
+        connection.close()
+
+        unsupported = lifecycle_payload(
+            base,
+            action="synchronize",
+            updated_at="2026-08-08T10:00:00Z",
+        )
+        require_failure(
+            invoke(
+                unsupported,
+                database,
+                delivery="pull-unsupported",
+                previous_version=merged_version,
+            ),
+            "unsupported action",
+        )
+
+        not_draft = lifecycle_payload(
+            base,
+            action="converted_to_draft",
+            updated_at="2026-08-08T10:01:00Z",
+        )
+        require_failure(
+            invoke(
+                not_draft,
+                database,
+                delivery="pull-not-draft",
+                previous_version=merged_version,
+            ),
+            "converted_to_draft without draft state",
+        )
+
+        open_close = lifecycle_payload(
+            base,
+            action="closed",
+            updated_at="2026-08-08T10:02:00Z",
+        )
+        require_failure(
+            invoke(
+                open_close,
+                database,
+                delivery="pull-close-open",
+                previous_version=merged_version,
+            ),
+            "closed action with open state",
+        )
+
+        missing_closed_at = lifecycle_payload(
+            base,
+            action="closed",
+            updated_at="2026-08-08T10:03:00Z",
+            state="closed",
+        )
+        require_failure(
+            invoke(
+                missing_closed_at,
+                database,
+                delivery="pull-missing-closed-at",
+                previous_version=merged_version,
+            ),
+            "closed state without closed_at",
+        )
+
+        missing_merge_evidence = lifecycle_payload(
+            base,
+            action="closed",
+            updated_at="2026-08-08T10:04:00Z",
+            state="closed",
+            closed_at="2026-08-08T10:04:00Z",
+            merged=True,
+            merge_commit_sha=MERGE_COMMIT,
+        )
+        require_failure(
+            invoke(
+                missing_merge_evidence,
+                database,
+                delivery="pull-missing-merged-at",
+                previous_version=merged_version,
+            ),
+            "merged state without merged_at",
+        )
+
+        bad_merge_width = lifecycle_payload(
+            base,
+            action="closed",
+            updated_at="2026-08-08T10:05:00Z",
+            state="closed",
+            closed_at="2026-08-08T10:05:00Z",
+            merged=True,
+            merged_at="2026-08-08T10:05:00Z",
+            merge_commit_sha="88",
+        )
+        require_failure(
+            invoke(
+                bad_merge_width,
+                database,
+                delivery="pull-bad-merge-sha",
+                previous_version=merged_version,
+            ),
+            "invalid merge commit width",
+        )
+
+        wrong_number = json.loads(edited_body)
+        wrong_number["number"] = 61
+        require_failure(
+            invoke(
+                canonical(wrong_number),
+                database,
+                delivery="pull-number-mismatch",
+                previous_version=merged_version,
+            ),
+            "number mismatch",
+        )
+
+        wrong_base = json.loads(edited_body)
+        wrong_base["pull_request"]["base"]["repo"]["full_name"] = "other/repo"
+        require_failure(
+            invoke(
+                canonical(wrong_base),
+                database,
+                delivery="pull-base-mismatch",
+                previous_version=merged_version,
+            ),
+            "base repository mismatch",
+        )
+
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="pull-invalid-candidate",
+                previous_version=merged_version,
+                candidate_root="aa",
+            ),
+            "invalid candidate root",
+        )
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="pull-invalid-origin",
+                previous_version=merged_version,
+                origin_root="bb",
+            ),
+            "invalid origin root",
+        )
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="pull-invalid-previous",
+                previous_version="sha256:aa",
+            ),
+            "invalid previous version",
+        )
+
+        duplicate = edited_body[:-1] + b',"action":"edited"}'
+        require_failure(
+            invoke(
+                duplicate,
+                database,
+                delivery="pull-duplicate-key",
+                previous_version=merged_version,
+            ),
+            "duplicate JSON key",
+        )
+        require_failure(
+            invoke(
+                edited_body,
+                database,
+                delivery="pull-bad-signature",
+                previous_version=merged_version,
+                supplied_signature="sha256=00",
+            ),
+            "invalid signature",
+        )
+
+    print("GitHub pull-request lifecycle adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
