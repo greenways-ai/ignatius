@@ -1,0 +1,43 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 93079488449,
+    "node_id": "CR_kwDOTuNkoc8AAAAVq_hHwQ",
+    "name": "Verify",
+    "head_sha": "2222222222222222222222222222222222222222",
+    "external_id": "actions-run-31247934361",
+    "status": "completed",
+    "conclusion": "success",
+    "started_at": "2026-08-08T08:13:45Z",
+    "completed_at": "2026-08-08T08:19:30Z",
+    "details_url": "https://github.com/greenways-ai/ignatius/actions/runs/31247934361",
+    "output": {
+      "title": "All verification completed",
+      "summary": "SQL, Hara, HAL, workspace and SHA checks passed.",
+      "text": "The full signed workspace suite completed without failures.",
+      "annotations_count": 0,
+      "annotations_url": "https://api.github.com/repos/greenways-ai/ignatius/check-runs/93079488449/annotations"
+    },
+    "check_suite": {
+      "id": 5001
+    },
+    "app": {
+      "id": 15368,
+      "slug": "github-actions",
+      "name": "GitHub Actions",
+      "external_url": "https://github.com/features/actions"
+    },
+    "pull_requests": []
+  },
+  "repository": {
+    "id": 1323525281,
+    "node_id": "R_kgDOTuNkoQ",
+    "full_name": "greenways-ai/ignatius"
+  },
+  "sender": {
+    "login": "github-actions[bot]"
+  },
+  "installation": {
+    "id": 123
+  }
+}
