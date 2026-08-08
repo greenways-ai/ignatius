@@ -1,0 +1,19 @@
+(ns ignatius.github-workflow
+  (:require [ignatius.github :as github]))
+
+(def workflow-format-version 1)
+
+(defn event-plan
+  "Pure workflow planner. Host adapters supply facts; Hara supplies meaning."
+  [event]
+  (case (get event :provider/event-kind)
+    :github/issues
+    (github/plan-issue-open event)
+
+    :github/push
+    (github/plan-push event)
+
+    :github/check-run
+    (github/plan-check-complete event)
+
+    {:error :github/unsupported-event}))
