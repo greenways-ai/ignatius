@@ -58,12 +58,14 @@
   "Looks up one root through a benchmark-only hex-text JDBC boundary."
   {:added "0.18"}
   [:text i-map-root-hex :text i-key-root-hex]
-  (return
-   (pg/encode
-    (value/map-get
-     (pg/decode i-map-root-hex "hex")
-     (pg/decode i-key-root-hex "hex"))
-    "hex")))
+  (let [(:bytea o-value-root)
+        (value/map-get
+         (pg/decode i-map-root-hex "hex")
+         (pg/decode i-key-root-hex "hex"))]
+    (cond [o-value-root :is-null]
+          (return nil)
+          :else
+          (return (pg/encode o-value-root "hex")))))
 
 (defn.pg ^{:- [:text]}
   benchmark-map-assoc
@@ -80,20 +82,36 @@
      (pg/decode i-value-root-hex "hex"))
     "hex")))
 
-(defn.pg ^{:- [:jsonb]}
-  benchmark-map-shape
-  "Returns the stored payload bytes and derived key/value reference counts."
+(defn.pg ^{:- [:integer]}
+  benchmark-map-payload-bytes
+  "Returns the canonical payload size through a typed scalar boundary."
   {:added "0.18"}
   [:text i-map-root-hex]
   (let [(:bytea v-map-root) (pg/decode i-map-root-hex "hex")
         o-cell (cell/cell-by-hash v-map-root)
         _ (pg/assert [o-cell :is-not-null]
                      [:ledger/missing-benchmark-map])]
-    (return
-     (pg/jsonb-build-object
-      "payload_bytes" (:integer (:->> o-cell "byte_size"))
-      "key_refs" (cell/cell-ref-count v-map-root "key")
-      "value_refs" (cell/cell-ref-count v-map-root "value")))))
+    (return (:integer (:->> o-cell "byte_size")))))
+
+(defn.pg ^{:- [:integer]}
+  benchmark-map-key-ref-count
+  "Returns the number of derived map-key references."
+  {:added "0.18"}
+  [:text i-map-root-hex]
+  (return
+   (cell/cell-ref-count
+    (pg/decode i-map-root-hex "hex")
+    "key")))
+
+(defn.pg ^{:- [:integer]}
+  benchmark-map-value-ref-count
+  "Returns the number of derived map-value references."
+  {:added "0.18"}
+  [:text i-map-root-hex]
+  (return
+   (cell/cell-ref-count
+    (pg/decode i-map-root-hex "hex")
+    "value")))
 
 (def benchmark-namespace
   'ledger.hpt1-flat-map-benchmark-runner)
@@ -266,7 +284,9 @@
           put-map-pointer benchmark-put-map
           map-get-pointer benchmark-map-get
           map-assoc-pointer benchmark-map-assoc
-          map-shape-pointer benchmark-map-shape]
+          payload-bytes-pointer benchmark-map-payload-bytes
+          key-ref-count-pointer benchmark-map-key-ref-count
+          value-ref-count-pointer benchmark-map-value-ref-count]
       (l/rt:setup runtime benchmark-module)
       (try
         (let [evidence
@@ -275,7 +295,9 @@
                 benchmark/benchmark-put-map put-map-pointer
                 benchmark/benchmark-map-get map-get-pointer
                 benchmark/benchmark-map-assoc map-assoc-pointer
-                benchmark/benchmark-map-shape map-shape-pointer]
+                benchmark/benchmark-map-payload-bytes payload-bytes-pointer
+                benchmark/benchmark-map-key-ref-count key-ref-count-pointer
+                benchmark/benchmark-map-value-ref-count value-ref-count-pointer]
                 (benchmark/benchmark-evidence
                  entry-counts warmup-count sample-count))
               _ (validate-evidence!
