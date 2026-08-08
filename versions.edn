@@ -2,7 +2,7 @@
  :ignatius/dependencies
  {:hara
   {:repository "https://github.com/hara-lang/hara.git"
-   :revision "99a0b106158dec0902ebe08349c8f8b113d97ea9"
+   :revision "d305875e3bfe3d8fc4f8a1462053e4ca901aaa74"
    :checkout ".local/hara.lang"}
   :foundation
   {:repository "https://github.com/zcaudate-xyz/foundation-base.git"
