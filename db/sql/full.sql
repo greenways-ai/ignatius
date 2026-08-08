@@ -24,7 +24,20 @@ CREATE OR REPLACE FUNCTION "gw_ledger".hash_valid(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/canonical-encode [33] 
+-- gwdb.ledger.codec/compare [33] 
+CREATE OR REPLACE FUNCTION "gw_ledger".compare(
+  i_left BYTEA,
+  i_right BYTEA
+) RETURNS INTEGER AS $$
+
+  SELECT CASE WHEN i_left > i_right THEN 1
+  WHEN i_left < i_right THEN -1
+  ELSE 0
+  END;
+
+$$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+-- gwdb.ledger.codec/canonical-encode [45] 
 CREATE OR REPLACE FUNCTION "gw_ledger".canonical_encode(
   type_tag INTEGER,
   payload BYTEA
@@ -37,7 +50,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".canonical_encode(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/canonical-hash [44] 
+-- gwdb.ledger.codec/canonical-hash [56] 
 CREATE OR REPLACE FUNCTION "gw_ledger".canonical_hash(
   type_tag INTEGER,
   payload BYTEA
@@ -47,7 +60,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".canonical_hash(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/valid-type-tag [54] 
+-- gwdb.ledger.codec/valid-type-tag [66] 
 CREATE OR REPLACE FUNCTION "gw_ledger".valid_type_tag(
   type_tag INTEGER
 ) RETURNS BOOLEAN AS $$
@@ -56,7 +69,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".valid_type_tag(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/framed-roots-valid [64] 
+-- gwdb.ledger.codec/framed-roots-valid [76] 
 CREATE OR REPLACE FUNCTION "gw_ledger".framed_roots_valid(
   i_payload BYTEA,
   i_kind TEXT,
@@ -78,7 +91,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".framed_roots_valid(
 
 $$ LANGUAGE 'plpgsql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/payload-valid [82] 
+-- gwdb.ledger.codec/payload-valid [94] 
 CREATE OR REPLACE FUNCTION "gw_ledger".payload_valid(
   i_type_tag INTEGER,
   i_payload BYTEA
@@ -97,7 +110,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".payload_valid(
 
 $$ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
--- gwdb.ledger.codec/verify [112] 
+-- gwdb.ledger.codec/verify [124] 
 CREATE OR REPLACE FUNCTION "gw_ledger".verify(
   i_hash BYTEA,
   i_type_tag INTEGER,
@@ -19465,6 +19478,1690 @@ CREATE OR REPLACE FUNCTION "gw_ledger".workspace_release_submit(
     END;
   END;
 
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/WorkflowProjection [19] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowProjection" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowProjection" (
+  "workspace_id_root" BYTEA PRIMARY KEY,
+  "workspace_id" TEXT NOT NULL,
+  "state_root" BYTEA NOT NULL,
+  "latest_entry_id_root" BYTEA,
+  "work_count" INTEGER NOT NULL,
+  "dependency_count" INTEGER NOT NULL,
+  "reference_count" INTEGER NOT NULL,
+  "resource_version_count" INTEGER NOT NULL,
+  "checkpoint_count" INTEGER NOT NULL
+);
+
+-- gwdb.ledger.workflow-projection/WorkflowWork [32] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowWork" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowWork" (
+  "workspace_id_root" BYTEA,
+  "work_id_root" BYTEA,
+  "work_id" TEXT NOT NULL,
+  "run_root" BYTEA NOT NULL,
+  "definition_root" BYTEA NOT NULL,
+  "title" TEXT,
+  "kind" TEXT,
+  "status" TEXT NOT NULL,
+  "classification" TEXT NOT NULL,
+  "assignee_root" BYTEA,
+  "assignee" TEXT,
+  "dependency_count" INTEGER NOT NULL,
+  "unresolved_dependency_count" INTEGER NOT NULL,
+  "input_count" INTEGER NOT NULL,
+  "output_count" INTEGER NOT NULL,
+  "result_root" BYTEA,
+  "receipt_root" BYTEA,
+  "created_evidence_root" BYTEA,
+  "claim_evidence_root" BYTEA,
+  "started_evidence_root" BYTEA,
+  "completed_evidence_root" BYTEA,
+  "latest_checkpoint_root" BYTEA,
+  "latest_checkpoint_id" TEXT,
+  "latest_checkpoint_timestamp" BIGINT,
+  "source_state_root" BYTEA NOT NULL,
+  PRIMARY KEY (workspace_id_root,work_id_root)
+);
+
+-- gwdb.ledger.workflow-projection/WorkflowDependency [61] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowDependency" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowDependency" (
+  "workspace_id_root" BYTEA,
+  "work_id_root" BYTEA,
+  "position" INTEGER,
+  "dependency_id_root" BYTEA NOT NULL,
+  "dependency_id" TEXT NOT NULL,
+  "dependency_run_root" BYTEA,
+  "dependency_status" TEXT,
+  "complete" BOOLEAN NOT NULL,
+  "source_state_root" BYTEA NOT NULL,
+  PRIMARY KEY (workspace_id_root,work_id_root,position)
+);
+
+-- gwdb.ledger.workflow-projection/WorkflowReference [74] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowReference" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowReference" (
+  "workspace_id_root" BYTEA,
+  "work_id_root" BYTEA,
+  "direction" TEXT,
+  "position" INTEGER,
+  "reference_root" BYTEA NOT NULL,
+  "resource_id_root" BYTEA NOT NULL,
+  "resource_id" TEXT NOT NULL,
+  "resource_version_root" BYTEA NOT NULL,
+  "resource_version" TEXT NOT NULL,
+  "source_state_root" BYTEA NOT NULL,
+  PRIMARY KEY (workspace_id_root,work_id_root,direction,position)
+);
+
+-- gwdb.ledger.workflow-projection/WorkflowResourceVersion [88] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowResourceVersion" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowResourceVersion" (
+  "workspace_id_root" BYTEA,
+  "resource_id_root" BYTEA,
+  "resource_version_root" BYTEA,
+  "resource_id" TEXT NOT NULL,
+  "resource_version" TEXT NOT NULL,
+  "artifact_root" BYTEA NOT NULL,
+  "current" BOOLEAN NOT NULL,
+  "kind" TEXT,
+  "provider" TEXT,
+  "previous_version_root" BYTEA,
+  "previous_version" TEXT,
+  "producer_work_id_root" BYTEA,
+  "producer_work_id" TEXT,
+  "locator_root" BYTEA,
+  "digest_algorithm" TEXT,
+  "digest" TEXT,
+  "size" BIGINT,
+  "published_evidence_root" BYTEA,
+  "source_state_root" BYTEA NOT NULL,
+  PRIMARY KEY (workspace_id_root,resource_id_root,resource_version_root)
+);
+
+-- gwdb.ledger.workflow-projection/WorkflowCheckpoint [111] 
+DROP TABLE IF EXISTS "gw_ledger"."WorkflowCheckpoint" CASCADE;
+CREATE TABLE IF NOT EXISTS "gw_ledger"."WorkflowCheckpoint" (
+  "workspace_id_root" BYTEA,
+  "checkpoint_id_root" BYTEA,
+  "checkpoint_id" TEXT NOT NULL,
+  "checkpoint_root" BYTEA NOT NULL,
+  "work_id_root" BYTEA NOT NULL,
+  "work_id" TEXT NOT NULL,
+  "state_root" BYTEA NOT NULL,
+  "receipt_root" BYTEA,
+  "evidence_root" BYTEA NOT NULL,
+  "ledger_timestamp" BIGINT NOT NULL,
+  "source_state_root" BYTEA NOT NULL,
+  PRIMARY KEY (workspace_id_root,checkpoint_id_root)
+);
+
+-- gwdb.ledger.workflow-projection/optional-root [126] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_root(
+  i_root BYTEA
+) RETURNS BYTEA AS $$
+BEGIN
+  IF i_root is null  THEN
+    RETURN null;
+  ELSIF "gw_ledger".cell_type_tag(i_root) = 0 THEN
+    RETURN null;
+  ELSE
+    RETURN i_root;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/scalar-text [139] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scalar_text(
+  i_root BYTEA
+) RETURNS TEXT AS $$
+BEGIN
+  IF i_root is null  THEN
+    RETURN null;
+  ELSE
+    DECLARE
+    o_cell JSONB;
+      v_tag SMALLINT;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_root);
+      v_tag := (o_cell ->> 'type_tag')::SMALLINT;
+      IF NOT (o_cell IS NOT NULL AND ((v_tag = 5) OR (v_tag = 7) OR (v_tag = 8))) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_projection_not_text',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-projection-not-text'
+        ;
+      END IF;
+      RETURN encode((o_cell ->> 'payload')::BYTEA,'escape');
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/scalar-boolean [160] 
+CREATE OR REPLACE FUNCTION "gw_ledger".scalar_boolean(
+  i_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_root is null  THEN
+    RETURN false;
+  ELSE
+    DECLARE
+    o_cell JSONB;
+  BEGIN
+    o_cell := "gw_ledger".cell_by_hash(i_root);
+      IF NOT (o_cell IS NOT NULL AND ((o_cell ->> 'type_tag')::SMALLINT = 1)) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_projection_not_boolean',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-projection-not-boolean'
+        ;
+      END IF;
+      RETURN (o_cell ->> 'payload')::BYTEA = decode('01','hex');
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/optional-integer [177] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_integer(
+  i_root BYTEA
+) RETURNS BIGINT AS $$
+BEGIN
+  IF i_root is null  THEN
+    RETURN null;
+  ELSIF "gw_ledger".cell_type_tag(i_root) = 0 THEN
+    RETURN null;
+  ELSE
+    RETURN "gw_ledger".integer_bigint(i_root);
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/extension-field [190] 
+CREATE OR REPLACE FUNCTION "gw_ledger".extension_field(
+  i_record_root BYTEA,
+  i_name TEXT
+) RETURNS BYTEA AS $$
+
+  DECLARE
+    v_extensions BYTEA;
+  BEGIN
+    v_extensions := "gw_ledger".field(i_record_root,'record/extensions');
+    IF v_extensions is null  THEN
+      RETURN null;
+    ELSE
+      RETURN "gw_ledger".field(v_extensions,i_name);
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/optional-extension-field [202] 
+CREATE OR REPLACE FUNCTION "gw_ledger".optional_extension_field(
+  i_record_root BYTEA,
+  i_name TEXT
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".optional_root("gw_ledger".extension_field(i_record_root,i_name));
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/map-count [210] 
+CREATE OR REPLACE FUNCTION "gw_ledger".map_count(
+  i_map_root BYTEA
+) RETURNS INTEGER AS $$
+BEGIN
+  IF i_map_root is null  THEN
+    RETURN 0;
+  ELSIF "gw_ledger".cell_type_tag(i_map_root) = 0 THEN
+    RETURN 0;
+  ELSE
+    BEGIN
+    IF NOT ("gw_ledger".cell_type_tag(i_map_root) = 11) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_projection_not_map',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-projection-not-map'
+        ;
+      END IF;
+      RETURN "gw_ledger".cell_ref_count(i_map_root,'key');
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/vector-count [226] 
+CREATE OR REPLACE FUNCTION "gw_ledger".vector_count(
+  i_vector_root BYTEA
+) RETURNS INTEGER AS $$
+BEGIN
+  IF i_vector_root is null  THEN
+    RETURN 0;
+  ELSIF "gw_ledger".cell_type_tag(i_vector_root) = 0 THEN
+    RETURN 0;
+  ELSE
+    BEGIN
+    IF NOT ("gw_ledger".cell_type_tag(i_vector_root) = 10) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_projection_not_vector',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-projection-not-vector'
+        ;
+      END IF;
+      RETURN "gw_ledger".cell_ref_count(i_vector_root,'element');
+  END;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/map-key [242] 
+CREATE OR REPLACE FUNCTION "gw_ledger".map_key(
+  i_map_root BYTEA,
+  i_position INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".cell_ref_child(i_map_root,i_position,'key');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/map-value [249] 
+CREATE OR REPLACE FUNCTION "gw_ledger".map_value(
+  i_map_root BYTEA,
+  i_position INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".cell_ref_child(i_map_root,i_position,'value');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/vector-value [256] 
+CREATE OR REPLACE FUNCTION "gw_ledger".vector_value(
+  i_vector_root BYTEA,
+  i_position INTEGER
+) RETURNS BYTEA AS $$
+BEGIN
+  RETURN "gw_ledger".cell_ref_child(i_vector_root,i_position,'element');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/work-classification [263] 
+CREATE OR REPLACE FUNCTION "gw_ledger".work_classification(
+  i_status TEXT,
+  i_unresolved_count INTEGER
+) RETURNS TEXT AS $$
+BEGIN
+  IF i_status = 'open' THEN
+    RETURN CASE WHEN i_unresolved_count = 0 THEN 'ready'
+  ELSE 'blocked'
+  END;
+  ELSIF i_status = 'claimed' THEN
+    RETURN 'claimed';
+  ELSIF i_status = 'running' THEN
+    RETURN 'running';
+  ELSIF i_status = 'complete' THEN
+    RETURN 'complete';
+  ELSE
+    RETURN 'unknown';
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-work-item [285] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_work_item(
+  i_run_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN "gw_ledger".scalar_boolean("gw_ledger".extension_field(i_run_root,'work/item'));
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/projection-clear [293] 
+CREATE OR REPLACE FUNCTION "gw_ledger".projection_clear(
+  i_workspace_id_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  BEGIN
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowReference" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "work_id_root",
+        "direction",
+        "position",
+        "reference_root",
+        "resource_id_root",
+        "resource_id",
+        "resource_version_root",
+        "resource_version",
+        "source_state_root")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowDependency" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "work_id_root",
+        "position",
+        "dependency_id_root",
+        "dependency_id",
+        "dependency_run_root",
+        "dependency_status",
+        "complete",
+        "source_state_root")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowCheckpoint" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "checkpoint_id_root",
+        "checkpoint_id",
+        "checkpoint_root",
+        "work_id_root",
+        "work_id",
+        "state_root",
+        "receipt_root",
+        "evidence_root",
+        "ledger_timestamp",
+        "source_state_root")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowResourceVersion" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "resource_id_root",
+        "resource_version_root",
+        "resource_id",
+        "resource_version",
+        "artifact_root",
+        "current",
+        "kind",
+        "provider",
+        "previous_version_root",
+        "previous_version",
+        "producer_work_id_root",
+        "producer_work_id",
+        "locator_root",
+        "digest_algorithm",
+        "digest",
+        "size",
+        "published_evidence_root",
+        "source_state_root")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowWork" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "work_id_root",
+        "work_id",
+        "run_root",
+        "definition_root",
+        "title",
+        "kind",
+        "status",
+        "classification",
+        "assignee_root",
+        "assignee",
+        "dependency_count",
+        "unresolved_dependency_count",
+        "input_count",
+        "output_count",
+        "result_root",
+        "receipt_root",
+        "created_evidence_root",
+        "claim_evidence_root",
+        "started_evidence_root",
+        "completed_evidence_root",
+        "latest_checkpoint_root",
+        "latest_checkpoint_id",
+        "latest_checkpoint_timestamp",
+        "source_state_root")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    WITH j_ret AS (  
+      DELETE FROM "gw_ledger"."WorkflowProjection" WHERE "workspace_id_root" = i_workspace_id_root
+      RETURNING
+        "workspace_id_root",
+        "workspace_id",
+        "state_root",
+        "latest_entry_id_root",
+        "work_count",
+        "dependency_count",
+        "reference_count",
+        "resource_version_count",
+        "checkpoint_count")
+    SELECT jsonb_agg(j_ret) FROM j_ret;
+    RETURN true;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/import-work-references [311] 
+CREATE OR REPLACE FUNCTION "gw_ledger".import_work_references(
+  i_workspace_id_root BYTEA,
+  i_work_id_root BYTEA,
+  i_direction TEXT,
+  i_reference_vector_root BYTEA,
+  i_source_state_root BYTEA
+) RETURNS INTEGER AS $$
+
+  DECLARE
+    o_row JSONB;
+    v_count INTEGER;
+    v_position INTEGER;
+    v_reference_root BYTEA;
+    v_resource_id_root BYTEA;
+    v_resource_version_root BYTEA;
+  BEGIN
+    v_count := "gw_ledger".vector_count(i_reference_vector_root);
+    v_position := 0;
+    v_reference_root := null;
+    v_resource_id_root := null;
+    v_resource_version_root := null;
+    o_row := null;
+    WHILE v_position < v_count LOOP
+      v_reference_root := "gw_ledger".vector_value(i_reference_vector_root,v_position);
+      v_resource_id_root := "gw_ledger".field(v_reference_root,'reference/id');
+      v_resource_version_root := "gw_ledger".optional_root("gw_ledger".field(v_reference_root,'reference/root'));
+      IF NOT (v_resource_id_root IS NOT NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_reference_missing_resource_id',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-reference-missing-resource-id'
+        ;
+      END IF;
+      IF NOT (v_resource_version_root IS NOT NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_reference_not_exact',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-reference-not-exact'
+        ;
+      END IF;
+      o_row := WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkflowReference" (
+          "workspace_id_root",
+          "work_id_root",
+          "direction",
+          "position",
+          "reference_root",
+          "resource_id_root",
+          "resource_id",
+          "resource_version_root",
+          "resource_version",
+          "source_state_root"
+        ) VALUES (
+          (i_workspace_id_root)::BYTEA,
+          (i_work_id_root)::BYTEA,
+          (i_direction)::TEXT,
+          (v_position)::INTEGER,
+          (v_reference_root)::BYTEA,
+          (v_resource_id_root)::BYTEA,
+          ("gw_ledger".scalar_text(v_resource_id_root))::TEXT,
+          (v_resource_version_root)::BYTEA,
+          ("gw_ledger".scalar_text(v_resource_version_root))::TEXT,
+          (i_source_state_root)::BYTEA
+        ) ON CONFLICT ("workspace_id_root","work_id_root","direction","position") DO UPDATE SET ("workspace_id_root",
+          "work_id_root",
+          "direction",
+          "position",
+          "reference_root",
+          "resource_id_root",
+          "resource_id",
+          "resource_version_root",
+          "resource_version",
+          "source_state_root") = row(
+          EXCLUDED."workspace_id_root",
+          EXCLUDED."work_id_root",
+          EXCLUDED."direction",
+          EXCLUDED."position",
+          EXCLUDED."reference_root",
+          EXCLUDED."resource_id_root",
+          EXCLUDED."resource_id",
+          EXCLUDED."resource_version_root",
+          EXCLUDED."resource_version",
+          EXCLUDED."source_state_root"
+        ) RETURNING
+          "workspace_id_root",
+          "work_id_root",
+          "direction",
+          "position",
+          "reference_root",
+          "resource_id_root",
+          "resource_id",
+          "resource_version_root",
+          "resource_version",
+          "source_state_root")
+      SELECT to_jsonb(j_ret) FROM j_ret;
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN v_count;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/import-work-items [354] 
+CREATE OR REPLACE FUNCTION "gw_ledger".import_work_items(
+  i_workspace_id_root BYTEA,
+  i_process_map_root BYTEA,
+  i_source_state_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_row JSONB;
+    v_assignee_root BYTEA;
+    v_definition_root BYTEA;
+    v_dependency_complete BOOLEAN;
+    v_dependency_count INTEGER;
+    v_dependency_id_root BYTEA;
+    v_dependency_position INTEGER;
+    v_dependency_run_root BYTEA;
+    v_dependency_status TEXT;
+    v_dependency_status_root BYTEA;
+    v_dependency_total INTEGER;
+    v_dependency_vector_root BYTEA;
+    v_input_vector_root BYTEA;
+    v_kind_root BYTEA;
+    v_output_vector_root BYTEA;
+    v_position INTEGER;
+    v_process_count INTEGER;
+    v_reference_total INTEGER;
+    v_run_root BYTEA;
+    v_status TEXT;
+    v_status_root BYTEA;
+    v_title_root BYTEA;
+    v_unresolved_count INTEGER;
+    v_work_count INTEGER;
+    v_work_id_root BYTEA;
+  BEGIN
+    v_process_count := "gw_ledger".map_count(i_process_map_root);
+    v_position := 0;
+    v_work_count := 0;
+    v_dependency_total := 0;
+    v_reference_total := 0;
+    v_work_id_root := null;
+    v_run_root := null;
+    v_definition_root := null;
+    v_status_root := null;
+    v_status := null;
+    v_dependency_vector_root := null;
+    v_input_vector_root := null;
+    v_output_vector_root := null;
+    v_dependency_count := 0;
+    v_dependency_position := 0;
+    v_unresolved_count := 0;
+    v_dependency_id_root := null;
+    v_dependency_run_root := null;
+    v_dependency_status_root := null;
+    v_dependency_status := null;
+    v_dependency_complete := false;
+    v_assignee_root := null;
+    v_title_root := null;
+    v_kind_root := null;
+    o_row := null;
+    WHILE v_position < v_process_count LOOP
+      v_work_id_root := "gw_ledger".map_key(i_process_map_root,v_position);
+      v_run_root := "gw_ledger".map_value(i_process_map_root,v_position);
+      IF "gw_ledger".workflow_work_item(v_run_root) THEN
+        v_definition_root := "gw_ledger".field(v_run_root,'run/definition-root');
+        v_status_root := "gw_ledger".field(v_run_root,'run/status');
+        v_status := "gw_ledger".scalar_text(v_status_root);
+        v_dependency_vector_root := "gw_ledger".extension_field(v_run_root,'work/dependency-ids');
+        v_input_vector_root := "gw_ledger".extension_field(v_run_root,'work/input-references');
+        v_output_vector_root := "gw_ledger".extension_field(v_run_root,'work/output-references');
+        v_dependency_count := "gw_ledger".vector_count(v_dependency_vector_root);
+        v_dependency_position := 0;
+        v_unresolved_count := 0;
+        WHILE v_dependency_position < v_dependency_count LOOP
+        v_dependency_id_root := "gw_ledger".vector_value(v_dependency_vector_root,v_dependency_position);
+          v_dependency_run_root := "gw_ledger".map_get(i_process_map_root,v_dependency_id_root);
+          v_dependency_status_root := CASE WHEN v_dependency_run_root IS NULL THEN null
+          ELSE "gw_ledger".field(v_dependency_run_root,'run/status')
+          END;
+          v_dependency_status := "gw_ledger".scalar_text(v_dependency_status_root);
+          v_dependency_complete := (v_dependency_run_root IS NOT NULL AND (v_dependency_status = 'complete'));
+          IF NOT v_dependency_complete THEN
+            v_unresolved_count := (v_unresolved_count + 1);
+          END IF;
+          o_row := WITH j_ret AS (  
+            INSERT INTO "gw_ledger"."WorkflowDependency" (
+              "workspace_id_root",
+              "work_id_root",
+              "position",
+              "dependency_id_root",
+              "dependency_id",
+              "dependency_run_root",
+              "dependency_status",
+              "complete",
+              "source_state_root"
+            ) VALUES (
+              (i_workspace_id_root)::BYTEA,
+              (v_work_id_root)::BYTEA,
+              (v_dependency_position)::INTEGER,
+              (v_dependency_id_root)::BYTEA,
+              ("gw_ledger".scalar_text(v_dependency_id_root))::TEXT,
+              (v_dependency_run_root)::BYTEA,
+              (v_dependency_status)::TEXT,
+              (v_dependency_complete)::BOOLEAN,
+              (i_source_state_root)::BYTEA
+            ) ON CONFLICT ("workspace_id_root","work_id_root","position") DO UPDATE SET ("workspace_id_root",
+              "work_id_root",
+              "position",
+              "dependency_id_root",
+              "dependency_id",
+              "dependency_run_root",
+              "dependency_status",
+              "complete",
+              "source_state_root") = row(
+              EXCLUDED."workspace_id_root",
+              EXCLUDED."work_id_root",
+              EXCLUDED."position",
+              EXCLUDED."dependency_id_root",
+              EXCLUDED."dependency_id",
+              EXCLUDED."dependency_run_root",
+              EXCLUDED."dependency_status",
+              EXCLUDED."complete",
+              EXCLUDED."source_state_root"
+            ) RETURNING
+              "workspace_id_root",
+              "work_id_root",
+              "position",
+              "dependency_id_root",
+              "dependency_id",
+              "dependency_run_root",
+              "dependency_status",
+              "complete",
+              "source_state_root")
+          SELECT to_jsonb(j_ret) FROM j_ret;
+          v_dependency_position := (v_dependency_position + 1);
+      END LOOP;
+        v_assignee_root := "gw_ledger".optional_extension_field(v_run_root,'work/assignee');
+        v_title_root := "gw_ledger".optional_extension_field(v_run_root,'work/title');
+        v_kind_root := "gw_ledger".optional_extension_field(v_run_root,'work/kind');
+        o_row := WITH j_ret AS (    
+          INSERT INTO "gw_ledger"."WorkflowWork" (
+            "workspace_id_root",
+            "work_id_root",
+            "work_id",
+            "run_root",
+            "definition_root",
+            "title",
+            "kind",
+            "status",
+            "classification",
+            "assignee_root",
+            "assignee",
+            "dependency_count",
+            "unresolved_dependency_count",
+            "input_count",
+            "output_count",
+            "result_root",
+            "receipt_root",
+            "created_evidence_root",
+            "claim_evidence_root",
+            "started_evidence_root",
+            "completed_evidence_root",
+            "latest_checkpoint_root",
+            "latest_checkpoint_id",
+            "latest_checkpoint_timestamp",
+            "source_state_root"
+          ) VALUES (
+            (i_workspace_id_root)::BYTEA,
+            (v_work_id_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_work_id_root))::TEXT,
+            (v_run_root)::BYTEA,
+            (v_definition_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_title_root))::TEXT,
+            ("gw_ledger".scalar_text(v_kind_root))::TEXT,
+            (v_status)::TEXT,
+            ("gw_ledger".work_classification(v_status,v_unresolved_count))::TEXT,
+            (v_assignee_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_assignee_root))::TEXT,
+            (v_dependency_count)::INTEGER,
+            (v_unresolved_count)::INTEGER,
+            ("gw_ledger".vector_count(v_input_vector_root))::INTEGER,
+            ("gw_ledger".vector_count(v_output_vector_root))::INTEGER,
+            ("gw_ledger".optional_root("gw_ledger".field(v_run_root,'run/result-root')))::BYTEA,
+            ("gw_ledger".optional_root("gw_ledger".field(v_run_root,'run/receipt-root')))::BYTEA,
+            ("gw_ledger".optional_extension_field(v_run_root,'work/created-evidence'))::BYTEA,
+            ("gw_ledger".optional_extension_field(v_run_root,'work/claim-evidence'))::BYTEA,
+            ("gw_ledger".optional_root("gw_ledger".field(v_run_root,'run/started-evidence')))::BYTEA,
+            ("gw_ledger".optional_root("gw_ledger".field(v_run_root,'run/completed-evidence')))::BYTEA,
+            (null)::BYTEA,
+            (null)::TEXT,
+            (null)::BIGINT,
+            (i_source_state_root)::BYTEA
+          ) ON CONFLICT ("workspace_id_root","work_id_root") DO UPDATE SET ("workspace_id_root",
+            "work_id_root",
+            "work_id",
+            "run_root",
+            "definition_root",
+            "title",
+            "kind",
+            "status",
+            "classification",
+            "assignee_root",
+            "assignee",
+            "dependency_count",
+            "unresolved_dependency_count",
+            "input_count",
+            "output_count",
+            "result_root",
+            "receipt_root",
+            "created_evidence_root",
+            "claim_evidence_root",
+            "started_evidence_root",
+            "completed_evidence_root",
+            "latest_checkpoint_root",
+            "latest_checkpoint_id",
+            "latest_checkpoint_timestamp",
+            "source_state_root") = row(
+            EXCLUDED."workspace_id_root",
+            EXCLUDED."work_id_root",
+            EXCLUDED."work_id",
+            EXCLUDED."run_root",
+            EXCLUDED."definition_root",
+            EXCLUDED."title",
+            EXCLUDED."kind",
+            EXCLUDED."status",
+            EXCLUDED."classification",
+            EXCLUDED."assignee_root",
+            EXCLUDED."assignee",
+            EXCLUDED."dependency_count",
+            EXCLUDED."unresolved_dependency_count",
+            EXCLUDED."input_count",
+            EXCLUDED."output_count",
+            EXCLUDED."result_root",
+            EXCLUDED."receipt_root",
+            EXCLUDED."created_evidence_root",
+            EXCLUDED."claim_evidence_root",
+            EXCLUDED."started_evidence_root",
+            EXCLUDED."completed_evidence_root",
+            EXCLUDED."latest_checkpoint_root",
+            EXCLUDED."latest_checkpoint_id",
+            EXCLUDED."latest_checkpoint_timestamp",
+            EXCLUDED."source_state_root"
+          ) RETURNING
+            "workspace_id_root",
+            "work_id_root",
+            "work_id",
+            "run_root",
+            "definition_root",
+            "title",
+            "kind",
+            "status",
+            "classification",
+            "assignee_root",
+            "assignee",
+            "dependency_count",
+            "unresolved_dependency_count",
+            "input_count",
+            "output_count",
+            "result_root",
+            "receipt_root",
+            "created_evidence_root",
+            "claim_evidence_root",
+            "started_evidence_root",
+            "completed_evidence_root",
+            "latest_checkpoint_root",
+            "latest_checkpoint_id",
+            "latest_checkpoint_timestamp",
+            "source_state_root")
+      SELECT to_jsonb(j_ret) FROM j_ret;
+        v_reference_total := (v_reference_total + "gw_ledger".import_work_references(
+          i_workspace_id_root,
+          v_work_id_root,
+          'input',
+          v_input_vector_root,
+          i_source_state_root
+        ));
+        v_reference_total := (v_reference_total + "gw_ledger".import_work_references(
+          i_workspace_id_root,
+          v_work_id_root,
+          'output',
+          v_output_vector_root,
+          i_source_state_root
+        ));
+        v_dependency_total := (v_dependency_total + v_dependency_count);
+        v_work_count := (v_work_count + 1);
+      END IF;
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN jsonb_build_object(
+      'work_count',
+      v_work_count,
+      'dependency_count',
+      v_dependency_total,
+      'reference_count',
+      v_reference_total
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/import-resource-versions [509] 
+CREATE OR REPLACE FUNCTION "gw_ledger".import_resource_versions(
+  i_workspace_id_root BYTEA,
+  i_current_resource_map_root BYTEA,
+  i_resource_version_map_root BYTEA,
+  i_source_state_root BYTEA
+) RETURNS INTEGER AS $$
+
+  DECLARE
+    o_row JSONB;
+    v_artifact_root BYTEA;
+    v_current_artifact_root BYTEA;
+    v_current_version_root BYTEA;
+    v_digest_algorithm_root BYTEA;
+    v_digest_root BYTEA;
+    v_kind_root BYTEA;
+    v_locator_root BYTEA;
+    v_previous_root BYTEA;
+    v_producer_root BYTEA;
+    v_provider_root BYTEA;
+    v_resource_count INTEGER;
+    v_resource_id_root BYTEA;
+    v_resource_position INTEGER;
+    v_size_root BYTEA;
+    v_version_count INTEGER;
+    v_version_map_root BYTEA;
+    v_version_position INTEGER;
+    v_version_root BYTEA;
+    v_version_total INTEGER;
+  BEGIN
+    v_resource_count := "gw_ledger".map_count(i_resource_version_map_root);
+    v_resource_position := 0;
+    v_version_total := 0;
+    v_resource_id_root := null;
+    v_version_map_root := null;
+    v_version_count := 0;
+    v_version_position := 0;
+    v_version_root := null;
+    v_artifact_root := null;
+    v_current_artifact_root := null;
+    v_current_version_root := null;
+    v_kind_root := null;
+    v_provider_root := null;
+    v_previous_root := null;
+    v_producer_root := null;
+    v_locator_root := null;
+    v_digest_algorithm_root := null;
+    v_digest_root := null;
+    v_size_root := null;
+    o_row := null;
+    WHILE v_resource_position < v_resource_count LOOP
+      v_resource_id_root := "gw_ledger".map_key(i_resource_version_map_root,v_resource_position);
+      v_version_map_root := "gw_ledger".map_value(i_resource_version_map_root,v_resource_position);
+      v_current_artifact_root := "gw_ledger".map_get(i_current_resource_map_root,v_resource_id_root);
+      v_current_version_root := CASE WHEN v_current_artifact_root IS NULL THEN null
+      ELSE "gw_ledger".field(v_current_artifact_root,'artifact/content-root')
+      END;
+      v_version_count := "gw_ledger".map_count(v_version_map_root);
+      v_version_position := 0;
+      WHILE v_version_position < v_version_count LOOP
+        v_version_root := "gw_ledger".map_key(v_version_map_root,v_version_position);
+        v_artifact_root := "gw_ledger".map_value(v_version_map_root,v_version_position);
+        v_kind_root := "gw_ledger".optional_root("gw_ledger".field(v_artifact_root,'artifact/kind'));
+        v_provider_root := "gw_ledger".optional_extension_field(v_artifact_root,'resource/provider');
+        v_previous_root := "gw_ledger".optional_root(
+          "gw_ledger".field(v_artifact_root,'artifact/previous-content-root')
+        );
+        v_producer_root := "gw_ledger".optional_root(
+          "gw_ledger".field(v_artifact_root,'artifact/producer-run-id')
+        );
+        v_locator_root := "gw_ledger".optional_extension_field(v_artifact_root,'resource/locator');
+        v_digest_algorithm_root := "gw_ledger".optional_extension_field(v_artifact_root,'resource/digest-algorithm');
+        v_digest_root := "gw_ledger".optional_extension_field(v_artifact_root,'resource/digest');
+        v_size_root := "gw_ledger".optional_extension_field(v_artifact_root,'resource/size');
+        o_row := WITH j_ret AS (  
+          INSERT INTO "gw_ledger"."WorkflowResourceVersion" (
+            "workspace_id_root",
+            "resource_id_root",
+            "resource_version_root",
+            "resource_id",
+            "resource_version",
+            "artifact_root",
+            "current",
+            "kind",
+            "provider",
+            "previous_version_root",
+            "previous_version",
+            "producer_work_id_root",
+            "producer_work_id",
+            "locator_root",
+            "digest_algorithm",
+            "digest",
+            "size",
+            "published_evidence_root",
+            "source_state_root"
+          ) VALUES (
+            (i_workspace_id_root)::BYTEA,
+            (v_resource_id_root)::BYTEA,
+            (v_version_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_resource_id_root))::TEXT,
+            ("gw_ledger".scalar_text(v_version_root))::TEXT,
+            (v_artifact_root)::BYTEA,
+            (v_current_version_root = v_version_root)::BOOLEAN,
+            ("gw_ledger".scalar_text(v_kind_root))::TEXT,
+            ("gw_ledger".scalar_text(v_provider_root))::TEXT,
+            (v_previous_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_previous_root))::TEXT,
+            (v_producer_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_producer_root))::TEXT,
+            (v_locator_root)::BYTEA,
+            ("gw_ledger".scalar_text(v_digest_algorithm_root))::TEXT,
+            ("gw_ledger".scalar_text(v_digest_root))::TEXT,
+            ("gw_ledger".optional_integer(v_size_root))::BIGINT,
+            ("gw_ledger".optional_root(
+            "gw_ledger".field(v_artifact_root,'artifact/published-evidence')
+          ))::BYTEA,
+            (i_source_state_root)::BYTEA
+          ) ON CONFLICT ("workspace_id_root",
+            "resource_id_root",
+            "resource_version_root") DO UPDATE SET ("workspace_id_root",
+            "resource_id_root",
+            "resource_version_root",
+            "resource_id",
+            "resource_version",
+            "artifact_root",
+            "current",
+            "kind",
+            "provider",
+            "previous_version_root",
+            "previous_version",
+            "producer_work_id_root",
+            "producer_work_id",
+            "locator_root",
+            "digest_algorithm",
+            "digest",
+            "size",
+            "published_evidence_root",
+            "source_state_root") = row(
+            EXCLUDED."workspace_id_root",
+            EXCLUDED."resource_id_root",
+            EXCLUDED."resource_version_root",
+            EXCLUDED."resource_id",
+            EXCLUDED."resource_version",
+            EXCLUDED."artifact_root",
+            EXCLUDED."current",
+            EXCLUDED."kind",
+            EXCLUDED."provider",
+            EXCLUDED."previous_version_root",
+            EXCLUDED."previous_version",
+            EXCLUDED."producer_work_id_root",
+            EXCLUDED."producer_work_id",
+            EXCLUDED."locator_root",
+            EXCLUDED."digest_algorithm",
+            EXCLUDED."digest",
+            EXCLUDED."size",
+            EXCLUDED."published_evidence_root",
+            EXCLUDED."source_state_root"
+          ) RETURNING
+            "workspace_id_root",
+            "resource_id_root",
+            "resource_version_root",
+            "resource_id",
+            "resource_version",
+            "artifact_root",
+            "current",
+            "kind",
+            "provider",
+            "previous_version_root",
+            "previous_version",
+            "producer_work_id_root",
+            "producer_work_id",
+            "locator_root",
+            "digest_algorithm",
+            "digest",
+            "size",
+            "published_evidence_root",
+            "source_state_root")
+        SELECT to_jsonb(j_ret) FROM j_ret;
+        v_version_position := (v_version_position + 1);
+        v_version_total := (v_version_total + 1);
+      END LOOP;
+      v_resource_position := (v_resource_position + 1);
+    END LOOP;
+    RETURN v_version_total;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/checkpoint-is-later [618] 
+CREATE OR REPLACE FUNCTION "gw_ledger".checkpoint_is_later(
+  i_candidate_timestamp BIGINT,
+  i_candidate_root BYTEA,
+  i_current_timestamp BIGINT,
+  i_current_root BYTEA
+) RETURNS BOOLEAN AS $$
+BEGIN
+  IF i_current_root is null  THEN
+    RETURN true;
+  ELSIF i_candidate_timestamp > i_current_timestamp THEN
+    RETURN true;
+  ELSIF i_candidate_timestamp < i_current_timestamp THEN
+    RETURN false;
+  ELSE
+    RETURN "gw_ledger".compare(i_candidate_root,i_current_root) > 0;
+  END IF;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/import-checkpoints [637] 
+CREATE OR REPLACE FUNCTION "gw_ledger".import_checkpoints(
+  i_workspace_id_root BYTEA,
+  i_checkpoint_map_root BYTEA,
+  i_source_state_root BYTEA
+) RETURNS INTEGER AS $$
+
+  DECLARE
+    o_row JSONB;
+    o_work JSONB;
+    v_checkpoint_id_root BYTEA;
+    v_checkpoint_root BYTEA;
+    v_count INTEGER;
+    v_current_root BYTEA;
+    v_current_timestamp BIGINT;
+    v_evidence_root BYTEA;
+    v_position INTEGER;
+    v_receipt_root BYTEA;
+    v_state_root BYTEA;
+    v_timestamp BIGINT;
+    v_timestamp_root BYTEA;
+    v_work_id_root BYTEA;
+  BEGIN
+    v_count := "gw_ledger".map_count(i_checkpoint_map_root);
+    v_position := 0;
+    v_checkpoint_id_root := null;
+    v_checkpoint_root := null;
+    v_work_id_root := null;
+    v_state_root := null;
+    v_receipt_root := null;
+    v_evidence_root := null;
+    v_timestamp_root := null;
+    v_timestamp := null;
+    o_work := null;
+    v_current_root := null;
+    v_current_timestamp := null;
+    o_row := null;
+    WHILE v_position < v_count LOOP
+      v_checkpoint_id_root := "gw_ledger".map_key(i_checkpoint_map_root,v_position);
+      v_checkpoint_root := "gw_ledger".map_value(i_checkpoint_map_root,v_position);
+      v_work_id_root := "gw_ledger".field(v_checkpoint_root,'checkpoint/run-id');
+      v_state_root := "gw_ledger".field(v_checkpoint_root,'checkpoint/state-root');
+      v_receipt_root := "gw_ledger".optional_root(
+        "gw_ledger".field(v_checkpoint_root,'checkpoint/receipt-root')
+      );
+      v_evidence_root := "gw_ledger".field(v_checkpoint_root,'checkpoint/evidence');
+      v_timestamp_root := "gw_ledger".field(v_evidence_root,'ledger/timestamp');
+      v_timestamp := "gw_ledger".integer_bigint(v_timestamp_root);
+      o_row := WITH j_ret AS (  
+        INSERT INTO "gw_ledger"."WorkflowCheckpoint" (
+          "workspace_id_root",
+          "checkpoint_id_root",
+          "checkpoint_id",
+          "checkpoint_root",
+          "work_id_root",
+          "work_id",
+          "state_root",
+          "receipt_root",
+          "evidence_root",
+          "ledger_timestamp",
+          "source_state_root"
+        ) VALUES (
+          (i_workspace_id_root)::BYTEA,
+          (v_checkpoint_id_root)::BYTEA,
+          ("gw_ledger".scalar_text(v_checkpoint_id_root))::TEXT,
+          (v_checkpoint_root)::BYTEA,
+          (v_work_id_root)::BYTEA,
+          ("gw_ledger".scalar_text(v_work_id_root))::TEXT,
+          (v_state_root)::BYTEA,
+          (v_receipt_root)::BYTEA,
+          (v_evidence_root)::BYTEA,
+          (v_timestamp)::BIGINT,
+          (i_source_state_root)::BYTEA
+        ) ON CONFLICT ("workspace_id_root","checkpoint_id_root") DO UPDATE SET ("workspace_id_root",
+          "checkpoint_id_root",
+          "checkpoint_id",
+          "checkpoint_root",
+          "work_id_root",
+          "work_id",
+          "state_root",
+          "receipt_root",
+          "evidence_root",
+          "ledger_timestamp",
+          "source_state_root") = row(
+          EXCLUDED."workspace_id_root",
+          EXCLUDED."checkpoint_id_root",
+          EXCLUDED."checkpoint_id",
+          EXCLUDED."checkpoint_root",
+          EXCLUDED."work_id_root",
+          EXCLUDED."work_id",
+          EXCLUDED."state_root",
+          EXCLUDED."receipt_root",
+          EXCLUDED."evidence_root",
+          EXCLUDED."ledger_timestamp",
+          EXCLUDED."source_state_root"
+        ) RETURNING
+          "workspace_id_root",
+          "checkpoint_id_root",
+          "checkpoint_id",
+          "checkpoint_root",
+          "work_id_root",
+          "work_id",
+          "state_root",
+          "receipt_root",
+          "evidence_root",
+          "ledger_timestamp",
+          "source_state_root")
+      SELECT to_jsonb(j_ret) FROM j_ret;
+      o_work := WITH j_ret AS (  
+        SELECT
+          "workspace_id_root",
+          "work_id_root",
+          "work_id",
+          "run_root",
+          "definition_root",
+          "title",
+          "kind",
+          "status",
+          "classification",
+          "assignee_root",
+          "assignee",
+          "dependency_count",
+          "unresolved_dependency_count",
+          "input_count",
+          "output_count",
+          "result_root",
+          "receipt_root",
+          "created_evidence_root",
+          "claim_evidence_root",
+          "started_evidence_root",
+          "completed_evidence_root",
+          "latest_checkpoint_root",
+          "latest_checkpoint_id",
+          "latest_checkpoint_timestamp",
+          "source_state_root"
+        FROM "gw_ledger"."WorkflowWork"
+        WHERE "workspace_id_root" = i_workspace_id_root
+        AND "work_id_root" = v_work_id_root
+        LIMIT 1)
+      SELECT to_jsonb(j_ret) FROM j_ret;
+      IF NOT (o_work IS NOT NULL) THEN
+        RAISE EXCEPTION USING
+          DETAIL = (jsonb_build_object(
+            'status',
+            'error',
+            'tag',
+            'ledger/workflow_checkpoint_work_not_projected',
+            'data',
+            null
+          ))::TEXT,
+          MESSAGE = 'ledger/workflow-checkpoint-work-not-projected'
+        ;
+      END IF;
+      v_current_root := (o_work ->> 'latest_checkpoint_root')::BYTEA;
+      v_current_timestamp := (o_work ->> 'latest_checkpoint_timestamp')::BIGINT;
+      IF "gw_ledger".checkpoint_is_later(
+        v_timestamp,
+        v_checkpoint_root,
+        v_current_timestamp,
+        v_current_root
+      ) THEN
+        o_row := UPDATE "gw_ledger"."WorkflowWork" SET
+          "latest_checkpoint_root" = (v_checkpoint_root)::BYTEA,
+          "latest_checkpoint_id" = ("gw_ledger".scalar_text(v_checkpoint_id_root))::TEXT,
+          "latest_checkpoint_timestamp" = (v_timestamp)::BIGINT
+        WHERE "workspace_id_root" = i_workspace_id_root
+        AND "work_id_root" = v_work_id_root;
+      END IF;
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN v_count;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-projection-rebuild [714] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_projection_rebuild(
+  i_state_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_cursor JSONB;
+    v_checkpoint_count INTEGER;
+    v_checkpoint_map_root BYTEA;
+    v_current_resource_map_root BYTEA;
+    v_dependency_count INTEGER;
+    v_latest_entry_id_root BYTEA;
+    v_process_map_root BYTEA;
+    v_reference_count INTEGER;
+    v_resource_version_count INTEGER;
+    v_resource_version_map_root BYTEA;
+    v_work_count INTEGER;
+    v_work_result JSONB;
+    v_workspace_id_root BYTEA;
+  BEGIN
+    IF NOT ("gw_ledger".record_kind(i_state_root,'workspace/build')) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/workflow_projection_invalid_workspace',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/workflow-projection-invalid-workspace'
+      ;
+    END IF;
+    IF NOT ("gw_ledger".record_version_one(i_state_root)) THEN
+      RAISE EXCEPTION USING
+        DETAIL = (jsonb_build_object(
+          'status',
+          'error',
+          'tag',
+          'ledger/workflow_projection_unsupported_version',
+          'data',
+          null
+        ))::TEXT,
+        MESSAGE = 'ledger/workflow-projection-unsupported-version'
+      ;
+    END IF;
+    v_workspace_id_root := "gw_ledger".field(i_state_root,'workspace/id');
+    v_process_map_root := "gw_ledger".field(i_state_root,'workspace/processes');
+    v_current_resource_map_root := "gw_ledger".field(i_state_root,'workspace/artifacts');
+    v_resource_version_map_root := "gw_ledger".field(i_state_root,'workspace/artifact-versions');
+    v_checkpoint_map_root := "gw_ledger".field(i_state_root,'workspace/checkpoints');
+    v_latest_entry_id_root := "gw_ledger".optional_root("gw_ledger".field(i_state_root,'workspace/latest-entry-id'));
+    "gw_ledger".projection_clear(v_workspace_id_root);
+    v_work_result := "gw_ledger".import_work_items(v_workspace_id_root,v_process_map_root,i_state_root);
+    v_work_count := (v_work_result ->> 'work_count')::INTEGER;
+    v_dependency_count := (v_work_result ->> 'dependency_count')::INTEGER;
+    v_reference_count := (v_work_result ->> 'reference_count')::INTEGER;
+    v_resource_version_count := "gw_ledger".import_resource_versions(
+      v_workspace_id_root,
+      v_current_resource_map_root,
+      v_resource_version_map_root,
+      i_state_root
+    );
+    v_checkpoint_count := "gw_ledger".import_checkpoints(v_workspace_id_root,v_checkpoint_map_root,i_state_root);
+    WITH j_ret AS (  
+      INSERT INTO "gw_ledger"."WorkflowProjection" (
+        "workspace_id_root",
+        "workspace_id",
+        "state_root",
+        "latest_entry_id_root",
+        "work_count",
+        "dependency_count",
+        "reference_count",
+        "resource_version_count",
+        "checkpoint_count"
+      ) VALUES (
+        (v_workspace_id_root)::BYTEA,
+        ("gw_ledger".scalar_text(v_workspace_id_root))::TEXT,
+        (i_state_root)::BYTEA,
+        (v_latest_entry_id_root)::BYTEA,
+        (v_work_count)::INTEGER,
+        (v_dependency_count)::INTEGER,
+        (v_reference_count)::INTEGER,
+        (v_resource_version_count)::INTEGER,
+        (v_checkpoint_count)::INTEGER
+      ) RETURNING
+        "workspace_id_root",
+        "workspace_id",
+        "state_root",
+        "latest_entry_id_root",
+        "work_count",
+        "dependency_count",
+        "reference_count",
+        "resource_version_count",
+        "checkpoint_count")
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_cursor;
+    RETURN jsonb_build_object(
+      'workspace_id',
+      "gw_ledger".scalar_text(v_workspace_id_root),
+      'workspace_id_root',
+      v_workspace_id_root,
+      'state_root',
+      i_state_root,
+      'latest_entry_id_root',
+      v_latest_entry_id_root,
+      'work_count',
+      v_work_count,
+      'dependency_count',
+      v_dependency_count,
+      'reference_count',
+      v_reference_count,
+      'resource_version_count',
+      v_resource_version_count,
+      'checkpoint_count',
+      v_checkpoint_count
+    );
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-projection-valid [781] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_projection_valid(
+  i_state_root BYTEA
+) RETURNS BOOLEAN AS $$
+
+  DECLARE
+    o_cursor JSONB;
+    v_workspace_id_root BYTEA;
+  BEGIN
+    v_workspace_id_root := "gw_ledger".field(i_state_root,'workspace/id');
+    WITH j_ret AS (  
+      SELECT
+        "workspace_id_root",
+        "workspace_id",
+        "state_root",
+        "latest_entry_id_root",
+        "work_count",
+        "dependency_count",
+        "reference_count",
+        "resource_version_count",
+        "checkpoint_count"
+      FROM "gw_ledger"."WorkflowProjection"
+      WHERE "workspace_id_root" = v_workspace_id_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_cursor;
+    IF o_cursor is null  THEN
+      RETURN false;
+    ELSE
+      RETURN ((o_cursor ->> 'state_root')::BYTEA = i_state_root) AND ((o_cursor ->> 'work_count')::INTEGER = SELECT count(*) FROM "gw_ledger"."WorkflowWork"
+    WHERE "workspace_id_root" = v_workspace_id_root) AND ((o_cursor ->> 'dependency_count')::INTEGER = SELECT count(*) FROM "gw_ledger"."WorkflowDependency"
+    WHERE "workspace_id_root" = v_workspace_id_root) AND ((o_cursor ->> 'reference_count')::INTEGER = SELECT count(*) FROM "gw_ledger"."WorkflowReference"
+    WHERE "workspace_id_root" = v_workspace_id_root) AND ((o_cursor ->> 'resource_version_count')::INTEGER = SELECT count(*) FROM "gw_ledger"."WorkflowResourceVersion"
+    WHERE "workspace_id_root" = v_workspace_id_root) AND ((o_cursor ->> 'checkpoint_count')::INTEGER = SELECT count(*) FROM "gw_ledger"."WorkflowCheckpoint"
+    WHERE "workspace_id_root" = v_workspace_id_root);
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-work-items [820] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_work_items(
+  i_workspace_id_root BYTEA,
+  i_classification TEXT
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "workspace_id_root",
+      "work_id_root",
+      "work_id",
+      "run_root",
+      "definition_root",
+      "title",
+      "kind",
+      "status",
+      "classification",
+      "assignee_root",
+      "assignee",
+      "dependency_count",
+      "unresolved_dependency_count",
+      "input_count",
+      "output_count",
+      "result_root",
+      "receipt_root",
+      "created_evidence_root",
+      "claim_evidence_root",
+      "started_evidence_root",
+      "completed_evidence_root",
+      "latest_checkpoint_root",
+      "latest_checkpoint_id",
+      "latest_checkpoint_timestamp",
+      "source_state_root"
+    FROM "gw_ledger"."WorkflowWork"
+    WHERE "workspace_id_root" = i_workspace_id_root
+    AND "classification" = i_classification
+    ORDER BY "work_id")
+  SELECT jsonb_agg(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-ready-work [831] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_ready_work(
+  i_workspace_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".workflow_work_items(i_workspace_id_root,'ready');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-blocked-work [838] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_blocked_work(
+  i_workspace_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".workflow_work_items(i_workspace_id_root,'blocked');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-running-work [845] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_running_work(
+  i_workspace_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".workflow_work_items(i_workspace_id_root,'running');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-complete-work [852] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_complete_work(
+  i_workspace_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN "gw_ledger".workflow_work_items(i_workspace_id_root,'complete');
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-work-for-assignee [859] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_work_for_assignee(
+  i_workspace_id_root BYTEA,
+  i_assignee_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "workspace_id_root",
+      "work_id_root",
+      "work_id",
+      "run_root",
+      "definition_root",
+      "title",
+      "kind",
+      "status",
+      "classification",
+      "assignee_root",
+      "assignee",
+      "dependency_count",
+      "unresolved_dependency_count",
+      "input_count",
+      "output_count",
+      "result_root",
+      "receipt_root",
+      "created_evidence_root",
+      "claim_evidence_root",
+      "started_evidence_root",
+      "completed_evidence_root",
+      "latest_checkpoint_root",
+      "latest_checkpoint_id",
+      "latest_checkpoint_timestamp",
+      "source_state_root"
+    FROM "gw_ledger"."WorkflowWork"
+    WHERE "workspace_id_root" = i_workspace_id_root
+    AND "assignee_root" = i_assignee_root
+    ORDER BY "work_id")
+  SELECT jsonb_agg(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-blocking-dependencies [870] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_blocking_dependencies(
+  i_workspace_id_root BYTEA,
+  i_work_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "workspace_id_root",
+      "work_id_root",
+      "position",
+      "dependency_id_root",
+      "dependency_id",
+      "dependency_run_root",
+      "dependency_status",
+      "complete",
+      "source_state_root"
+    FROM "gw_ledger"."WorkflowDependency"
+    WHERE "workspace_id_root" = i_workspace_id_root
+    AND "work_id_root" = i_work_id_root
+    AND "complete" = false
+    ORDER BY "position")
+  SELECT jsonb_agg(j_ret) FROM j_ret;
+END;
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-latest-checkpoint [882] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_latest_checkpoint(
+  i_workspace_id_root BYTEA,
+  i_work_id_root BYTEA
+) RETURNS JSONB AS $$
+
+  DECLARE
+    o_work JSONB;
+    v_checkpoint_root BYTEA;
+  BEGIN
+    WITH j_ret AS (  
+      SELECT
+        "workspace_id_root",
+        "work_id_root",
+        "work_id",
+        "run_root",
+        "definition_root",
+        "title",
+        "kind",
+        "status",
+        "classification",
+        "assignee_root",
+        "assignee",
+        "dependency_count",
+        "unresolved_dependency_count",
+        "input_count",
+        "output_count",
+        "result_root",
+        "receipt_root",
+        "created_evidence_root",
+        "claim_evidence_root",
+        "started_evidence_root",
+        "completed_evidence_root",
+        "latest_checkpoint_root",
+        "latest_checkpoint_id",
+        "latest_checkpoint_timestamp",
+        "source_state_root"
+      FROM "gw_ledger"."WorkflowWork"
+      WHERE "workspace_id_root" = i_workspace_id_root
+      AND "work_id_root" = i_work_id_root
+      LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret INTO o_work;
+    v_checkpoint_root := (o_work ->> 'latest_checkpoint_root')::BYTEA;
+    IF o_work IS NULL OR v_checkpoint_root IS NULL THEN
+      RETURN null;
+    ELSE
+      RETURN WITH j_ret AS (    
+        SELECT
+          "workspace_id_root",
+          "checkpoint_id_root",
+          "checkpoint_id",
+          "checkpoint_root",
+          "work_id_root",
+          "work_id",
+          "state_root",
+          "receipt_root",
+          "evidence_root",
+          "ledger_timestamp",
+          "source_state_root"
+        FROM "gw_ledger"."WorkflowCheckpoint"
+        WHERE "workspace_id_root" = i_workspace_id_root
+        AND "checkpoint_root" = v_checkpoint_root
+        LIMIT 1)
+    SELECT to_jsonb(j_ret) FROM j_ret;
+    END IF;
+  END;
+
+$$ LANGUAGE 'plpgsql';
+
+-- gwdb.ledger.workflow-projection/workflow-resources-for-work [904] 
+CREATE OR REPLACE FUNCTION "gw_ledger".workflow_resources_for_work(
+  i_workspace_id_root BYTEA,
+  i_work_id_root BYTEA
+) RETURNS JSONB AS $$
+BEGIN
+  RETURN WITH j_ret AS (  
+    SELECT
+      "workspace_id_root",
+      "resource_id_root",
+      "resource_version_root",
+      "resource_id",
+      "resource_version",
+      "artifact_root",
+      "current",
+      "kind",
+      "provider",
+      "previous_version_root",
+      "previous_version",
+      "producer_work_id_root",
+      "producer_work_id",
+      "locator_root",
+      "digest_algorithm",
+      "digest",
+      "size",
+      "published_evidence_root",
+      "source_state_root"
+    FROM "gw_ledger"."WorkflowResourceVersion"
+    WHERE "workspace_id_root" = i_workspace_id_root
+    AND "producer_work_id_root" = i_work_id_root
+    ORDER BY "resource_id","resource_version")
+  SELECT jsonb_agg(j_ret) FROM j_ret;
+END;
 $$ LANGUAGE 'plpgsql';
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
