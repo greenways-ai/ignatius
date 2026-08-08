@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable fixture for the first Agent Workflow GitHub adapter slice."""
+"""Executable fixture for GitHub issue creation and immutable lifecycle snapshots."""
 
 from __future__ import annotations
 
@@ -24,31 +24,43 @@ def signature(body: bytes) -> str:
     return "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
 
 
-def invoke(body: bytes, database: Path, *extra: str, delivery: str = "delivery-0001") -> subprocess.CompletedProcess[str]:
+def invoke(
+    body: bytes,
+    database: Path,
+    command_name: str,
+    *extra: str,
+    delivery: str,
+    repository: str = "greenways-ai/ignatius",
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     payload = database.with_suffix(f".{delivery}.json")
     payload.write_bytes(body)
     command = [
         sys.executable,
         str(SCRIPT),
-        "issue-opened",
+        command_name,
         "--workspace",
         "greenways/ignatius",
         "--repository",
-        "greenways-ai/ignatius",
-        "--definition-root",
-        "definition/github-issue-work-v1",
+        repository,
         "--delivery-id",
         delivery,
         "--payload",
         str(payload),
         "--signature",
-        signature(body),
+        supplied_signature or signature(body),
         "--outbox-db",
         str(database),
         *extra,
     ]
     environment = {**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET}
-    return subprocess.run(command, text=True, capture_output=True, env=environment, check=False)
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        env=environment,
+        check=False,
+    )
 
 
 def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
@@ -56,89 +68,260 @@ def require_failure(result: subprocess.CompletedProcess[str], label: str) -> Non
         raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
 
 
+def issue_body(base: bytes, action: str, *, state: str, title: str, updated_at: str) -> bytes:
+    payload = json.loads(base)
+    payload["action"] = action
+    payload["issue"]["state"] = state
+    payload["issue"]["title"] = title
+    payload["issue"]["updated_at"] = updated_at
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+
+
+def version(output: str) -> str:
+    values = re.findall(r':resource/version "(sha256:[0-9a-f]{64})"', output)
+    if len(values) != 1:
+        raise AssertionError(f"expected one resource version, received {values!r}")
+    return values[0]
+
+
 def main() -> int:
     body = FIXTURE.read_bytes()
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "github.sqlite"
-        first = invoke(
+        opened = invoke(
             body,
             database,
+            "issue-opened",
+            "--definition-root",
+            "definition/github-issue-work-v1",
             "--dependency-work-id",
             "github/greenways-ai/ignatius/issues/43",
             "--dependency-work-id",
             "github/greenways-ai/ignatius/issues/43",
             "--initial",
+            delivery="delivery-opened",
         )
-        assert first.returncode == 0, first.stderr
-        second = invoke(
+        assert opened.returncode == 0, opened.stderr
+        opened_replay = invoke(
             body,
             database,
+            "issue-opened",
+            "--definition-root",
+            "definition/github-issue-work-v1",
             "--dependency-work-id",
             "github/greenways-ai/ignatius/issues/43",
             "--dependency-work-id",
             "github/greenways-ai/ignatius/issues/43",
             "--initial",
+            delivery="delivery-opened",
         )
-        assert second.returncode == 0, second.stderr
-        assert first.stdout == second.stdout
+        assert opened_replay.returncode == 0, opened_replay.stderr
+        assert opened.stdout == opened_replay.stdout
 
-        output = first.stdout
+        output = opened.stdout
+        opened_version = version(output)
         assert ":action :resource/register" in output
         assert ":action :work/create" in output
         assert ':work/id "github/greenways-ai/ignatius/issues/44"' in output
         assert ':work/dependency-ids ["github/greenways-ai/ignatius/issues/43"]' in output
         assert ':github/issue-labels ["agent-workflow" "phase-c"]' in output
+        assert f':reference/root "{opened_version}"' in output
         assert SECRET not in output
         assert "Create exact provider snapshots" not in output
         assert ":installation" not in output
-        versions = re.findall(r':resource/version "(sha256:[0-9a-f]{64})"', output)
-        roots = re.findall(r':reference/root "(sha256:[0-9a-f]{64})"', output)
-        assert len(versions) == 1 and versions == roots
+
+        edited_body = issue_body(
+            body,
+            "edited",
+            state="open",
+            title="Implement GitHub issue lifecycle ingestion",
+            updated_at="2026-08-08T06:10:00Z",
+        )
+        edited = invoke(
+            edited_body,
+            database,
+            "issue-edited",
+            "--previous-version",
+            opened_version,
+            delivery="delivery-edited",
+        )
+        assert edited.returncode == 0, edited.stderr
+        edited_version = version(edited.stdout)
+        assert edited_version != opened_version
+        assert ":action :resource/register" in edited.stdout
+        assert ":work/create" not in edited.stdout
+        assert f':resource/previous-version "{opened_version}"' in edited.stdout
+        assert ":provider/event-action :edited" in edited.stdout
+        edited_replay = invoke(
+            edited_body,
+            database,
+            "issue-edited",
+            "--previous-version",
+            opened_version,
+            delivery="delivery-edited",
+        )
+        assert edited_replay.returncode == 0, edited_replay.stderr
+        assert edited.stdout == edited_replay.stdout
+
+        closed_body = issue_body(
+            edited_body,
+            "closed",
+            state="closed",
+            title="Implement GitHub issue lifecycle ingestion",
+            updated_at="2026-08-08T06:20:00Z",
+        )
+        closed = invoke(
+            closed_body,
+            database,
+            "issue-closed",
+            "--previous-version",
+            edited_version,
+            delivery="delivery-closed",
+        )
+        assert closed.returncode == 0, closed.stderr
+        closed_version = version(closed.stdout)
+        assert closed_version not in {opened_version, edited_version}
+        assert ":work/create" not in closed.stdout
+        assert ":provider/event-action :closed" in closed.stdout
+
+        reopened_body = issue_body(
+            closed_body,
+            "reopened",
+            state="open",
+            title="Implement GitHub issue lifecycle ingestion",
+            updated_at="2026-08-08T06:30:00Z",
+        )
+        reopened = invoke(
+            reopened_body,
+            database,
+            "issue-reopened",
+            "--previous-version",
+            closed_version,
+            delivery="delivery-reopened",
+        )
+        assert reopened.returncode == 0, reopened.stderr
+        reopened_version = version(reopened.stdout)
+        assert reopened_version not in {opened_version, edited_version, closed_version}
+        assert ":work/create" not in reopened.stdout
+        assert ":provider/event-action :reopened" in reopened.stdout
 
         connection = sqlite3.connect(database)
-        assert connection.execute("SELECT count(*) FROM github_delivery").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM github_outbox").fetchone()[0] == 2
-        assert connection.execute("SELECT count(*) FROM github_snapshot").fetchone()[0] == 1
-        stored = bytes(connection.execute("SELECT canonical_json FROM github_snapshot").fetchone()[0])
-        assert b"Create exact provider snapshots" in stored
-        assert [row[0] for row in connection.execute("SELECT position FROM github_outbox ORDER BY position")] == [0, 1]
+        assert connection.execute("SELECT count(*) FROM github_delivery").fetchone()[0] == 4
+        assert connection.execute("SELECT count(*) FROM github_outbox").fetchone()[0] == 5
+        assert connection.execute("SELECT count(*) FROM github_snapshot").fetchone()[0] == 4
+        opened_snapshot = bytes(
+            connection.execute(
+                "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                (opened_version,),
+            ).fetchone()[0]
+        )
+        assert b"Create exact provider snapshots" in opened_snapshot
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT position FROM github_outbox WHERE delivery_id = 'delivery-opened' ORDER BY position"
+            )
+        ] == [0, 1]
         connection.close()
 
-        bad = json.loads(body)
-        bad["issue"]["title"] = "Tampered after signature"
-        tampered = json.dumps(bad, separators=(",", ":")).encode()
-        collision = invoke(tampered, database, "--initial")
+        tampered = json.loads(body)
+        tampered["issue"]["title"] = "Tampered after signature"
+        collision = invoke(
+            json.dumps(tampered, separators=(",", ":")).encode(),
+            database,
+            "issue-opened",
+            "--definition-root",
+            "definition/github-issue-work-v1",
+            "--initial",
+            delivery="delivery-opened",
+        )
         require_failure(collision, "delivery collision")
 
-        wrong_repo = subprocess.run(
-            [sys.executable, str(SCRIPT), "issue-opened", "--workspace", "greenways/ignatius", "--repository", "other/repo", "--definition-root", "definition/github-issue-work-v1", "--delivery-id", "wrong-repo", "--payload", str(FIXTURE), "--signature", signature(body), "--initial"],
-            text=True,
-            capture_output=True,
-            env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
-            check=False,
+        wrong_repo = invoke(
+            body,
+            database,
+            "issue-opened",
+            "--definition-root",
+            "definition/github-issue-work-v1",
+            "--initial",
+            delivery="wrong-repo",
+            repository="other/repo",
         )
         require_failure(wrong_repo, "repository mismatch")
 
         pull_request = json.loads(body)
-        pull_request["issue"]["pull_request"] = {"url": "https://api.github.com/example"}
+        pull_request["issue"]["pull_request"] = {
+            "url": "https://api.github.com/example"
+        }
         require_failure(
-            invoke(json.dumps(pull_request).encode(), database, "--initial", delivery="delivery-pr"),
+            invoke(
+                json.dumps(pull_request).encode(),
+                database,
+                "issue-opened",
+                "--definition-root",
+                "definition/github-issue-work-v1",
+                "--initial",
+                delivery="delivery-pr",
+            ),
             "pull request issue",
         )
 
         duplicate = body[:-2] + b',"action":"opened"}\n'
-        require_failure(invoke(duplicate, database, "--initial", delivery="delivery-duplicate"), "duplicate JSON key")
+        require_failure(
+            invoke(
+                duplicate,
+                database,
+                "issue-opened",
+                "--definition-root",
+                "definition/github-issue-work-v1",
+                "--initial",
+                delivery="delivery-duplicate",
+            ),
+            "duplicate JSON key",
+        )
 
-        invalid_signature = subprocess.run(
-            [sys.executable, str(SCRIPT), "issue-opened", "--workspace", "greenways/ignatius", "--repository", "greenways-ai/ignatius", "--definition-root", "definition/github-issue-work-v1", "--delivery-id", "bad-signature", "--payload", str(FIXTURE), "--signature", "sha256=00", "--initial"],
-            text=True,
-            capture_output=True,
-            env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
-            check=False,
+        invalid_signature = invoke(
+            body,
+            database,
+            "issue-opened",
+            "--definition-root",
+            "definition/github-issue-work-v1",
+            "--initial",
+            delivery="bad-signature",
+            supplied_signature="sha256=00",
         )
         require_failure(invalid_signature, "invalid signature")
 
-    print("GitHub issue adapter fixture passed")
+        invalid_previous = invoke(
+            edited_body,
+            database,
+            "issue-edited",
+            "--previous-version",
+            "not-a-version",
+            delivery="invalid-previous",
+        )
+        require_failure(invalid_previous, "invalid previous version")
+
+        wrong_closed_state = issue_body(
+            body,
+            "closed",
+            state="open",
+            title="Wrong state",
+            updated_at="2026-08-08T06:40:00Z",
+        )
+        require_failure(
+            invoke(
+                wrong_closed_state,
+                database,
+                "issue-closed",
+                "--previous-version",
+                reopened_version,
+                delivery="wrong-closed-state",
+            ),
+            "closed event with open state",
+        )
+
+    print("GitHub issue lifecycle adapter fixture passed")
     return 0
 
 

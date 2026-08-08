@@ -16,6 +16,7 @@ from ignatius_github_common import (
 )
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_UPDATE_ACTIONS = frozenset({"edited", "reopened", "closed"})
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,12 @@ def _labels(issue: dict[str, Any]) -> list[str]:
     return sorted(names)
 
 
-def issue_snapshot(payload: dict[str, Any], expected_repository: str) -> dict[str, Any]:
+def issue_snapshot(
+    payload: dict[str, Any],
+    expected_repository: str,
+    *,
+    expected_state: str | None,
+) -> dict[str, Any]:
     repository = require_map(payload.get("repository"), "repository")
     issue = require_map(payload.get("issue"), "issue")
     if "pull_request" in issue:
@@ -52,8 +58,12 @@ def issue_snapshot(payload: dict[str, Any], expected_repository: str) -> dict[st
 
     author = require_map(issue.get("user"), "issue.user")
     state = require_string(issue.get("state"), "issue.state")
-    if state != "open":
-        raise ValueError("issues.opened payload must contain state=open")
+    if state not in {"open", "closed"}:
+        raise ValueError("issue.state must be open or closed")
+    if expected_state is not None and state != expected_state:
+        raise ValueError(
+            f"issue payload must contain state={expected_state}, received {state!r}"
+        )
 
     return {
         "repository_id": require_positive_integer(repository.get("id"), "repository.id"),
@@ -85,21 +95,39 @@ def _reference(workspace: str, resource_id: str, version: str) -> dict[Any, Any]
     }
 
 
-def opened_events(
+def _expected_state(action: str) -> str | None:
+    if action in {"opened", "reopened"}:
+        return "open"
+    if action == "closed":
+        return "closed"
+    if action == "edited":
+        return None
+    raise ValueError(f"unsupported GitHub issue action: {action}")
+
+
+def _issue_events(
     payload: dict[str, Any],
     *,
+    action: str,
     workspace: str,
     expected_repository: str,
     definition_root: str,
     delivery_id: str,
     dependencies: Sequence[str],
     previous_version: str | None,
+    create_work: bool,
 ) -> IssueResult:
-    action = require_string(payload.get("action"), "action")
-    if action != "opened":
-        raise ValueError(f"issue-opened requires action=opened, received {action!r}")
+    payload_action = require_string(payload.get("action"), "action")
+    if payload_action != action:
+        raise ValueError(
+            f"issue-{action} requires action={action}, received {payload_action!r}"
+        )
 
-    snapshot = issue_snapshot(payload, expected_repository)
+    snapshot = issue_snapshot(
+        payload,
+        expected_repository,
+        expected_state=_expected_state(action),
+    )
     snapshot_json = canonical_json(snapshot)
     digest = hashlib.sha256(snapshot_json).hexdigest()
     version = f"sha256:{digest}"
@@ -109,7 +137,7 @@ def opened_events(
     metadata = {
         kw("provider/event-id"): delivery_id,
         kw("provider/event-kind"): kw("github/issues"),
-        kw("provider/event-action"): kw("opened"),
+        kw("provider/event-action"): kw(action),
         kw("github/repository-id"): snapshot["repository_id"],
         kw("github/repository-node-id"): snapshot["repository_node_id"],
         kw("github/repository"): snapshot["repository_full_name"],
@@ -140,15 +168,68 @@ def opened_events(
         kw("resource/size"): len(snapshot_json),
         kw("resource/metadata"): metadata,
     }
-    work = {
-        kw("action"): kw("work/create"),
-        kw("workspace/id"): workspace,
-        kw("work/id"): stable_id,
-        kw("work/kind"): kw("agent/task"),
-        kw("work/title"): snapshot["title"],
-        kw("work/definition-root"): definition_root,
-        kw("work/dependency-ids"): sorted(set(dependencies)),
-        kw("work/input-references"): [_reference(workspace, stable_id, version)],
-        kw("work/metadata"): metadata,
-    }
-    return IssueResult((resource, work), version, snapshot_json)
+    events: list[dict[Any, Any]] = [resource]
+    if create_work:
+        events.append(
+            {
+                kw("action"): kw("work/create"),
+                kw("workspace/id"): workspace,
+                kw("work/id"): stable_id,
+                kw("work/kind"): kw("agent/task"),
+                kw("work/title"): snapshot["title"],
+                kw("work/definition-root"): definition_root,
+                kw("work/dependency-ids"): sorted(set(dependencies)),
+                kw("work/input-references"): [
+                    _reference(workspace, stable_id, version)
+                ],
+                kw("work/metadata"): metadata,
+            }
+        )
+    return IssueResult(tuple(events), version, snapshot_json)
+
+
+def opened_events(
+    payload: dict[str, Any],
+    *,
+    workspace: str,
+    expected_repository: str,
+    definition_root: str,
+    delivery_id: str,
+    dependencies: Sequence[str],
+    previous_version: str | None,
+) -> IssueResult:
+    return _issue_events(
+        payload,
+        action="opened",
+        workspace=workspace,
+        expected_repository=expected_repository,
+        definition_root=definition_root,
+        delivery_id=delivery_id,
+        dependencies=dependencies,
+        previous_version=previous_version,
+        create_work=True,
+    )
+
+
+def update_events(
+    payload: dict[str, Any],
+    *,
+    action: str,
+    workspace: str,
+    expected_repository: str,
+    delivery_id: str,
+    previous_version: str,
+) -> IssueResult:
+    if action not in _UPDATE_ACTIONS:
+        raise ValueError(f"unsupported GitHub issue update action: {action}")
+    return _issue_events(
+        payload,
+        action=action,
+        workspace=workspace,
+        expected_repository=expected_repository,
+        definition_root="",
+        delivery_id=delivery_id,
+        dependencies=(),
+        previous_version=previous_version,
+        create_work=False,
+    )
