@@ -248,10 +248,79 @@ Run the fixture with:
 python3 scripts/test-ignatius-github-check
 ```
 
+## Pull requests as immutable workspace proposals
+
+A GitHub pull request is a mutable provider conversation. An Ignatius proposal
+is an immutable, already-verified workspace commit selected under the exact
+name `proposal/<candidate-root>`. The adapter keeps those identities separate.
+
+```sh
+python3 scripts/ignatius-github-event pull-request-proposal \
+  --workspace greenways/ignatius \
+  --repository greenways-ai/ignatius \
+  --delivery-id "$X_GITHUB_DELIVERY" \
+  --payload pull-request-webhook.json \
+  --signature "$X_HUB_SIGNATURE_256" \
+  --candidate-root <verified-ignatius-workspace-commit-root> \
+  --origin-root <expected-ignatius-publisher-root> \
+  --initial \
+  --outbox-db var/ignatius-github.sqlite
+```
+
+The command accepts proposal-bearing `opened`, `ready_for_review`, `reopened`
+and `synchronize` deliveries only when the pull request is open, unmerged and
+not a draft. It emits an ordered pair:
+
+```text
+1. resource/register
+   exact retained :github/pull-request-snapshot
+
+2. workspace/ref-update-intent
+   create-only proposal/<candidate-root> -> candidate-root
+```
+
+The second value reproduces the portable proposal law exactly:
+
+```clojure
+{:record/type :workspace/ref-update-intent
+ :record/version 1
+ :record/extensions {}
+ :workspace/id workspace-id
+ :ref/scope "workspace/<workspace-id>"
+ :ref/name "proposal/<candidate-root>"
+ :ref/expected-root nil
+ :ref/desired-root candidate-root
+ :ref/authorization-root origin-root
+ :ref/policy :proposal-publication-v1
+ :ref/metadata {}}
+```
+
+The provider snapshot may record the exact PR number, head/base commits, derived
+head resource ID and expected candidate/publisher roots. Proposal v1 deliberately
+has empty metadata and extensions, so GitHub cannot inject mutable titles,
+labels, review state or URLs into the canonical proposal intent.
+
+The candidate root is not the Git commit SHA. It must already identify a
+verified Ignatius workspace commit. Submission through the proposal signing API
+reconstructs the exact intent, derives the actual origin from the signing public
+key, verifies that the candidate belongs to the workspace, and performs
+create-only CAS. The adapter output is unsigned preparation, not publication.
+
+A `synchronize` delivery with a new head and new verified candidate root creates
+a new immutable proposal name. It cannot redirect or replace the proposal for
+the prior candidate. Draft and closed pull requests are retained by future
+snapshot-only lifecycle commands; they are not proposal publication requests.
+
+Run the fixture with:
+
+```sh
+python3 scripts/test-ignatius-github-pull
+```
+
 ## Next slices
 
-- pull requests as workspace proposals;
+- pull-request lifecycle snapshots that do not publish proposals;
 - attributed and signed review decisions;
 - merged output registration and release evidence;
 - direct capability-scoped GitHub/Git enrichment without an intermediate file;
-- polling reconciliation for missed issue, push and check webhooks.
+- polling reconciliation for missed issue, push, check and pull-request webhooks.

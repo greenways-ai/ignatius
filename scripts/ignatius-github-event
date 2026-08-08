@@ -16,6 +16,7 @@ from ignatius_github_check import completed_check_events
 from ignatius_github_common import edn, parse_json, require_string, verify_signature
 from ignatius_github_issue import opened_events, update_events
 from ignatius_github_outbox import record_delivery
+from ignatius_github_pull import proposal_events
 from ignatius_github_push import push_events
 
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
@@ -75,6 +76,12 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--commit-resource-id", required=True)
     check.add_argument("--commit-version", required=True)
     _version_arguments(check)
+
+    proposal = commands.add_parser("pull-request-proposal")
+    _common_arguments(proposal)
+    proposal.add_argument("--candidate-root", required=True)
+    proposal.add_argument("--origin-root", required=True)
+    _version_arguments(proposal)
     return root
 
 
@@ -94,7 +101,7 @@ def _validate_args(args: argparse.Namespace) -> None:
     previous = getattr(args, "previous_version", None)
     if (
         args.command.startswith("issue-")
-        or args.command == "check-completed"
+        or args.command in {"check-completed", "pull-request-proposal"}
     ) and previous is not None:
         if not _ISSUE_VERSION.fullmatch(previous):
             raise ValueError(
@@ -156,7 +163,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 previous_version=None if args.initial else args.previous_version,
                 process_id=args.process_id,
             )
-        else:
+        elif args.command == "check-completed":
             result = completed_check_events(
                 payload,
                 workspace=args.workspace,
@@ -165,6 +172,16 @@ def main(argv: Iterable[str] | None = None) -> int:
                 work_id=args.work_id,
                 commit_resource_id=args.commit_resource_id,
                 commit_version=args.commit_version,
+                previous_version=None if args.initial else args.previous_version,
+            )
+        else:
+            result = proposal_events(
+                payload,
+                workspace=args.workspace,
+                expected_repository=args.repository,
+                delivery_id=args.delivery_id,
+                candidate_root=args.candidate_root,
+                origin_root=args.origin_root,
                 previous_version=None if args.initial else args.previous_version,
             )
         if args.outbox_db:

@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Executable fixture for exact pull-request snapshots and proposal intents."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "ignatius-github-event"
+FIXTURE = (
+    ROOT
+    / "examples"
+    / "agent-workflow"
+    / "github"
+    / "pull-request-opened.json"
+)
+SECRET = "test-only-webhook-secret"
+CANDIDATE_A = "a" * 64
+CANDIDATE_B = "c" * 64
+ORIGIN = "b" * 64
+HEAD_A = "4" * 40
+HEAD_B = "6" * 40
+
+
+def signature(body: bytes) -> str:
+    return "sha256=" + hmac.new(
+        SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+
+def canonical(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+
+
+def invoke(
+    body: bytes,
+    database: Path,
+    *extra: str,
+    delivery: str,
+    repository: str = "greenways-ai/ignatius",
+    candidate_root: str = CANDIDATE_A,
+    origin_root: str = ORIGIN,
+    supplied_signature: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload = database.with_suffix(f".{delivery}.json")
+    payload.write_bytes(body)
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "pull-request-proposal",
+        "--workspace",
+        "greenways/ignatius",
+        "--repository",
+        repository,
+        "--delivery-id",
+        delivery,
+        "--payload",
+        str(payload),
+        "--signature",
+        supplied_signature or signature(body),
+        "--candidate-root",
+        candidate_root,
+        "--origin-root",
+        origin_root,
+        "--outbox-db",
+        str(database),
+        *extra,
+    ]
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "GITHUB_WEBHOOK_SECRET": SECRET},
+        check=False,
+    )
+
+
+def require_failure(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"{label} unexpectedly succeeded: {result.stdout}")
+
+
+def snapshot_version(output: str) -> str:
+    values = re.findall(
+        r':resource/version "(sha256:[0-9a-f]{64})"', output
+    )
+    if len(values) != 1:
+        raise AssertionError(f"expected one pull-request snapshot, got {values!r}")
+    return values[0]
+
+
+def main() -> int:
+    body = FIXTURE.read_bytes()
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "github.sqlite"
+        opened = invoke(
+            body,
+            database,
+            "--initial",
+            delivery="pull-opened-60",
+        )
+        assert opened.returncode == 0, opened.stderr
+        replay = invoke(
+            body,
+            database,
+            "--initial",
+            delivery="pull-opened-60",
+        )
+        assert replay.returncode == 0, replay.stderr
+        assert opened.stdout == replay.stdout
+
+        output = opened.stdout
+        version_a = snapshot_version(output)
+        resource_id = "github/greenways-ai/ignatius/pulls/60"
+        head_resource = (
+            "github/greenways-ai/ignatius/"
+            "refs/heads/agent/github-pr-proposals"
+        )
+        assert output.index(":action :resource/register") < output.index(
+            ":record/type :workspace/ref-update-intent"
+        )
+        assert f':resource/id "{resource_id}"' in output
+        assert ":resource/kind :github/pull-request-snapshot" in output
+        assert f':resource/version "{version_a}"' in output
+        assert ":provider/event-action :opened" in output
+        assert f':github/pull-request-head-resource-id "{head_resource}"' in output
+        assert f':github/pull-request-head-sha "{HEAD_A}"' in output
+        assert f':ignatius/candidate-root "{CANDIDATE_A}"' in output
+        assert f':ignatius/proposal-origin-root "{ORIGIN}"' in output
+        assert ":record/type :workspace/ref-update-intent" in output
+        assert ":record/version 1" in output
+        assert ':ref/scope "workspace/greenways/ignatius"' in output
+        assert f':ref/name "proposal/{CANDIDATE_A}"' in output
+        assert ":ref/expected-root nil" in output
+        assert f':ref/desired-root "{CANDIDATE_A}"' in output
+        assert f':ref/authorization-root "{ORIGIN}"' in output
+        assert ":ref/policy :proposal-publication-v1" in output
+        assert ":ref/metadata {}" in output
+        assert "Publish the first Agent Workflow proposal" not in output
+        assert "Connect an exact GitHub pull request" not in output
+        assert ":installation" not in output
+        assert "api.github.com" not in output
+        assert SECRET not in output
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 1
+        stored = bytes(
+            connection.execute(
+                "SELECT canonical_json FROM github_snapshot WHERE version = ?",
+                (version_a,),
+            ).fetchone()[0]
+        )
+        assert b"Publish the first Agent Workflow proposal" in stored
+        assert b"Connect an exact GitHub pull request" in stored
+        assert CANDIDATE_A.encode() in stored
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT position FROM github_outbox ORDER BY position"
+            )
+        ] == [0, 1]
+        connection.close()
+
+        synchronized = json.loads(body)
+        synchronized["action"] = "synchronize"
+        synchronized["pull_request"]["head"]["sha"] = HEAD_B
+        synchronized["pull_request"]["updated_at"] = "2026-08-08T09:20:00Z"
+        synchronized["pull_request"]["commits"] = 4
+        synchronized_result = invoke(
+            canonical(synchronized),
+            database,
+            "--previous-version",
+            version_a,
+            delivery="pull-synchronize-60",
+            candidate_root=CANDIDATE_B,
+        )
+        assert synchronized_result.returncode == 0, synchronized_result.stderr
+        version_b = snapshot_version(synchronized_result.stdout)
+        assert version_b != version_a
+        assert f':resource/previous-version "{version_a}"' in synchronized_result.stdout
+        assert f':resource/parent-versions ["{version_a}"]' in synchronized_result.stdout
+        assert ":provider/event-action :synchronize" in synchronized_result.stdout
+        assert f':github/pull-request-head-sha "{HEAD_B}"' in synchronized_result.stdout
+        assert f':ref/name "proposal/{CANDIDATE_B}"' in synchronized_result.stdout
+        assert f':ref/desired-root "{CANDIDATE_B}"' in synchronized_result.stdout
+        assert f':ref/authorization-root "{ORIGIN}"' in synchronized_result.stdout
+
+        connection = sqlite3.connect(database)
+        assert connection.execute(
+            "SELECT count(*) FROM github_delivery"
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM github_outbox"
+        ).fetchone()[0] == 4
+        assert connection.execute(
+            "SELECT count(*) FROM github_snapshot"
+        ).fetchone()[0] == 2
+        connection.close()
+
+        draft = json.loads(body)
+        draft["pull_request"]["draft"] = True
+        require_failure(
+            invoke(
+                canonical(draft),
+                database,
+                "--initial",
+                delivery="pull-draft",
+            ),
+            "draft pull request",
+        )
+
+        closed = json.loads(body)
+        closed["pull_request"]["state"] = "closed"
+        require_failure(
+            invoke(
+                canonical(closed),
+                database,
+                "--initial",
+                delivery="pull-closed-state",
+            ),
+            "closed pull request",
+        )
+
+        merged = json.loads(body)
+        merged["pull_request"]["merged"] = True
+        require_failure(
+            invoke(
+                canonical(merged),
+                database,
+                "--initial",
+                delivery="pull-merged",
+            ),
+            "merged pull request",
+        )
+
+        unsupported = json.loads(body)
+        unsupported["action"] = "closed"
+        require_failure(
+            invoke(
+                canonical(unsupported),
+                database,
+                "--initial",
+                delivery="pull-unsupported-action",
+            ),
+            "unsupported action",
+        )
+
+        wrong_number = json.loads(body)
+        wrong_number["number"] = 61
+        require_failure(
+            invoke(
+                canonical(wrong_number),
+                database,
+                "--initial",
+                delivery="pull-number-mismatch",
+            ),
+            "number mismatch",
+        )
+
+        wrong_base = json.loads(body)
+        wrong_base["pull_request"]["base"]["repo"]["full_name"] = "other/repo"
+        require_failure(
+            invoke(
+                canonical(wrong_base),
+                database,
+                "--initial",
+                delivery="pull-base-mismatch",
+            ),
+            "base repository mismatch",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="pull-webhook-repository-mismatch",
+                repository="other/repo",
+            ),
+            "webhook repository mismatch",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="pull-invalid-candidate",
+                candidate_root="aa",
+            ),
+            "invalid candidate root",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="pull-invalid-origin",
+                origin_root="bb",
+            ),
+            "invalid origin root",
+        )
+
+        bad_head = json.loads(body)
+        bad_head["pull_request"]["head"]["sha"] = "44"
+        require_failure(
+            invoke(
+                canonical(bad_head),
+                database,
+                "--initial",
+                delivery="pull-invalid-head",
+            ),
+            "invalid head hash",
+        )
+
+        bad_base = json.loads(body)
+        bad_base["pull_request"]["base"]["sha"] = "5" * 64
+        require_failure(
+            invoke(
+                canonical(bad_base),
+                database,
+                "--initial",
+                delivery="pull-base-width",
+            ),
+            "base hash width mismatch",
+        )
+
+        duplicate = body[:-2] + b',"action":"opened"}\n'
+        require_failure(
+            invoke(
+                duplicate,
+                database,
+                "--initial",
+                delivery="pull-duplicate-key",
+            ),
+            "duplicate JSON key",
+        )
+
+        require_failure(
+            invoke(
+                body,
+                database,
+                "--initial",
+                delivery="pull-bad-signature",
+                supplied_signature="sha256=00",
+            ),
+            "invalid signature",
+        )
+
+    print("GitHub pull-request proposal adapter fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
