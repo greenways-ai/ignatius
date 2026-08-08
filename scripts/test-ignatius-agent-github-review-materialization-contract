@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Pin the review materialization protocol-limit disclosure."""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+COMMAND = ROOT / "scripts" / "ignatius-agent-github-review-materialize"
+
+
+def load_command():
+    loader = importlib.machinery.SourceFileLoader(
+        "ignatius_agent_github_review_materialize_command",
+        str(COMMAND),
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise AssertionError("could not create materialization command spec")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def main() -> int:
+    module = load_command()
+    value = {
+        "canonical_review": {
+            "selected_decision": None,
+            "reviewer_root": None,
+            "expected_review_root": None,
+        }
+    }
+    module.current_review_limits(value)
+    assert value["canonical_review"] == {
+        "selected_decision": None,
+        "reviewer_root": None,
+        "expected_review_root": None,
+    }
+    assert value["canonical_review_protocol"] == {
+        "evidence_roots": [],
+        "provider_snapshot_binding": None,
+        "provider_snapshot_binding_supported": False,
+        "recorded_at": None,
+        "process_run_id": None,
+        "process_run_root": None,
+    }
+    print("GitHub review materialization contract fixture passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
