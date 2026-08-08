@@ -1,0 +1,179 @@
+name: Record clean HCV1 flat-map benchmark evidence
+
+on:
+  push:
+    branches: [agent/hpt1-flat-map-measurements-pr]
+
+concurrency:
+  group: hpt1-flat-map-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/hpt1-flat-map-measurements-pr
+
+      - name: Skip an already recorded complete snapshot
+        id: existing
+        run: |
+          set -euo pipefail
+          evidence=benchmarks/hpt1-flat-map/evidence.edn
+          if [ -f "$evidence" ] \
+             && [ "$(grep -c ':status :ok' "$evidence" || true)" -eq 5 ] \
+             && ! grep -q ':status :error' "$evidence"; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$evidence"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Leiningen
+        if: steps.existing.outputs.present != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 4 --retry-delay 2 \
+            https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein \
+            -o /tmp/lein
+          chmod +x /tmp/lein
+          sudo mv /tmp/lein /usr/local/bin/lein
+          lein version
+
+      - name: Smoke benchmark lifecycle
+        if: steps.existing.outputs.present != 'true'
+        env:
+          HPT1_BENCHMARK_COUNTS: 16
+          HPT1_BENCHMARK_WARMUPS: 1
+          HPT1_BENCHMARK_SAMPLES: 1
+          HPT1_BENCHMARK_OUT: /tmp/hpt1-flat-map-smoke.edn
+        run: |
+          set -euo pipefail
+
+          cleanup_containers() {
+            ids="$(docker ps -aq --filter ancestor=gw-ledger-postgres:15-pgsodium || true)"
+            if [ -n "$ids" ]; then
+              docker rm -f $ids >/dev/null
+            fi
+          }
+          trap cleanup_containers EXIT
+
+          rm -f /tmp/hpt1-flat-map-smoke.edn \
+                /tmp/hpt1-flat-map-smoke.log \
+                /tmp/clojure-*.edn
+
+          set +e
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 15m \
+            make hpt1-flat-map-benchmark \
+            2>&1 | tee /tmp/hpt1-flat-map-smoke.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Smoke benchmark output"
+            tail -n 300 /tmp/hpt1-flat-map-smoke.log
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+          test -s /tmp/hpt1-flat-map-smoke.edn
+          test "$(grep -c ':status :ok' /tmp/hpt1-flat-map-smoke.edn || true)" -eq 1
+          ! grep -q ':status :error' /tmp/hpt1-flat-map-smoke.edn
+          grep -q ':entry-count 16' /tmp/hpt1-flat-map-smoke.edn
+          grep -q ':sample-count 1' /tmp/hpt1-flat-map-smoke.edn
+
+          cleanup_containers
+
+          if pgrep -af '[l]edger.hpt1-flat-map-benchmark-runner'; then
+            echo "benchmark JVM remained alive after evidence publication" >&2
+            exit 1
+          fi
+
+          if docker ps -aq --filter ancestor=gw-ledger-postgres:15-pgsodium | grep -q .; then
+            echo "benchmark PostgreSQL container remained after cleanup" >&2
+            docker ps -a
+            exit 1
+          fi
+
+      - name: Record flat-map measurements
+        if: steps.existing.outputs.present != 'true'
+        env:
+          HPT1_BENCHMARK_COUNTS: 16,64,256,1024,4096
+          HPT1_BENCHMARK_WARMUPS: 2
+          HPT1_BENCHMARK_SAMPLES: 7
+          HPT1_BENCHMARK_OUT: ../benchmarks/hpt1-flat-map/evidence.edn
+        run: |
+          set -euo pipefail
+
+          cleanup_containers() {
+            ids="$(docker ps -aq --filter ancestor=gw-ledger-postgres:15-pgsodium || true)"
+            if [ -n "$ids" ]; then
+              docker rm -f $ids >/dev/null
+            fi
+          }
+          trap cleanup_containers EXIT
+
+          rm -f /tmp/clojure-*.edn \
+                /tmp/hpt1-flat-map-benchmark.log \
+                benchmarks/hpt1-flat-map/evidence.edn
+
+          set +e
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 30m \
+            make hpt1-flat-map-benchmark \
+            2>&1 | tee /tmp/hpt1-flat-map-benchmark.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Benchmark output"
+            tail -n 300 /tmp/hpt1-flat-map-benchmark.log
+            for report in /tmp/clojure-*.edn; do
+              [ -f "$report" ] && { echo "--- $report"; cat "$report"; }
+            done
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+          cleanup_containers
+
+      - name: Validate measured evidence
+        run: |
+          set -euo pipefail
+          evidence=benchmarks/hpt1-flat-map/evidence.edn
+          test -s "$evidence"
+          test "$(grep -c ':status :ok' "$evidence" || true)" -eq 5
+          ! grep -q ':status :error' "$evidence"
+          ! grep -q '"unknown"' "$evidence"
+          grep -q ':evidence/kind :hcv1-flat-map-jdbc-baseline' "$evidence"
+          grep -q ':timing/scope :jdbc-round-trip' "$evidence"
+          grep -q ':warmup-count 2' "$evidence"
+          grep -q ':sample-count 7' "$evidence"
+          for entry_count in 16 64 256 1024 4096; do
+            grep -q ":entry-count $entry_count" "$evidence"
+          done
+          if find benchmarks/hpt1-flat-map -maxdepth 1 -name '.evidence.edn.*.tmp' | grep -q .; then
+            echo "temporary evidence file survived atomic publication" >&2
+            exit 1
+          fi
+
+      - name: Commit measured evidence
+        if: steps.existing.outputs.present != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/hpt1-flat-map/evidence.edn
+          git commit -m "Record clean HCV1 flat-map benchmark evidence"
+          git fetch origin agent/hpt1-flat-map-measurements-pr
+          git rebase origin/agent/hpt1-flat-map-measurements-pr
+          git push origin HEAD:agent/hpt1-flat-map-measurements-pr

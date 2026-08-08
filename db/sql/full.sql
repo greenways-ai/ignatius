@@ -581,25 +581,29 @@ CREATE OR REPLACE FUNCTION "gw_ledger".sequence_payload_tail(
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS TEXT AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN '';
-  ELSE
-    DECLARE
+
+  DECLARE
     v_child_hex TEXT;
-      v_child_root BYTEA;
-      v_tail TEXT;
+    v_child_root BYTEA;
+    v_position INTEGER;
+    v_tail TEXT;
   BEGIN
-    v_child_root := "gw_ledger".child_root_at(i_child_roots,i_position);
+    v_position := i_position;
+    v_tail := '';
+    v_child_root := null;
+    v_child_hex := null;
+    WHILE v_position < i_count LOOP
+      v_child_root := "gw_ledger".child_root_at(i_child_roots,v_position);
       v_child_hex := encode(v_child_root,'hex');
-      v_tail := "gw_ledger".sequence_payload_tail(i_child_roots,i_position + 1,i_count);
-      RETURN v_child_hex || v_tail;
+      v_tail := (v_tail || v_child_hex);
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN v_tail;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/sequence-payload [77] 
+-- gwdb.ledger.codec-value/sequence-payload [83] 
 CREATE OR REPLACE FUNCTION "gw_ledger".sequence_payload(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -630,51 +634,63 @@ CREATE OR REPLACE FUNCTION "gw_ledger".sequence_payload(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/roots-strictly-ordered [91] 
+-- gwdb.ledger.codec-value/roots-strictly-ordered [97] 
 CREATE OR REPLACE FUNCTION "gw_ledger".roots_strictly_ordered(
   i_child_roots JSONB,
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS BOOLEAN AS $$
-BEGIN
-  IF (i_position + 1) >= i_count THEN
-    RETURN true;
-  ELSE
-    DECLARE
+
+  DECLARE
     v_left BYTEA;
-      v_right BYTEA;
+    v_ordered BOOLEAN;
+    v_position INTEGER;
+    v_right BYTEA;
   BEGIN
-    v_left := "gw_ledger".child_root_at(i_child_roots,i_position);
-      v_right := "gw_ledger".child_root_at(i_child_roots,i_position + 1);
-      RETURN ("gw_ledger".compare(v_left,v_right) < 0) AND "gw_ledger".roots_strictly_ordered(i_child_roots,i_position + 1,i_count);
+    v_position := i_position;
+    v_ordered := true;
+    v_left := null;
+    v_right := null;
+    WHILE v_ordered AND ((v_position + 1) < i_count) LOOP
+      v_left := "gw_ledger".child_root_at(i_child_roots,v_position);
+      v_right := "gw_ledger".child_root_at(i_child_roots,v_position + 1);
+      v_ordered := ("gw_ledger".compare(v_left,v_right) < 0);
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN v_ordered;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/map-keys-strictly-ordered [104] 
+-- gwdb.ledger.codec-value/map-keys-strictly-ordered [117] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_keys_strictly_ordered(
   i_child_roots JSONB,
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS BOOLEAN AS $$
-BEGIN
-  IF (i_position + 2) >= i_count THEN
-    RETURN true;
-  ELSE
-    DECLARE
+
+  DECLARE
     v_left BYTEA;
-      v_right BYTEA;
+    v_ordered BOOLEAN;
+    v_position INTEGER;
+    v_right BYTEA;
   BEGIN
-    v_left := "gw_ledger".child_root_at(i_child_roots,i_position);
-      v_right := "gw_ledger".child_root_at(i_child_roots,i_position + 2);
-      RETURN ("gw_ledger".compare(v_left,v_right) < 0) AND "gw_ledger".map_keys_strictly_ordered(i_child_roots,i_position + 2,i_count);
+    v_position := i_position;
+    v_ordered := true;
+    v_left := null;
+    v_right := null;
+    WHILE v_ordered AND ((v_position + 2) < i_count) LOOP
+      v_left := "gw_ledger".child_root_at(i_child_roots,v_position);
+      v_right := "gw_ledger".child_root_at(i_child_roots,v_position + 2);
+      v_ordered := ("gw_ledger".compare(v_left,v_right) < 0);
+      v_position := (v_position + 2);
+    END LOOP;
+    RETURN v_ordered;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/set-payload [117] 
+-- gwdb.ledger.codec-value/set-payload [137] 
 CREATE OR REPLACE FUNCTION "gw_ledger".set_payload(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -718,7 +734,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".set_payload(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/map-payload [130] 
+-- gwdb.ledger.codec-value/map-payload [150] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_payload(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -761,7 +777,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".map_payload(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.codec-value/syntax-payload [145] 
+-- gwdb.ledger.codec-value/syntax-payload [165] 
 CREATE OR REPLACE FUNCTION "gw_ledger".syntax_payload(
   i_value_root BYTEA,
   i_metadata_root BYTEA
@@ -1004,27 +1020,34 @@ CREATE OR REPLACE FUNCTION "gw_ledger".sequence_refs_put(
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS JSONB AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN null;
-  ELSE
-    DECLARE
-    o_next JSONB;
-      o_ref JSONB;
-      v_child_hex TEXT;
-      v_child_root BYTEA;
+
+  DECLARE
+    o_ref JSONB;
+    o_result JSONB;
+    v_child_hex TEXT;
+    v_child_root BYTEA;
+    v_position INTEGER;
   BEGIN
-    v_child_hex := (i_child_roots ->> i_position);
+    v_position := i_position;
+    v_child_hex := null;
+    v_child_root := null;
+    o_ref := null;
+    o_result := null;
+    WHILE v_position < i_count LOOP
+      v_child_hex := (i_child_roots ->> v_position);
       v_child_root := decode(v_child_hex,'hex');
-      o_ref := "gw_ledger".cell_ref_put(i_parent_root,i_position,'element',v_child_root);
-      o_next := "gw_ledger".sequence_refs_put(i_parent_root,i_child_roots,i_position + 1,i_count);
-      RETURN o_ref;
+      o_ref := "gw_ledger".cell_ref_put(i_parent_root,v_position,'element',v_child_root);
+      IF v_position = i_position THEN
+        o_result := o_ref;
+      END IF;
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN o_result;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-list [170] 
+-- gwdb.ledger.value/put-list [179] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_list(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -1044,7 +1067,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".put_list(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-vector-payload [180] 
+-- gwdb.ledger.value/put-vector-payload [189] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_vector_payload(
   i_payload BYTEA
 ) RETURNS BYTEA AS $$
@@ -1053,7 +1076,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-vector [187] 
+-- gwdb.ledger.value/put-vector [196] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_vector(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -1073,7 +1096,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".put_vector(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/VectorElement [197] 
+-- gwdb.ledger.value/VectorElement [206] 
 DROP TABLE IF EXISTS "gw_ledger"."VectorElement" CASCADE;
 CREATE TABLE IF NOT EXISTS "gw_ledger"."VectorElement" (
   "vector_root" BYTEA,
@@ -1082,7 +1105,7 @@ CREATE TABLE IF NOT EXISTS "gw_ledger"."VectorElement" (
   PRIMARY KEY (vector_root,position)
 );
 
--- gwdb.ledger.value/vector-element-put [204] 
+-- gwdb.ledger.value/vector-element-put [213] 
 CREATE OR REPLACE FUNCTION "gw_ledger".vector_element_put(
   i_vector_root BYTEA,
   i_position INTEGER,
@@ -1145,7 +1168,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".vector_element_put(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/vector-element-get [225] 
+-- gwdb.ledger.value/vector-element-get [234] 
 CREATE OR REPLACE FUNCTION "gw_ledger".vector_element_get(
   i_vector_root BYTEA,
   i_position INTEGER
@@ -1164,7 +1187,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".vector_element_get(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/vector-get [234] 
+-- gwdb.ledger.value/vector-get [243] 
 CREATE OR REPLACE FUNCTION "gw_ledger".vector_get(
   i_vector_root BYTEA,
   i_position INTEGER
@@ -1191,7 +1214,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".vector_get(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-map-payload [248] 
+-- gwdb.ledger.value/put-map-payload [257] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_map_payload(
   i_payload BYTEA
 ) RETURNS BYTEA AS $$
@@ -1200,40 +1223,50 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-refs-put [255] 
+-- gwdb.ledger.value/map-refs-put [264] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_refs_put(
   i_parent_root BYTEA,
   i_child_roots JSONB,
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS JSONB AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN null;
-  ELSE
-    DECLARE
+
+  DECLARE
     o_key_ref JSONB;
-      o_next JSONB;
-      o_value_ref JSONB;
-      v_key_hex TEXT;
-      v_key_root BYTEA;
-      v_value_hex TEXT;
-      v_value_root BYTEA;
+    o_result JSONB;
+    o_value_ref JSONB;
+    v_key_hex TEXT;
+    v_key_root BYTEA;
+    v_position INTEGER;
+    v_value_hex TEXT;
+    v_value_root BYTEA;
   BEGIN
-    v_key_hex := (i_child_roots ->> i_position);
-      v_value_hex := (i_child_roots ->> (i_position + 1));
+    v_position := i_position;
+    v_key_hex := null;
+    v_value_hex := null;
+    v_key_root := null;
+    v_value_root := null;
+    o_key_ref := null;
+    o_value_ref := null;
+    o_result := null;
+    WHILE v_position < i_count LOOP
+      v_key_hex := (i_child_roots ->> v_position);
+      v_value_hex := (i_child_roots ->> (v_position + 1));
       v_key_root := decode(v_key_hex,'hex');
       v_value_root := decode(v_value_hex,'hex');
-      o_key_ref := "gw_ledger".cell_ref_put(i_parent_root,i_position / 2,'key',v_key_root);
-      o_value_ref := "gw_ledger".cell_ref_put(i_parent_root,i_position / 2,'value',v_value_root);
-      o_next := "gw_ledger".map_refs_put(i_parent_root,i_child_roots,i_position + 2,i_count);
-      RETURN o_value_ref;
+      o_key_ref := "gw_ledger".cell_ref_put(i_parent_root,v_position / 2,'key',v_key_root);
+      o_value_ref := "gw_ledger".cell_ref_put(i_parent_root,v_position / 2,'value',v_value_root);
+      IF v_position = i_position THEN
+        o_result := o_value_ref;
+      END IF;
+      v_position := (v_position + 2);
+    END LOOP;
+    RETURN o_result;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-map [274] 
+-- gwdb.ledger.value/put-map [297] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_map(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -1253,32 +1286,36 @@ CREATE OR REPLACE FUNCTION "gw_ledger".put_map(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-copy-tail [284] 
+-- gwdb.ledger.value/map-copy-tail [307] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_copy_tail(
   i_map_root BYTEA,
   i_position INTEGER,
   i_count INTEGER,
   i_out JSONB
 ) RETURNS JSONB AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN i_out;
-  ELSE
-    DECLARE
+
+  DECLARE
     v_key BYTEA;
-      v_next JSONB;
-      v_value BYTEA;
+    v_out JSONB;
+    v_position INTEGER;
+    v_value BYTEA;
   BEGIN
-    v_key := "gw_ledger".cell_ref_child(i_map_root,i_position,'key');
-      v_value := "gw_ledger".cell_ref_child(i_map_root,i_position,'value');
-      v_next := (i_out || jsonb_build_array(encode(v_key,'hex'),encode(v_value,'hex')));
-      RETURN "gw_ledger".map_copy_tail(i_map_root,i_position + 1,i_count,v_next);
+    v_position := i_position;
+    v_out := i_out;
+    v_key := null;
+    v_value := null;
+    WHILE v_position < i_count LOOP
+      v_key := "gw_ledger".cell_ref_child(i_map_root,v_position,'key');
+      v_value := "gw_ledger".cell_ref_child(i_map_root,v_position,'value');
+      v_out := (v_out || jsonb_build_array(encode(v_key,'hex'),encode(v_value,'hex')));
+      v_position := (v_position + 1);
+    END LOOP;
+    RETURN v_out;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-assoc-roots [299] 
+-- gwdb.ledger.value/map-assoc-roots [329] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_assoc_roots(
   i_map_root BYTEA,
   i_key_root BYTEA,
@@ -1287,38 +1324,49 @@ CREATE OR REPLACE FUNCTION "gw_ledger".map_assoc_roots(
   i_count INTEGER,
   i_out JSONB
 ) RETURNS JSONB AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN i_out || jsonb_build_array(encode(i_key_root,'hex'),encode(i_value_root,'hex'));
-  ELSE
-    DECLARE
+
+  DECLARE
+    v_done BOOLEAN;
     v_inserted JSONB;
-      v_key BYTEA;
-      v_order INTEGER;
-      v_value BYTEA;
+    v_key BYTEA;
+    v_order INTEGER;
+    v_out JSONB;
+    v_position INTEGER;
+    v_value BYTEA;
   BEGIN
-    v_key := "gw_ledger".cell_ref_child(i_map_root,i_position,'key');
-      v_value := "gw_ledger".cell_ref_child(i_map_root,i_position,'value');
+    v_position := i_position;
+    v_out := i_out;
+    v_inserted := jsonb_build_array(encode(i_key_root,'hex'),encode(i_value_root,'hex'));
+    v_done := false;
+    v_key := null;
+    v_value := null;
+    v_order := null;
+    WHILE (v_position < i_count) AND NOT v_done LOOP
+      v_key := "gw_ledger".cell_ref_child(i_map_root,v_position,'key');
+      v_value := "gw_ledger".cell_ref_child(i_map_root,v_position,'value');
       v_order := "gw_ledger".compare(i_key_root,v_key);
-      v_inserted := (i_out || jsonb_build_array(encode(i_key_root,'hex'),encode(i_value_root,'hex')));
       IF v_order = 0 THEN
-        RETURN "gw_ledger".map_copy_tail(i_map_root,i_position + 1,i_count,v_inserted);
+        v_out := (v_out || v_inserted);
+        v_position := (v_position + 1);
+        v_done := true;
       ELSIF v_order < 0 THEN
-        RETURN "gw_ledger".map_copy_tail(i_map_root,i_position,i_count,v_inserted);
+        v_out := (v_out || v_inserted);
+        v_done := true;
       ELSE
-        DECLARE
-        v_next JSONB;
-      BEGIN
-        v_next := (i_out || jsonb_build_array(encode(v_key,'hex'),encode(v_value,'hex')));
-          RETURN "gw_ledger".map_assoc_roots(i_map_root,i_key_root,i_value_root,i_position + 1,i_count,v_next);
-      END;
+        v_out := (v_out || jsonb_build_array(encode(v_key,'hex'),encode(v_value,'hex')));
+        v_position := (v_position + 1);
       END IF;
+    END LOOP;
+    IF v_done THEN
+      RETURN "gw_ledger".map_copy_tail(i_map_root,v_position,i_count,v_out);
+    ELSE
+      RETURN v_out || v_inserted;
+    END IF;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-assoc [334] 
+-- gwdb.ledger.value/map-assoc [376] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_assoc(
   i_map_root BYTEA,
   i_key_root BYTEA,
@@ -1344,36 +1392,44 @@ CREATE OR REPLACE FUNCTION "gw_ledger".map_assoc(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-get-at [348] 
+-- gwdb.ledger.value/map-get-at [390] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_get_at(
   i_map_root BYTEA,
   i_key_root BYTEA,
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS BYTEA AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN null;
-  ELSE
-    DECLARE
+
+  DECLARE
+    v_done BOOLEAN;
     v_key BYTEA;
-      v_order INTEGER;
+    v_order INTEGER;
+    v_position INTEGER;
+    v_result BYTEA;
   BEGIN
-    v_key := "gw_ledger".cell_ref_child(i_map_root,i_position,'key');
+    v_position := i_position;
+    v_done := false;
+    v_result := null;
+    v_key := null;
+    v_order := null;
+    WHILE (v_position < i_count) AND NOT v_done LOOP
+      v_key := "gw_ledger".cell_ref_child(i_map_root,v_position,'key');
       v_order := "gw_ledger".compare(i_key_root,v_key);
       IF v_order = 0 THEN
-        RETURN "gw_ledger".cell_ref_child(i_map_root,i_position,'value');
+        v_result := "gw_ledger".cell_ref_child(i_map_root,v_position,'value');
+        v_done := true;
       ELSIF v_order < 0 THEN
-        RETURN null;
+        v_done := true;
       ELSE
-        RETURN "gw_ledger".map_get_at(i_map_root,i_key_root,i_position + 1,i_count);
+        v_position := (v_position + 1);
       END IF;
+    END LOOP;
+    RETURN v_result;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/map-get [365] 
+-- gwdb.ledger.value/map-get [416] 
 CREATE OR REPLACE FUNCTION "gw_ledger".map_get(
   i_map_root BYTEA,
   i_key_root BYTEA
@@ -1396,36 +1452,44 @@ CREATE OR REPLACE FUNCTION "gw_ledger".map_get(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/set-contains-at [376] 
+-- gwdb.ledger.value/set-contains-at [427] 
 CREATE OR REPLACE FUNCTION "gw_ledger".set_contains_at(
   i_set_root BYTEA,
   i_value_root BYTEA,
   i_position INTEGER,
   i_count INTEGER
 ) RETURNS BOOLEAN AS $$
-BEGIN
-  IF i_position >= i_count THEN
-    RETURN false;
-  ELSE
-    DECLARE
+
+  DECLARE
     v_current BYTEA;
-      v_order INTEGER;
+    v_done BOOLEAN;
+    v_found BOOLEAN;
+    v_order INTEGER;
+    v_position INTEGER;
   BEGIN
-    v_current := "gw_ledger".cell_ref_child(i_set_root,i_position,'element');
+    v_position := i_position;
+    v_found := false;
+    v_done := false;
+    v_current := null;
+    v_order := null;
+    WHILE (v_position < i_count) AND NOT v_done LOOP
+      v_current := "gw_ledger".cell_ref_child(i_set_root,v_position,'element');
       v_order := "gw_ledger".compare(i_value_root,v_current);
       IF v_order = 0 THEN
-        RETURN true;
+        v_found := true;
+        v_done := true;
       ELSIF v_order < 0 THEN
-        RETURN false;
+        v_done := true;
       ELSE
-        RETURN "gw_ledger".set_contains_at(i_set_root,i_value_root,i_position + 1,i_count);
+        v_position := (v_position + 1);
       END IF;
+    END LOOP;
+    RETURN v_found;
   END;
-  END IF;
-END;
+
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/set-contains [391] 
+-- gwdb.ledger.value/set-contains [451] 
 CREATE OR REPLACE FUNCTION "gw_ledger".set_contains(
   i_set_root BYTEA,
   i_value_root BYTEA
@@ -1448,7 +1512,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".set_contains(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-set-payload [402] 
+-- gwdb.ledger.value/put-set-payload [462] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_set_payload(
   i_payload BYTEA
 ) RETURNS BYTEA AS $$
@@ -1457,7 +1521,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-set [409] 
+-- gwdb.ledger.value/put-set [469] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_set(
   i_child_roots JSONB
 ) RETURNS BYTEA AS $$
@@ -1477,7 +1541,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".put_set(
 
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-record [419] 
+-- gwdb.ledger.value/put-record [479] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_record(
   i_payload BYTEA
 ) RETURNS BYTEA AS $$
@@ -1486,7 +1550,7 @@ BEGIN
 END;
 $$ LANGUAGE 'plpgsql';
 
--- gwdb.ledger.value/put-reference [426] 
+-- gwdb.ledger.value/put-reference [486] 
 CREATE OR REPLACE FUNCTION "gw_ledger".put_reference(
   i_payload BYTEA
 ) RETURNS BYTEA AS $$
