@@ -36,7 +36,7 @@ scripts/ignatius-agent github-review-materialize \
 The direct command is equivalent:
 
 ```sh
-scripts/ignatius-agent-github-review-materialize \
+python3 scripts/ignatius-agent-github-review-materialize \
   --database var/ignatius-github.sqlite \
   ...
 ```
