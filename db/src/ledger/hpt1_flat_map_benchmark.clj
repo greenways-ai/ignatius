@@ -97,10 +97,31 @@
 (def default-warmup-count 2)
 (def default-sample-count 7)
 
+(defn json-object
+  "Normalises JSONB values returned by supported JDBC drivers.
+
+  The ordinary PostgreSQL driver may decode JSONB into a Clojure map, while
+  pgjdbc-ng exposes its textual JSON representation. Benchmark evidence should
+  not depend on that driver-specific choice."
+  [value]
+  (cond
+    (map? value)
+    value
+
+    (string? value)
+    (json/read-str value)
+
+    (nil? value)
+    nil
+
+    :else
+    (json/read-str (str value))))
+
 (defn json-field
   [value field]
-  (or (get value field)
-      (get value (keyword field))))
+  (let [object (json-object value)]
+    (or (get object field)
+        (get object (keyword field)))))
 
 (defn environment-value
   [name fallback]
