@@ -1,0 +1,392 @@
+(ns ignatius.workflow-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.workflow :as workflow]))
+
+(def initial
+  (workflow/init
+   {:workspace/id "greenways/ignatius"
+    :workspace/kind :agent/workflow
+    :workspace/name "Ignatius build"
+    :workspace/participants
+    {"alice" true
+     "bob" true}}))
+
+(def base-reference
+  (record/logical-reference
+   {:reference/scope-id "greenways/ignatius"
+    :reference/kind :resource/version
+    :reference/id "git/greenways-ai/ignatius/refs/heads/main"
+    :reference/root "commit-A"
+    :reference/metadata {}}))
+
+(def output-reference
+  (record/logical-reference
+   {:reference/scope-id "greenways/ignatius"
+    :reference/kind :resource/version
+    :reference/id "git/greenways-ai/ignatius/refs/heads/agent/docs"
+    :reference/root "commit-B"
+    :reference/metadata {}}))
+
+(def unrelated-reference
+  (record/logical-reference
+   {:reference/scope-id "greenways/ignatius"
+    :reference/kind :resource/version
+    :reference/id "r2/greenways-builds/unrelated"
+    :reference/root "sha256-unrelated"
+    :reference/metadata {}}))
+
+(def rejected-outsider
+  (workflow/apply-event
+   initial
+   {:action :resource/register
+    :workspace/id "greenways/ignatius"
+    :resource/id "git/greenways-ai/ignatius/refs/heads/main"
+    :resource/kind :git/commit
+    :resource/provider :git
+    :resource/version "commit-A"
+    :resource/previous-version nil
+    :signer "mallory"
+    :transaction "tx-outsider"
+    :timestamp 1
+    :previous-head "head-0"}))
+
+(def with-base
+  (get
+   (workflow/apply-event
+    initial
+    {:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "git/greenways-ai/ignatius/refs/heads/main"
+     :resource/kind :git/commit
+     :resource/provider :git
+     :resource/version "commit-A"
+     :resource/previous-version nil
+     :resource/parent-versions []
+     :resource/locator
+     {:git/repository "greenways-ai/ignatius"
+      :git/ref "refs/heads/main"
+      :git/tree "tree-A"}
+     :resource/digest-algorithm :git/sha1
+     :resource/digest "commit-A"
+     :resource/metadata {:git/dirty false}
+     :signer "alice"
+     :transaction "tx-base"
+     :timestamp 2
+     :previous-head "head-0"})
+   :ok))
+
+(def rejected-stale-resource
+  (workflow/apply-event
+   with-base
+   {:action :resource/register
+    :workspace/id "greenways/ignatius"
+    :resource/id "git/greenways-ai/ignatius/refs/heads/main"
+    :resource/kind :git/commit
+    :resource/provider :git
+    :resource/version "commit-X"
+    :resource/previous-version "commit-before-A"
+    :signer "alice"
+    :transaction "tx-stale-resource"
+    :timestamp 3
+    :previous-head "head-1"}))
+
+(def with-work
+  (get
+   (workflow/apply-event
+    with-base
+    {:action :work/create
+     :workspace/id "greenways/ignatius"
+     :work/id "work/docs"
+     :work/kind :code/change
+     :work/title "Document the agent workflow"
+     :work/definition-root "definition/docs"
+     :work/dependency-ids []
+     :work/input-references [base-reference]
+     :work/metadata {:priority :high}
+     :signer "alice"
+     :transaction "tx-create-docs"
+     :timestamp 4
+     :previous-head "head-1"})
+   :ok))
+
+(def with-dependent
+  (get
+   (workflow/apply-event
+    with-work
+    {:action :work/create
+     :workspace/id "greenways/ignatius"
+     :work/id "work/review"
+     :work/kind :review
+     :work/title "Review the workflow documentation"
+     :work/definition-root "definition/review"
+     :work/dependency-ids ["work/docs"]
+     :work/input-references [base-reference]
+     :signer "bob"
+     :transaction "tx-create-review"
+     :timestamp 5
+     :previous-head "head-2"})
+   :ok))
+
+(def rejected-premature-claim
+  (workflow/apply-event
+   with-dependent
+   {:action :work/claim
+    :workspace/id "greenways/ignatius"
+    :work/id "work/review"
+    :signer "bob"
+    :transaction "tx-claim-review-early"
+    :timestamp 6
+    :previous-head "head-3"}))
+
+(def claimed
+  (get
+   (workflow/apply-event
+    with-dependent
+    {:action :work/claim
+     :workspace/id "greenways/ignatius"
+     :work/id "work/docs"
+     :signer "alice"
+     :transaction "tx-claim-docs"
+     :timestamp 7
+     :previous-head "head-3"})
+   :ok))
+
+(def rejected-wrong-agent-start
+  (workflow/apply-event
+   claimed
+   {:action :work/start
+    :workspace/id "greenways/ignatius"
+    :work/id "work/docs"
+    :signer "bob"
+    :transaction "tx-start-wrong-agent"
+    :timestamp 8
+    :previous-head "head-4"}))
+
+(def started
+  (get
+   (workflow/apply-event
+    claimed
+    {:action :work/start
+     :workspace/id "greenways/ignatius"
+     :work/id "work/docs"
+     :signer "alice"
+     :transaction "tx-start-docs"
+     :timestamp 9
+     :previous-head "head-4"})
+   :ok))
+
+(def with-unrelated
+  (get
+   (workflow/apply-event
+    started
+    {:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "r2/greenways-builds/unrelated"
+     :resource/kind :storage/object
+     :resource/provider :r2
+     :resource/version "sha256-unrelated"
+     :resource/previous-version nil
+     :resource/parent-versions []
+     :resource/locator
+     {:storage/bucket "greenways-builds"
+      :storage/key "unrelated.bin"}
+     :resource/digest-algorithm :sha256
+     :resource/digest "sha256-unrelated"
+     :signer "bob"
+     :transaction "tx-unrelated"
+     :timestamp 10
+     :previous-head "head-5"})
+   :ok))
+
+(def rejected-unowned-output
+  (workflow/apply-event
+   with-unrelated
+   {:action :work/complete
+    :workspace/id "greenways/ignatius"
+    :work/id "work/docs"
+    :work/output-references [unrelated-reference]
+    :work/result-root "result/unowned"
+    :work/receipt-root "receipt/unowned"
+    :signer "alice"
+    :transaction "tx-complete-unowned"
+    :timestamp 11
+    :previous-head "head-6"}))
+
+(def with-output
+  (get
+   (workflow/apply-event
+    with-unrelated
+    {:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "git/greenways-ai/ignatius/refs/heads/agent/docs"
+     :resource/kind :git/commit
+     :resource/provider :git
+     :resource/version "commit-B"
+     :resource/previous-version nil
+     :resource/parent-versions ["commit-A"]
+     :resource/locator
+     {:git/repository "greenways-ai/ignatius"
+      :git/ref "refs/heads/agent/docs"
+      :git/tree "tree-B"}
+     :resource/digest-algorithm :git/sha1
+     :resource/digest "commit-B"
+     :process/id "work/docs"
+     :signer "alice"
+     :transaction "tx-output"
+     :timestamp 12
+     :previous-head "head-6"})
+   :ok))
+
+(def checkpointed
+  (get
+   (workflow/apply-event
+    with-output
+    {:action :work/checkpoint
+     :workspace/id "greenways/ignatius"
+     :work/id "work/docs"
+     :checkpoint/id "checkpoint/docs/1"
+     :checkpoint/state-root "working-tree-state"
+     :checkpoint/resource-references [output-reference]
+     :checkpoint/receipt-root "tool-receipt"
+     :checkpoint/metadata {:message "Documentation drafted"}
+     :signer "alice"
+     :transaction "tx-checkpoint"
+     :timestamp 13
+     :previous-head "head-7"})
+   :ok))
+
+(def completed
+  (get
+   (workflow/apply-event
+    checkpointed
+    {:action :work/complete
+     :workspace/id "greenways/ignatius"
+     :work/id "work/docs"
+     :work/output-references [output-reference]
+     :work/result-root "result/docs"
+     :work/receipt-root "receipt/docs"
+     :signer "alice"
+     :transaction "tx-complete-docs"
+     :timestamp 14
+     :previous-head "head-8"})
+   :ok))
+
+(def review-claimed
+  (get
+   (workflow/apply-event
+    completed
+    {:action :work/claim
+     :workspace/id "greenways/ignatius"
+     :work/id "work/review"
+     :signer "bob"
+     :transaction "tx-claim-review"
+     :timestamp 15
+     :previous-head "head-9"})
+   :ok))
+
+(def results
+  [(test/check "workflow state remains a canonical workspace build"
+               [(get initial :record/type)
+                (record/record-valid? initial)]
+               [:workspace/build true])
+   (test/check "the workflow starts with an explicit checkpoint index"
+               (workflow/checkpoints initial)
+               {})
+   (test/check "only workspace participants may register external resources"
+               (get rejected-outsider :error)
+               :workflow/not-participant)
+   (test/check "Git revisions use the canonical artifact-version record"
+               [(get-in (workflow/resources with-base)
+                        ["git/greenways-ai/ignatius/refs/heads/main"
+                         :record/type])
+                (get-in (workflow/resources with-base)
+                        ["git/greenways-ai/ignatius/refs/heads/main"
+                         :record/extensions
+                         :resource/provider])]
+               [:artifact/version :git])
+   (test/check "resource updates require the exact selected external version"
+               (get rejected-stale-resource :error)
+               :workflow/stale-resource-version)
+   (test/check "work items reuse the canonical process-run family"
+               [(get-in (workflow/work-items with-work)
+                        ["work/docs" :record/type])
+                (get-in (workflow/work-items with-work)
+                        ["work/docs" :run/status])
+                (record/record-valid?
+                 (workflow/work-item with-work "work/docs"))]
+               [:process/run :open true])
+   (test/check "work inputs pin exact registered external versions"
+               (get-in (workflow/work-items with-work)
+                       ["work/docs" :record/extensions
+                        :work/input-references])
+               [base-reference])
+   (test/check "dependent work cannot be claimed before its parent completes"
+               (get rejected-premature-claim :error)
+               :workflow/dependencies-not-complete)
+   (test/check "the claiming agent is pinned by ledger evidence"
+               [(get-in (workflow/work-items claimed)
+                        ["work/docs" :record/extensions
+                         :work/assignee])
+                (get-in (workflow/work-items claimed)
+                        ["work/docs" :record/extensions
+                         :work/claim-evidence
+                         :ledger/signer])]
+               ["alice" "alice"])
+   (test/check "another agent cannot start claimed work"
+               (get rejected-wrong-agent-start :error)
+               :workflow/not-assignee)
+   (test/check "starting work records signed execution evidence"
+               [(get-in (workflow/work-items started)
+                        ["work/docs" :run/status])
+                (get-in (workflow/work-items started)
+                        ["work/docs" :run/started-evidence
+                         :ledger/transaction-root])]
+               [:running "tx-start-docs"])
+   (test/check "completion rejects resources not produced by the work item"
+               (get rejected-unowned-output :error)
+               :workflow/output-resource-not-produced-by-work)
+   (test/check "Git output versions retain their producing work item"
+               (get-in
+                (workflow/resource-versions with-output)
+                ["git/greenways-ai/ignatius/refs/heads/agent/docs"
+                 "commit-B"
+                 :artifact/producer-run-id])
+               "work/docs")
+   (test/check "checkpoints use the canonical process checkpoint record"
+               [(get-in (workflow/checkpoints checkpointed)
+                        ["checkpoint/docs/1" :record/type])
+                (get-in (workflow/checkpoints checkpointed)
+                        ["checkpoint/docs/1"
+                         :checkpoint/output-roots])
+                (get-in (workflow/checkpoints checkpointed)
+                        ["checkpoint/docs/1"
+                         :checkpoint/evidence
+                         :ledger/signer])]
+               [:process/checkpoint ["commit-B"] "alice"])
+   (test/check "completion pins the exact Git output and receipt"
+               [(get-in (workflow/work-items completed)
+                        ["work/docs" :run/status])
+                (get-in (workflow/work-items completed)
+                        ["work/docs" :run/output-roots])
+                (get-in (workflow/work-items completed)
+                        ["work/docs" :run/receipt-root])]
+               [:complete ["commit-B"] "receipt/docs"])
+   (test/check "completed dependencies unlock downstream agent work"
+               [(workflow/ready? completed "work/review")
+                (get-in (workflow/work-items review-claimed)
+                        ["work/review" :run/status])
+                (get-in (workflow/work-items review-claimed)
+                        ["work/review" :record/extensions
+                         :work/assignee])]
+               [true :claimed "bob"])
+   (test/check "workflow transitions share the signed linked timeline"
+               [(get-in (workflow/summary review-claimed)
+                        [:workspace/latest-entry-id])
+                (get-in review-claimed
+                        [:workspace/timeline-entries
+                         "tx-claim-review"
+                         :timeline/previous-entry-id])]
+               ["tx-claim-review" "tx-complete-docs"])])
+
+(test/print-results results)

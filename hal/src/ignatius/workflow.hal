@@ -1,0 +1,638 @@
+(ns ignatius.workflow
+  (:require [ignatius.record :as record]
+            [ignatius.timeline :as timeline]))
+
+(def workflow-format-version 1)
+
+(defn map-or-empty
+  [value]
+  (record/map-or-empty value))
+
+(defn vector-or-empty
+  [value]
+  (record/vector-or-empty value))
+
+(defn init
+  "Creates a signed collaborative-work workspace.
+
+  Git, object stores and local filesystems retain the payload bytes. Ignatius
+  records exact external versions, work dependencies, agent claims, process
+  checkpoints and signed completion evidence."
+  [parameters]
+  (assoc (timeline/init parameters)
+         :workspace/checkpoints {}))
+
+(defn checkpoints
+  [state]
+  (map-or-empty (get state :workspace/checkpoints)))
+
+(defn work-items
+  [state]
+  (map-or-empty (get state :workspace/processes)))
+
+(defn resources
+  [state]
+  (map-or-empty (get state :workspace/artifacts)))
+
+(defn resource-versions
+  [state]
+  (map-or-empty (get state :workspace/artifact-versions)))
+
+(defn work-item
+  [state work-id]
+  (get (work-items state) work-id))
+
+(defn resource-version
+  [state resource-id version]
+  (get-in (resource-versions state)
+          [resource-id version]))
+
+(defn record-extensions
+  [value]
+  (map-or-empty (get value :record/extensions)))
+
+(defn extension
+  [value key]
+  (get (record-extensions value) key))
+
+(defn with-extension
+  [value key extension-value]
+  (assoc value
+         :record/extensions
+         (assoc (record-extensions value)
+                key
+                extension-value)))
+
+(defn with-extensions
+  [value entries]
+  (reduce
+   (fn [out entry]
+     (with-extension out
+                     (get entry :key)
+                     (get entry :value)))
+   value
+   entries))
+
+(defn event-workspace-valid?
+  [state event]
+  (let [event-workspace-id (get event :workspace/id)]
+    (or (= nil event-workspace-id)
+        (= event-workspace-id (get state :workspace/id)))))
+
+(defn work-reference
+  [state work-id]
+  (record/logical-reference
+   {:reference/scope-id (get state :workspace/id)
+    :reference/kind :work/item
+    :reference/id work-id
+    :reference/root nil
+    :reference/metadata {}}))
+
+(defn resource-reference
+  [state resource-id version]
+  (record/logical-reference
+   {:reference/scope-id (get state :workspace/id)
+    :reference/kind :resource/version
+    :reference/id resource-id
+    :reference/root version
+    :reference/metadata {}}))
+
+(defn dependency-references
+  [state dependency-ids]
+  (reduce
+   (fn [out dependency-id]
+     (conj out (work-reference state dependency-id)))
+   []
+   (vector-or-empty dependency-ids)))
+
+(defn reference-roots
+  [references]
+  (reduce
+   (fn [out reference]
+     (conj out (get reference :reference/root)))
+   []
+   (vector-or-empty references)))
+
+(defn resource-reference-resolves?
+  [state reference]
+  (and
+   (= :reference/logical (get reference :record/type))
+   (= :resource/version (get reference :reference/kind))
+   (= (get state :workspace/id)
+      (get reference :reference/scope-id))
+   (= false (= nil (get reference :reference/root)))
+   (= false
+      (= nil
+         (resource-version
+          state
+          (get reference :reference/id)
+          (get reference :reference/root))))))
+
+(defn references-resolve?
+  [state references]
+  (reduce
+   (fn [valid reference]
+     (and valid
+          (resource-reference-resolves? state reference)))
+   true
+   (vector-or-empty references)))
+
+(defn reference-produced-by?
+  [state reference work-id]
+  (let [version
+        (resource-version
+         state
+         (get reference :reference/id)
+         (get reference :reference/root))]
+    (= work-id (get version :artifact/producer-run-id))))
+
+(defn references-produced-by?
+  [state references work-id]
+  (reduce
+   (fn [valid reference]
+     (and valid
+          (reference-produced-by? state reference work-id)))
+   true
+   (vector-or-empty references)))
+
+(defn dependencies-exist?
+  [state dependency-ids]
+  (reduce
+   (fn [valid dependency-id]
+     (and valid
+          (= false
+             (= nil (work-item state dependency-id)))))
+   true
+   (vector-or-empty dependency-ids)))
+
+(defn dependencies-complete?
+  [state dependency-ids]
+  (reduce
+   (fn [valid dependency-id]
+     (let [dependency (work-item state dependency-id)]
+       (and valid
+            (= false (= nil dependency))
+            (= :complete (get dependency :run/status)))))
+   true
+   (vector-or-empty dependency-ids)))
+
+(defn work-dependency-ids
+  [work]
+  (vector-or-empty
+   (extension work :work/dependency-ids)))
+
+(defn work-assignee
+  [work]
+  (extension work :work/assignee))
+
+(defn work-item?
+  [work]
+  (= true (extension work :work/item)))
+
+(defn append-work-entry
+  [state event work-id value]
+  (timeline/append-entry
+   state
+   event
+   (work-reference state work-id)
+   value))
+
+(defn append-resource-entry
+  [state event resource-id version value]
+  (timeline/append-entry
+   state
+   event
+   (resource-reference state resource-id version)
+   value))
+
+(defn register-resource
+  [state event]
+  (let [resource-id (get event :resource/id)
+        resource-kind (get event :resource/kind)
+        provider (get event :resource/provider)
+        version (get event :resource/version)
+        expected-version (get event :resource/previous-version)
+        process-id (get event :process/id)
+        process
+        (if (= nil process-id)
+          nil
+          (work-item state process-id))
+        artifacts (resources state)
+        current (get artifacts resource-id)
+        current-version
+        (if (= nil current)
+          nil
+          (get current :artifact/content-root))
+        versions
+        (map-or-empty
+         (get (resource-versions state) resource-id))
+        existing-version (get versions version)]
+    (cond
+      (= nil resource-id)
+      {:error :workflow/missing-resource-id}
+
+      (= nil resource-kind)
+      {:error :workflow/missing-resource-kind}
+
+      (= nil provider)
+      {:error :workflow/missing-resource-provider}
+
+      (= nil version)
+      {:error :workflow/missing-resource-version}
+
+      (= false (= expected-version current-version))
+      {:error :workflow/stale-resource-version}
+
+      (= false (= nil existing-version))
+      {:error :workflow/resource-version-already-exists}
+
+      (and (= false (= nil process-id))
+           (= nil process))
+      {:error :workflow/work-not-found}
+
+      (and (= false (= nil process))
+           (= false (= :running (get process :run/status))))
+      {:error :workflow/work-not-running}
+
+      :else
+      (let [resource
+            (record/artifact-version
+             {:artifact/id resource-id
+              :artifact/kind resource-kind
+              :artifact/content-root version
+              :artifact/previous-content-root current-version
+              :artifact/source-roots
+              (get event :resource/parent-versions)
+              :artifact/producer-run-id process-id
+              :artifact/producer-run-root nil
+              :artifact/schema-root
+              (get event :resource/schema-root)
+              :artifact/metadata
+              (get event :resource/metadata)
+              :artifact/published-evidence
+              (timeline/verified-evidence event)
+              :record/extensions
+              {:resource/provider provider
+               :resource/locator
+               (map-or-empty (get event :resource/locator))
+               :resource/digest-algorithm
+               (get event :resource/digest-algorithm)
+               :resource/digest
+               (get event :resource/digest)
+               :resource/size
+               (get event :resource/size)
+               :resource/workflow-format
+               workflow-format-version}})
+            all-versions (resource-versions state)
+            with-current
+            (assoc state
+                   :workspace/artifacts
+                   (assoc artifacts resource-id resource))
+            with-version
+            (assoc
+             with-current
+             :workspace/artifact-versions
+             (assoc
+              all-versions
+              resource-id
+              (assoc versions version resource)))]
+        {:ok
+         (append-resource-entry
+          with-version event resource-id version resource)}))))
+
+(defn create-work
+  [state event]
+  (let [work-id (get event :work/id)
+        definition-root (get event :work/definition-root)
+        dependency-ids
+        (vector-or-empty (get event :work/dependency-ids))
+        input-references
+        (vector-or-empty (get event :work/input-references))
+        existing (work-item state work-id)
+        evidence (timeline/verified-evidence event)]
+    (cond
+      (= nil work-id)
+      {:error :workflow/missing-work-id}
+
+      (= nil definition-root)
+      {:error :workflow/missing-work-definition}
+
+      (= false (= nil existing))
+      {:error :workflow/work-already-exists}
+
+      (= false (dependencies-exist? state dependency-ids))
+      {:error :workflow/dependency-not-found}
+
+      (= false (references-resolve? state input-references))
+      {:error :workflow/input-resource-not-found}
+
+      :else
+      (let [work
+            (record/process-run
+             {:run/id work-id
+              :run/workspace-id (get state :workspace/id)
+              :run/workspace-root nil
+              :run/definition-root definition-root
+              :run/status :open
+              :run/input-roots
+              (reference-roots input-references)
+              :run/parent-references
+              (dependency-references state dependency-ids)
+              :run/output-roots []
+              :run/result-root nil
+              :run/receipt-root nil
+              :run/started-evidence nil
+              :run/completed-evidence nil
+              :run/metadata
+              (get event :work/metadata)
+              :record/extensions
+              {:work/item true
+               :work/title (get event :work/title)
+               :work/kind (get event :work/kind)
+               :work/dependency-ids dependency-ids
+               :work/input-references input-references
+               :work/output-references []
+               :work/assignee nil
+               :work/created-evidence evidence
+               :work/claim-evidence nil
+               :work/workflow-format workflow-format-version}})
+            processes (work-items state)
+            with-work
+            (assoc state
+                   :workspace/processes
+                   (assoc processes work-id work))]
+        {:ok
+         (append-work-entry with-work event work-id work)}))))
+
+(defn claim-work
+  [state event]
+  (let [work-id (get event :work/id)
+        work (work-item state work-id)
+        signer (get event :signer)]
+    (cond
+      (= nil work)
+      {:error :workflow/work-not-found}
+
+      (= false (work-item? work))
+      {:error :workflow/not-work-item}
+
+      (= false (= :open (get work :run/status)))
+      {:error :workflow/work-not-open}
+
+      (= false
+         (dependencies-complete?
+          state
+          (work-dependency-ids work)))
+      {:error :workflow/dependencies-not-complete}
+
+      :else
+      (let [claimed
+            (with-extensions
+             (assoc work :run/status :claimed)
+             [{:key :work/assignee
+               :value signer}
+              {:key :work/claim-evidence
+               :value (timeline/verified-evidence event)}])
+            processes (work-items state)
+            with-work
+            (assoc state
+                   :workspace/processes
+                   (assoc processes work-id claimed))]
+        {:ok
+         (append-work-entry with-work event work-id claimed)}))))
+
+(defn start-work
+  [state event]
+  (let [work-id (get event :work/id)
+        work (work-item state work-id)
+        signer (get event :signer)]
+    (cond
+      (= nil work)
+      {:error :workflow/work-not-found}
+
+      (= false (= :claimed (get work :run/status)))
+      {:error :workflow/work-not-claimed}
+
+      (= false (= signer (work-assignee work)))
+      {:error :workflow/not-assignee}
+
+      (= false
+         (dependencies-complete?
+          state
+          (work-dependency-ids work)))
+      {:error :workflow/dependencies-not-complete}
+
+      :else
+      (let [started
+            (assoc
+             (assoc work :run/status :running)
+             :run/started-evidence
+             (timeline/verified-evidence event))
+            processes (work-items state)
+            with-work
+            (assoc state
+                   :workspace/processes
+                   (assoc processes work-id started))]
+        {:ok
+         (append-work-entry with-work event work-id started)}))))
+
+(defn checkpoint-work
+  [state event]
+  (let [work-id (get event :work/id)
+        checkpoint-id (get event :checkpoint/id)
+        state-root (get event :checkpoint/state-root)
+        work (work-item state work-id)
+        signer (get event :signer)
+        output-references
+        (vector-or-empty
+         (get event :checkpoint/resource-references))
+        existing
+        (get (checkpoints state) checkpoint-id)]
+    (cond
+      (= nil work)
+      {:error :workflow/work-not-found}
+
+      (= false (= :running (get work :run/status)))
+      {:error :workflow/work-not-running}
+
+      (= false (= signer (work-assignee work)))
+      {:error :workflow/not-assignee}
+
+      (= nil checkpoint-id)
+      {:error :workflow/missing-checkpoint-id}
+
+      (= nil state-root)
+      {:error :workflow/missing-checkpoint-state}
+
+      (= false (= nil existing))
+      {:error :workflow/checkpoint-already-exists}
+
+      (= false (references-resolve? state output-references))
+      {:error :workflow/checkpoint-resource-not-found}
+
+      :else
+      (let [checkpoint
+            (record/process-checkpoint
+             {:checkpoint/id checkpoint-id
+              :checkpoint/run-id work-id
+              :checkpoint/run-root nil
+              :checkpoint/step-id
+              (get event :checkpoint/step-id)
+              :checkpoint/step-root nil
+              :checkpoint/state-root state-root
+              :checkpoint/output-roots
+              (reference-roots output-references)
+              :checkpoint/receipt-root
+              (get event :checkpoint/receipt-root)
+              :checkpoint/evidence
+              (timeline/verified-evidence event)
+              :checkpoint/metadata
+              (get event :checkpoint/metadata)
+              :record/extensions
+              {:checkpoint/resource-references
+               output-references
+               :work/workflow-format
+               workflow-format-version}})
+            with-checkpoint
+            (assoc state
+                   :workspace/checkpoints
+                   (assoc
+                    (checkpoints state)
+                    checkpoint-id
+                    checkpoint))]
+        {:ok
+         (append-work-entry
+          with-checkpoint event work-id checkpoint)}))))
+
+(defn complete-work
+  [state event]
+  (let [work-id (get event :work/id)
+        work (work-item state work-id)
+        signer (get event :signer)
+        output-references
+        (vector-or-empty
+         (get event :work/output-references))]
+    (cond
+      (= nil work)
+      {:error :workflow/work-not-found}
+
+      (= false (= :running (get work :run/status)))
+      {:error :workflow/work-not-running}
+
+      (= false (= signer (work-assignee work)))
+      {:error :workflow/not-assignee}
+
+      (= false (references-resolve? state output-references))
+      {:error :workflow/output-resource-not-found}
+
+      (= false
+         (references-produced-by?
+          state output-references work-id))
+      {:error :workflow/output-resource-not-produced-by-work}
+
+      :else
+      (let [completed-base
+            (assoc
+             (assoc
+              (assoc
+               (assoc work
+                      :run/status :complete)
+               :run/output-roots
+               (reference-roots output-references))
+              :run/result-root
+              (get event :work/result-root))
+             :run/receipt-root
+             (get event :work/receipt-root))
+            completed-evidence
+            (assoc completed-base
+                   :run/completed-evidence
+                   (timeline/verified-evidence event))
+            completed
+            (with-extension
+             completed-evidence
+             :work/output-references
+             output-references)
+            processes (work-items state)
+            with-work
+            (assoc state
+                   :workspace/processes
+                   (assoc processes work-id completed))]
+        {:ok
+         (append-work-entry with-work event work-id completed)}))))
+
+(defn workflow-action?
+  [action]
+  (or (= action :resource/register)
+      (= action :work/create)
+      (= action :work/claim)
+      (= action :work/start)
+      (= action :work/checkpoint)
+      (= action :work/complete)))
+
+(defn apply-workflow-event
+  [state event]
+  (let [action (get event :action)]
+    (cond
+      (= action :resource/register)
+      (register-resource state event)
+
+      (= action :work/create)
+      (create-work state event)
+
+      (= action :work/claim)
+      (claim-work state event)
+
+      (= action :work/start)
+      (start-work state event)
+
+      (= action :work/checkpoint)
+      (checkpoint-work state event)
+
+      (= action :work/complete)
+      (complete-work state event)
+
+      :else
+      {:error :workflow/unknown-action})))
+
+(defn apply-event
+  [state event]
+  (let [action (get event :action)]
+    (if (workflow-action? action)
+      (cond
+        (= false (timeline/active? state))
+        {:error :workflow/not-active}
+
+        (= false
+           (timeline/participant?
+            state
+            (get event :signer)))
+        {:error :workflow/not-participant}
+
+        (= false (event-workspace-valid? state event))
+        {:error :workflow/wrong-workspace}
+
+        :else
+        (apply-workflow-event state event))
+      (timeline/apply-event state event))))
+
+(defn summary
+  [state]
+  {:workspace/id (get state :workspace/id)
+   :workspace/kind (get state :workspace/kind)
+   :workspace/status (get state :workspace/status)
+   :workspace/latest-entry-id
+   (get state :workspace/latest-entry-id)
+   :workspace/work-items (work-items state)
+   :workspace/resources (resources state)
+   :workspace/resource-versions (resource-versions state)
+   :workspace/checkpoints (checkpoints state)})
+
+(defn ready?
+  [state work-id]
+  (let [work (work-item state work-id)]
+    (and
+     (= false (= nil work))
+     (= :open (get work :run/status))
+     (dependencies-complete?
+      state
+      (work-dependency-ids work)))))
