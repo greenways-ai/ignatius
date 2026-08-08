@@ -35,7 +35,10 @@ jobs:
             scripts/ignatius_agent_status_common.py \
             scripts/ignatius_agent_status_sqlite.py \
             scripts/ignatius-agent-workflow-status \
-            scripts/test-ignatius-agent-workflow-status
+            scripts/test-ignatius-agent-workflow-status \
+            scripts/ignatius_agent_github_review_materialize.py \
+            scripts/ignatius-agent-github-review-materialize \
+            scripts/test-ignatius-agent-github-review-materialize
       - name: Test issue creation, lifecycle snapshots and durable replay
         run: python3 scripts/test-ignatius-github-event
       - name: Test exact Git branch resources and force-push ancestry
@@ -50,3 +53,5 @@ jobs:
         run: python3 scripts/test-ignatius-github-review
       - name: Test sanitized Agent Workflow operational status
         run: scripts/test-ignatius-agent-workflow-status
+      - name: Test signer-visible GitHub review materialization
+        run: python3 scripts/test-ignatius-agent-github-review-materialize
