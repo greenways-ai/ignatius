@@ -1,0 +1,248 @@
+(ns ignatius.workflow-query-test
+  (:require [std.lib.test :as test]
+            [ignatius.record :as record]
+            [ignatius.workflow :as workflow]
+            [ignatius.workflow-query :as query]))
+
+(def initial
+  (workflow/init
+   {:workspace/id "greenways/ignatius"
+    :workspace/kind :agent/workflow
+    :workspace/participants
+    {"alice" true
+     "bob" true}}))
+
+(def base-reference
+  (record/logical-reference
+   {:reference/scope-id "greenways/ignatius"
+    :reference/kind :resource/version
+    :reference/id "git/greenways-ai/ignatius/main"
+    :reference/root "commit-A"
+    :reference/metadata {}}))
+
+(def output-reference
+  (record/logical-reference
+   {:reference/scope-id "greenways/ignatius"
+    :reference/kind :resource/version
+    :reference/id "git/greenways-ai/ignatius/agent/a"
+    :reference/root "commit-B"
+    :reference/metadata {}}))
+
+(def with-base
+  (get
+   (workflow/apply-event
+    initial
+    {:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "git/greenways-ai/ignatius/main"
+     :resource/kind :git/commit
+     :resource/provider :git
+     :resource/version "commit-A"
+     :resource/previous-version nil
+     :resource/parent-versions []
+     :signer "alice"
+     :transaction "tx-base"
+     :timestamp 1
+     :previous-head "head-0"})
+   :ok))
+
+(def with-a
+  (get
+   (workflow/apply-event
+    with-base
+    {:action :work/create
+     :workspace/id "greenways/ignatius"
+     :work/id "work/a"
+     :work/kind :code/change
+     :work/title "Implement A"
+     :work/definition-root "definition/a"
+     :work/dependency-ids []
+     :work/input-references [base-reference]
+     :signer "alice"
+     :transaction "tx-create-a"
+     :timestamp 2
+     :previous-head "head-1"})
+   :ok))
+
+(def with-b
+  (get
+   (workflow/apply-event
+    with-a
+    {:action :work/create
+     :workspace/id "greenways/ignatius"
+     :work/id "work/b"
+     :work/kind :code/change
+     :work/title "Implement B"
+     :work/definition-root "definition/b"
+     :work/dependency-ids ["work/a"]
+     :work/input-references [base-reference]
+     :signer "bob"
+     :transaction "tx-create-b"
+     :timestamp 3
+     :previous-head "head-2"})
+   :ok))
+
+(def claimed-a
+  (get
+   (workflow/apply-event
+    with-b
+    {:action :work/claim
+     :workspace/id "greenways/ignatius"
+     :work/id "work/a"
+     :signer "alice"
+     :transaction "tx-claim-a"
+     :timestamp 4
+     :previous-head "head-3"})
+   :ok))
+
+(def running-a
+  (get
+   (workflow/apply-event
+    claimed-a
+    {:action :work/start
+     :workspace/id "greenways/ignatius"
+     :work/id "work/a"
+     :signer "alice"
+     :transaction "tx-start-a"
+     :timestamp 5
+     :previous-head "head-4"})
+   :ok))
+
+(def with-output
+  (get
+   (workflow/apply-event
+    running-a
+    {:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "git/greenways-ai/ignatius/agent/a"
+     :resource/kind :git/commit
+     :resource/provider :git
+     :resource/version "commit-B"
+     :resource/previous-version nil
+     :resource/parent-versions ["commit-A"]
+     :process/id "work/a"
+     :signer "alice"
+     :transaction "tx-output-a"
+     :timestamp 6
+     :previous-head "head-5"})
+   :ok))
+
+(def checkpointed-a
+  (get
+   (workflow/apply-event
+    with-output
+    {:action :work/checkpoint
+     :workspace/id "greenways/ignatius"
+     :work/id "work/a"
+     :checkpoint/id "checkpoint/a/1"
+     :checkpoint/state-root "state/a/1"
+     :checkpoint/resource-references [output-reference]
+     :checkpoint/receipt-root "receipt/checkpoint/a/1"
+     :signer "alice"
+     :transaction "tx-checkpoint-a"
+     :timestamp 7
+     :previous-head "head-6"})
+   :ok))
+
+(def completed-a
+  (get
+   (workflow/apply-event
+    checkpointed-a
+    {:action :work/complete
+     :workspace/id "greenways/ignatius"
+     :work/id "work/a"
+     :work/output-references [output-reference]
+     :work/result-root "result/a"
+     :work/receipt-root "receipt/a"
+     :signer "alice"
+     :transaction "tx-complete-a"
+     :timestamp 8
+     :previous-head "head-7"})
+   :ok))
+
+(def claimed-b
+  (get
+   (workflow/apply-event
+    completed-a
+    {:action :work/claim
+     :workspace/id "greenways/ignatius"
+     :work/id "work/b"
+     :signer "bob"
+     :transaction "tx-claim-b"
+     :timestamp 9
+     :previous-head "head-8"})
+   :ok))
+
+(def work-ids ["work/a" "work/b" "work/missing"])
+(def checkpoint-ids ["checkpoint/a/1"])
+
+(def initial-snapshot
+  (query/scheduler-snapshot with-b work-ids []))
+
+(def completed-snapshot
+  (query/scheduler-snapshot completed-a work-ids checkpoint-ids))
+
+(def results
+  [(test/check "open work without unresolved dependencies is ready"
+               (query/classification with-b "work/a")
+               :ready)
+   (test/check "open work with an incomplete dependency is blocked"
+               [(query/classification with-b "work/b")
+                (query/unresolved-dependency-ids with-b "work/b")]
+               [:blocked ["work/a"]])
+   (test/check "unknown work IDs classify as missing"
+               (query/classification with-b "work/missing")
+               :missing)
+   (test/check "claim and start states have explicit scheduler classes"
+               [(query/classification claimed-a "work/a")
+                (query/classification running-a "work/a")]
+               [:claimed :running])
+   (test/check "completion unlocks downstream work"
+               [(query/classification completed-a "work/a")
+                (query/classification completed-a "work/b")
+                (query/unresolved-dependency-ids
+                 completed-a "work/b")]
+               [:complete :ready []])
+   (test/check "latest checkpoint follows supplied canonical order"
+               [(get
+                 (query/latest-checkpoint
+                  completed-a "work/a" checkpoint-ids)
+                 :checkpoint/id)
+                (get-in
+                 (query/work-summary
+                  completed-a "work/a" checkpoint-ids)
+                 [:work/latest-checkpoint
+                  :checkpoint/state-root])]
+               ["checkpoint/a/1" "state/a/1"])
+   (test/check "scheduler snapshots preserve explicit work ordering"
+               [(get initial-snapshot :work/ready-ids)
+                (get initial-snapshot :work/blocked-ids)
+                (get initial-snapshot :work/complete-ids)]
+               [["work/a"] ["work/b"] []])
+   (test/check "completed snapshots expose compact category indexes"
+               [(get completed-snapshot :work/ready-ids)
+                (get completed-snapshot :work/complete-ids)
+                (get completed-snapshot :workspace/latest-entry-id)]
+               [["work/b"] ["work/a"] "tx-complete-a"])
+   (test/check "assignee queries return exact work IDs"
+               [(query/work-ids-for-assignee
+                 claimed-a work-ids "alice")
+                (query/work-ids-for-assignee
+                 claimed-b work-ids "bob")]
+               [["work/a"] ["work/b"]])
+   (test/check "summaries retain exact definition and resource references"
+               [(get-in
+                 (query/work-summary
+                  completed-a "work/a" checkpoint-ids)
+                 [:work/definition-root])
+                (get-in
+                 (query/work-summary
+                  completed-a "work/a" checkpoint-ids)
+                 [:work/output-references])
+                (get-in
+                 (query/work-summary
+                  completed-a "work/a" checkpoint-ids)
+                 [:work/receipt-root])]
+               ["definition/a" [output-reference] "receipt/a"])])
+
+(test/print-results results)

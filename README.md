@@ -1,98 +1,316 @@
 # Ignatius
 
-Ignatius is the reusable Hara-compatible chain and client platform.
+Ignatius is a **signed workflow, provenance and acceptance ledger for
+collaborative human and AI agents**.
 
-It provides a deterministic, content-addressed state history backed by canonical
-Hara values. PostgreSQL is the durable multi-writer adapter; HAL modules provide
-the portable transaction and client semantics. Ignatius does not require a
-token, public activity feed, or public consensus network.
-
-Ignatius also provides application-neutral process, artifact, signed timeline
-and execution-evidence primitives. Hestia builds agent authority, private rooms,
-document editing, continuity, negotiation, and product experiences on top of
-those primitives. Product-specific protocols and query projections do not live
-in this repository.
-
-## Model
+It works with Git, Tahto and object storage rather than replacing them:
 
 ```text
-HAL client
-  -> canonical HCV1/HCP1 transaction
-  -> signed Ignatius admission
-  -> deterministic execution
-  -> transaction, state and block roots
-  -> signed receipt
-  -> rebuildable application projections
+Git
+  source, text documents, branches, commits, diffs and file-level merges
+
+Tahto
+  semantic objects, versions, sync, backup and recovery
+
+R2 / S3 / local storage
+  model outputs, logs, media, binaries and large checkpoint bundles
+
+Ignatius
+  exact resource pins, work dependencies, signed claims, execution state,
+  checkpoints, reviews, accepted heads, releases and receipts
 ```
 
-Ignatius owns the canonical chain outcome. A consuming application may maintain
-ordinary PostgreSQL tables, indexes and caches, but those projections retain
-canonical roots and remain rebuildable.
+Ignatius does not require a token, public activity feed or public consensus
+network. PostgreSQL is the durable multi-writer adapter; Hara modules define the
+portable canonical values, reducers and client semantics.
 
-Language-level `defprotocol` and `extend-type` forms lower to closed protocol
-intrinsics whose descriptors, dispatchers and implementations become canonical
-state. Hara macros remain a pinned compiler-phase facility: transactions retain
-the original form root and execute only the signed expanded operation root. See
-[`docs/language-protocols.md`](docs/language-protocols.md).
+## Current status
 
-## Runtime demo
+The signed foundation and first workflow slice are implemented:
 
-The recursive runtime can execute a recognisable Hara-shaped program with a
-three-argument function, dynamic lookup and invocation, nested arithmetic,
-lexical bindings, branching, strings, vectors, and maps. The checked-in example
-is [`examples/agent_score.hal`](examples/agent_score.hal), with its execution and
-lowering contract described in [`docs/demo-runtime.md`](docs/demo-runtime.md).
+- canonical process, artifact, checkpoint, review, attestation and evidence
+  records;
+- immutable HCV1 values and labelled content-addressed edges;
+- signed account sequencing, transaction admission, block commitment and
+  receipts;
+- provider-neutral immutable block storage and scoped compare-and-set refs;
+- a Git/external-storage workflow reducer;
+- dependency-aware work, agent claims, starts, checkpoints and completion;
+- personal workspace branches, proposals and reviewer decisions;
+- policy-gated accepted `main` and immutable releases; and
+- a Git adapter that emits exact resource and workflow event payloads.
 
-The program deterministically returns:
+The active delivery track is [Agent Workflow #41](https://github.com/greenways-ai/ignatius/issues/41).
+The current implementation phase is [operational projections and scheduler API
+#43](https://github.com/greenways-ai/ignatius/issues/43). The end-to-end release
+definition is [Agent Workflow v0.1 #48](https://github.com/greenways-ai/ignatius/issues/48).
+
+## Product model
+
+```text
+Agent host / scheduler
+  │
+  ├── checks out exact Git or Tahto inputs
+  ├── invokes models and tools under explicit capabilities
+  └── writes large outputs to Git or object storage
+  │
+  ▼
+Signed Ignatius workflow event
+  │
+  ├── exact input and output references
+  ├── work definition and dependency roots
+  ├── agent identity and account sequence
+  ├── checkpoint and execution receipts
+  └── optimistic expected-head checks
+  │
+  ▼
+Canonical Hara reducer
+  │
+  ├── immutable process, artifact and timeline values
+  ├── transaction and resulting state roots
+  └── signed receipt and linear block
+  │
+  ▼
+Rebuildable projections
+  │
+  ├── ready and blocked work
+  ├── running work by agent
+  ├── latest checkpoints and exact resources
+  └── proposals, reviews, accepted heads and releases
+```
+
+Ignatius owns the signed coordination outcome. Git owns file-level history and
+merging. Tahto owns semantic object storage and sync. Object stores own large
+payload bytes. Projection tables and caches remain disposable and rebuildable.
+
+## Collaborative workflow
+
+[`ignatius.workflow`](hal/src/ignatius/workflow.hal) composes the existing
+canonical record families into a task-oriented reducer.
+
+The lifecycle is:
+
+```text
+:open
+  -> :work/claim
+:claimed
+  -> :work/start
+:running
+  -> :resource/register
+  -> :work/checkpoint
+  -> :work/complete
+:complete
+```
+
+A work item is a canonical `:process/run`. An external Git commit or object-store
+version is a canonical `:artifact/version`. Inputs and outputs use exact
+`:reference/logical` pins. Every accepted transition is also a signed
+`:timeline/entry` with `:ledger/evidence`.
+
+Only the verified assignee can start, checkpoint or complete claimed work.
+Dependencies must be complete before downstream work can be claimed. Completion
+requires every output to exist and identify the completing work item as its
+producer.
+
+### Create work pinned to an exact Git commit
 
 ```clojure
-{:winner "alice"
- :message "selected:alice"
- :scores [82 81]
- :spread 1}
+{:action :work/create
+ :workspace/id "greenways/ignatius"
+
+ :work/id "work/docs"
+ :work/kind :code/change
+ :work/title "Document the agent workflow"
+
+ ;; Intended to pin an exact canonical std.work specification.
+ :work/definition-root process-definition-root
+
+ :work/dependency-ids ["work/runtime"]
+ :work/input-references
+ [{:record/type :reference/logical
+   :record/version 1
+   :record/extensions {}
+   :reference/scope-id "greenways/ignatius"
+   :reference/kind :resource/version
+   :reference/id "git/greenways-ai/ignatius/refs/heads/main"
+   :reference/root base-commit
+   :reference/metadata {}}]}
 ```
 
-## Reducer contracts
-
-The primary application contract model is a pure Hara state machine:
+### Claim and start
 
 ```clojure
-(defn init [parameters]
-  initial-state)
+{:action :work/claim
+ :workspace/id "greenways/ignatius"
+ :work/id "work/docs"}
 
-(defn apply-event [state verified-event]
-  {:ok next-state})
+{:action :work/start
+ :workspace/id "greenways/ignatius"
+ :work/id "work/docs"}
 ```
 
-A publisher compiles and signs an immutable template. Parties open instances
-pinned to that exact root and interact by submitting signed event maps. Ignatius
-derives trusted signer, transaction, time, contract, and previous-head fields,
-runs the reducer, and commits a new state and history root only for `{:ok ...}`.
+The signed claim fixes the assignee. The signed start fixes the exact execution
+boundary and ledger evidence.
+
+### Register an output commit
 
 ```clojure
-(contract/publish module 'contracts/work-order@1)
+{:action :resource/register
+ :workspace/id "greenways/ignatius"
 
-(def work-order
-  (contract/open
-    'contracts/work-order@1
-    {:buyer alice
-     :supplier bob
-     :terms terms-root}))
+ :resource/id
+ "git/greenways-ai/ignatius/refs/heads/agent/docs"
+ :resource/kind :git/commit
+ :resource/provider :git
 
-(contract/submit work-order {:action :accept})
-(contract/view work-order 'summary)
+ :resource/version commit-B
+
+ ;; Exact version currently selected by Ignatius for this resource ID.
+ :resource/previous-version nil
+
+ ;; External derivation ancestry, kept separate from the CAS expectation.
+ :resource/parent-versions [commit-A]
+
+ :resource/locator
+ {:git/repository "greenways-ai/ignatius"
+  :git/ref "refs/heads/agent/docs"
+  :git/tree tree-B}
+
+ :resource/digest-algorithm :git/sha1
+ :resource/digest commit-B
+ :process/id "work/docs"}
 ```
 
-See [`docs/contracts.md`](docs/contracts.md),
-[`hal/src/ignatius/contract.hal`](hal/src/ignatius/contract.hal), and
-[`examples/work_order_contract.hal`](examples/work_order_contract.hal) for the
-compiler, HCV1/HCP1 publication pipeline, signed-event model, and work-order
-example.
+A Git parent is not assumed to be the previously selected Ignatius version.
+Branches, merges, rebases and force updates can make those values differ.
 
-## Canonical build records
+### Checkpoint and complete
 
-[`ignatius.record`](hal/src/ignatius/record.hal) defines a versioned vocabulary
-of ordinary HCV1 values for complete signed builds:
+```clojure
+{:action :work/checkpoint
+ :workspace/id "greenways/ignatius"
+ :work/id "work/docs"
+ :checkpoint/id "checkpoint/docs/1"
+ :checkpoint/state-root working-state-root
+ :checkpoint/resource-references [draft-commit-reference]
+ :checkpoint/receipt-root tool-receipt-root}
+
+{:action :work/complete
+ :workspace/id "greenways/ignatius"
+ :work/id "work/docs"
+ :work/output-references [final-commit-reference]
+ :work/result-root result-root
+ :work/receipt-root execution-receipt-root}
+```
+
+## Scheduler query law
+
+[`ignatius.workflow-query`](hal/src/ignatius/workflow_query.hal) defines the
+portable classification used by operational projections and schedulers.
+Projection builders supply explicitly ordered work and checkpoint IDs, then the
+same Hara functions classify them as:
+
+```text
+:ready
+:blocked
+:claimed
+:running
+:complete
+:missing
+```
+
+```clojure
+(query/scheduler-snapshot
+  workspace-state
+  ["work/runtime" "work/docs" "work/review"]
+  ["checkpoint/runtime/1" "checkpoint/docs/1"])
+```
+
+The returned snapshot contains compact work summaries, unresolved dependency
+IDs, exact input/output references, assignees, evidence and latest checkpoints.
+PostgreSQL projections will materialise these views without becoming canonical
+truth.
+
+## Git host adapter
+
+[`scripts/ignatius-git-event`](scripts/ignatius-git-event) reads a local Git
+checkout and emits an unsigned EDN payload. The ordinary Ignatius client signs
+and submits it.
+
+Register the first selected version of a branch:
+
+```sh
+scripts/ignatius-git-event resource \
+  --workspace greenways/ignatius \
+  --resource-id git/greenways-ai/ignatius/refs/heads/main \
+  --repo . \
+  --initial
+```
+
+Advance an existing resource using the exact selected version read from
+Ignatius:
+
+```sh
+scripts/ignatius-git-event resource \
+  --workspace greenways/ignatius \
+  --resource-id git/greenways-ai/ignatius/refs/heads/main \
+  --repo . \
+  --previous-version f05df74fbebb517b679d122eeb5f6e6635da10c2
+```
+
+Create work from an exact commit:
+
+```sh
+scripts/ignatius-git-event work-create \
+  --workspace greenways/ignatius \
+  --work-id work/docs \
+  --kind code/change \
+  --title "Document the agent workflow" \
+  --definition-root process-definition-root \
+  --input \
+  git/greenways-ai/ignatius/refs/heads/main=f05df74fbebb517b679d122eeb5f6e6635da10c2
+```
+
+Other commands emit claim, start, checkpoint and completion payloads:
+
+```sh
+scripts/ignatius-git-event work-claim ...
+scripts/ignatius-git-event work-start ...
+scripts/ignatius-git-event work-checkpoint ...
+scripts/ignatius-git-event work-complete ...
+```
+
+The adapter rejects dirty working trees by default and removes embedded HTTP
+credentials, query strings and fragments from canonical remote locators.
+
+## Acceptance and release
+
+The existing workspace lifecycle provides:
+
+```text
+personal branch
+  -> immutable proposal
+  -> reviewer-specific signed decisions
+  -> selected policy/main
+  -> policy-gated accepted main
+  -> immutable release
+```
+
+A completed work item does not automatically become accepted. The remaining
+Agent Workflow release train connects exact completed output sets to that
+existing proposal, review, main and release law.
+
+See:
+
+- [`docs/workspace-proposals.md`](docs/workspace-proposals.md)
+- [`docs/workspace-reviews.md`](docs/workspace-reviews.md)
+- [`docs/workspace-main-admission.md`](docs/workspace-main-admission.md)
+- [`docs/workspace-release-admission.md`](docs/workspace-release-admission.md)
+
+## Canonical records
+
+[`ignatius.record`](hal/src/ignatius/record.hal) defines versioned ordinary HCV1
+values for signed builds:
 
 ```text
 workspace/build
@@ -103,7 +321,7 @@ review/decision · attestation/claim
 execution/provenance · ledger/evidence
 ```
 
-Every record has a pinned envelope:
+Every value has a pinned envelope:
 
 ```clojure
 {:record/type :artifact/version
@@ -112,273 +330,139 @@ Every record has a pinned envelope:
  ...}
 ```
 
-Stable IDs and exact immutable roots are different fields:
+Stable IDs and immutable roots remain distinct. Logical edges may use stable IDs
+while exact inputs, outputs, reviews and acceptance decisions pin immutable
+roots.
 
-```clojure
-{:artifact/id "scene/main"
- :artifact/content-root scene-root-B
- :artifact/previous-content-root scene-root-A
- :artifact/producer-run-id "run/lighting-17"
- :artifact/producer-run-root nil}
-```
+See [`docs/canonical-records.md`](docs/canonical-records.md).
 
-A stable ID identifies the conceptual scene, document, DOM tree, codebase or run.
-A root identifies one exact immutable version. Logical relationships that may be
-cyclic use `:reference/logical` values with an optional exact root pin, keeping
-the storage graph acyclic.
+## Storage and ledger
 
-The repository includes an executable schema catalog and one checked-in
-conformance vector for each record family. See
-[`docs/canonical-records.md`](docs/canonical-records.md),
-[`hal/src/ignatius/record_vectors.hal`](hal/src/ignatius/record_vectors.hal), and
-[`hal/test/ignatius/record_test.hal`](hal/test/ignatius/record_test.hal).
+[`ignatius.storage`](hal/src/ignatius/storage.hal) separates immutable blocks,
+scoped mutable refs and backend capability declarations.
 
-## Signed build timelines
-
-[`ignatius.timeline`](hal/src/ignatius/timeline.hal) is a reusable reducer for
-tracking a complete build through canonical process runs, immutable artifact
-versions, reviews and linked timeline entries.
-
-```clojure
-(contract/submit timeline
-  {:action :process/start
-   :process/id "run/lighting-17"
-   :process/definition-root lighting-agent-root
-   :process/input-roots [scene-root-A prompt-root]})
-
-(contract/submit timeline
-  {:action :artifact/publish
-   :artifact/id "scene/main"
-   :artifact/content-root scene-root-B
-   :artifact/previous-content-root scene-root-A
-   :artifact/source-roots [texture-root prompt-root]
-   :process/id "run/lighting-17"})
-```
-
-The contract state is a canonical `:workspace/build`. Accepted transitions emit
-`:process/run`, `:artifact/version`, `:review/decision`, `:timeline/entry` and
-`:ledger/evidence` values. Ignatius injects signer, transaction, timestamp,
-contract, template and previous-head evidence, while stale artifact updates and
-reviews of obsolete roots are rejected.
-
-The current contract keeps one linear authoritative head and uses ordinary HCV1
-maps. Multi-parent workspace commits, scalable indexes, structural merges and
-portable execution remain separate, compatible phases. Existing timeline
-instances remain pinned to their original immutable template and state shape.
-See [`docs/build-timelines.md`](docs/build-timelines.md) and
-[`docs/process-graph-roadmap.md`](docs/process-graph-roadmap.md).
-
-## Portable storage contracts
-
-[`ignatius.storage`](hal/src/ignatius/storage.hal) separates immutable block
-storage, scoped mutable refs and backend capability declarations from any one
-provider.
-
-```clojure
-(def block
-  (storage/hcv1-block
-    sha256 type-tag payload-byte-count payload-hex references))
-
-(def stored
-  (storage/memory-put-block sha256 backend block))
-
-(def advanced
-  (storage/memory-compare-and-set-ref
-    (get stored :ok)
-    (storage/ref-update-request
-      "workspace/orbital-station"
-      "main"
-      expected-commit-root
-      desired-commit-root
-      authorization-root)))
-```
-
-Every block read is re-hashed before it is returned to a decoder. Exact duplicate
-writes are idempotent, while a different envelope under an existing root is a
-conflict. Ref writes name an explicit scope, name, expected root, desired root
-and authorization root.
-
-The pure memory adapter declares `:single-writer` consistency rather than
-pretending to coordinate concurrent hosts. PostgreSQL maps immutable blocks to
-the existing `Cell`, ordered `CellRef` and HCP1 snapshot code. The separate
-`gwdb.ledger.scoped-ref` adapter provides durable `:linearizable` compare-and-set
-for generic workspace, proposal, release and module refs using transaction-scoped
-advisory locks and exact-root checks.
+PostgreSQL maps HCV1 values to `Cell` and ordered `CellRef` rows, implements
+linearizable compare-and-set refs, verifies signed account sequences, executes
+reducers, commits the global linear block and produces transaction receipts.
 
 The generic ref table does not replace account sequences, contract heads or the
-global chain head. Every desired, expected and authorization root must already be
-an immutable Ignatius cell, and a stale update returns the accepted root without
-discarding candidate commits or blocks.
+network head. Candidate blocks and commits remain immutable even when a ref
+update loses a concurrency race.
 
-See [`docs/storage-contracts.md`](docs/storage-contracts.md),
-[`hal/test/ignatius/storage_test.hal`](hal/test/ignatius/storage_test.hal), and
-[`db/test/gwdb/ledger/scoped_ref_test.clj`](db/test/gwdb/ledger/scoped_ref_test.clj).
+See [`docs/storage-contracts.md`](docs/storage-contracts.md).
 
-## Signed personal workspace branches
+## Performance boundary
 
-The first signed workspace-ref policy lets a verified account advance only its
-own `user/<address-root>` branch inside an explicit workspace scope. Ignatius
-derives the scope, name and authorization root, validates verified commit
-ancestry, performs exact PostgreSQL compare-and-set, and records each successful
-selection through the ordinary signed transaction, receipt and linear block
-chain. Stale selections do not consume the account sequence or advance the
-network head.
+The checked-in HCV1 flat-map evidence covers 16, 64, 256, 1,024 and 4,096-entry
+maps through PostgreSQL/JDBC.
 
-Proposal publication and reviewer decisions are separate signed policies.
-Shared `main` and release refs are admitted only through explicit selected policy
-and evidence roots. See
-[`docs/workspace-ref-admission.md`](docs/workspace-ref-admission.md).
+Small hot maps are suitable for workflow heads and compact state. Large flat maps
+show linear lookup and whole-map rewrite costs: at 4,096 entries, construction
+and immutable assoc take roughly 17 seconds in the measured environment.
 
-## Signed workspace proposals and reviews
+Therefore:
 
-A verified account may publish an immutable candidate as
-`proposal/<candidate-root>`. The proposal is create-only and cannot be redirected
-to a different commit. Reviewers then sign canonical `:review/decision` records
-for that exact candidate. Each reviewer has an independent
-`review/<candidate-root>/<reviewer-root>` ref updated through exact compare-and-set,
-so stale decisions do not consume account sequence or global block height.
+```text
+small canonical workflow heads
+  HCV1 maps
 
-Proposal visibility and reviewer statements do not by themselves authorize
-`main`. See [`docs/workspace-proposals.md`](docs/workspace-proposals.md) and
-[`docs/workspace-reviews.md`](docs/workspace-reviews.md).
-
-## Policy-gated workspace main
-
-[`ignatius.workspace-acceptance`](hal/src/ignatius/workspace_acceptance.hal)
-defines the first executable shared-head law. A create-only `policy/main`
-attestation pins one authority and an exact ordered reviewer set. An acceptance
-attestation then pins the proposed candidate, policy root, current approval
-roots, and exact previous `main` root.
-
-V1 requires every listed reviewer to have a current `:approve` decision.
-Superseded approvals, rejects, withdrawals, unpublished candidates, non-genesis
-bootstrap attempts and non-fast-forward updates are rejected before ref CAS.
-
-PostgreSQL first publishes the immutable policy at `policy/main` through account
-sequencing, Ed25519 verification and create-only CAS. A separate signed
-acceptance then verifies the selected policy, proposed candidate, exact current
-approval roots and commit ancestry before advancing `main`. The transaction
-receipt returns the immutable acceptance root while the ref selects the candidate
-root; stale main updates consume neither sequence nor block height. See
-[`docs/workspace-main-acceptance.md`](docs/workspace-main-acceptance.md),
-[`docs/workspace-main-policy-admission.md`](docs/workspace-main-policy-admission.md),
-and [`docs/workspace-main-admission.md`](docs/workspace-main-admission.md).
-
-## Immutable workspace releases
-
-[`ignatius.workspace-release`](hal/src/ignatius/workspace_release.hal) publishes
-create-only `release/<version>` selections for the candidate currently accepted
-at `main`. The canonical release attestation pins workspace, version, candidate,
-selected policy and the exact accepted-main evidence root.
-
-PostgreSQL proves that the acceptance has an `ok` receipt bound to a valid block
-on the current linear network chain. A structurally valid acceptance created by
-a stale main attempt is therefore insufficient. Successful release publication
-returns the immutable release claim root while the release ref selects the
-candidate; duplicate versions consume neither sequence nor block height. See
-[`docs/workspace-release-admission.md`](docs/workspace-release-admission.md).
-
-## Convex-style accounts and actors
-
-New account roots use a backward-compatible v2 shape that separates the external
-transaction key from the internal controller. Keyless actor accounts can be
-deployed and called through the same recursive evaluator.
-
-The first actor demo deploys a persistent counter and executes:
-
-```clojure
-[(call counter increment!)
- (call counter increment!)
- (query counter current)]
-;; => [1 2 2]
+large work/resource catalogs
+  rebuildable PostgreSQL projections now
+  HPT1 canonical indexes under issue #14
 ```
 
-`call` retains the callee's state, while `query` restores the caller's
-pre-call state. Callable methods are explicitly marked in account definition
-metadata. The canonical `convex.compat` runtime profile maps Convex-shaped source
-symbols onto native Ignatius primitives and actor operations.
+Evidence: [`benchmarks/hpt1-flat-map/evidence.edn`](benchmarks/hpt1-flat-map/evidence.edn)
 
-Actors are an advanced account-composition facility. Ordinary agreements,
-workflows, approvals, and document lifecycles should generally use reducer
-contracts instead of actor-local mutable-looking state.
+## Hara and `std.work`
 
-See [`docs/convex-actors.md`](docs/convex-actors.md) and
-[`examples/counter_actor.hal`](examples/counter_actor.hal).
+The intended execution relationship is:
 
-## Layout
+```text
+std.work
+  exact replayable work and checkpointed-step specification
 
-- `db/` — PostgreSQL ledger DSL, generated SQL and generated client contract
-- `hal/` — portable codec, runtime, records, storage, transactions and clients
-- `examples/` — Hara programs used to drive executable ledger demos
-- `extensions/` — optional chain cryptography and proof extensions
-- `docs/` — protocol notes, record specifications and integration contracts
-- `versions.edn` — immutable upstream source revisions used by the build
+work/definition-root
+  immutable root of that exact specification
 
-## Set up
+agent host / portable VM
+  executes under explicit capabilities
 
-The build uses pinned Hara and Foundation source checkouts:
+Ignatius
+  records signed inputs, checkpoints, effects, outputs and receipts
+```
+
+Ignatius does not grant ambient authority because code names a function. Git,
+network, model and object-store effects must be performed by a host with an
+explicit capability and bound to execution evidence.
+
+## Build and test
+
+The repository uses pinned Hara and Foundation revisions from `versions.edn`.
 
 ```sh
 make setup
-```
-
-This materializes ignored local checkouts beneath `.local/` and `db/checkouts/`.
-The revisions are recorded in `versions.edn`.
-
-Generate and verify the PostgreSQL artefacts:
-
-```sh
 make db-sql
 make db-contracts
-```
-
-Run the portable HAL checks:
-
-```sh
 make hal-check
 make hal-test
-```
-
-Run the SHA extension test:
-
-```sh
 make extension-sha-test
 ```
 
-The complete reproducibility check is:
+The complete reproducibility gate is:
 
 ```sh
 make verify
 ```
 
-CI also rejects Hestia application namespaces from entering the Ignatius source,
-generated SQL, or generated contracts.
+CI also tests the Git workflow adapter and rejects Hestia application namespaces
+from entering Ignatius source, generated SQL or generated contracts.
+
+## Repository layout
+
+- `hal/` — portable codecs, records, reducers, workflow queries and clients
+- `db/` — PostgreSQL ledger DSL, generated SQL, projections and client contracts
+- `scripts/` — host adapters such as the Git event emitter
+- `examples/` — executable Hara and ledger demos
+- `extensions/` — optional cryptography and proof extensions
+- `docs/` — protocol, workflow and integration specifications
+- `benchmarks/` — committed reproducible evidence
+- `versions.edn` — pinned upstream source revisions
+
+## Delivery roadmap
+
+The focused product train is:
+
+1. [#43 — operational projections and scheduler API](https://github.com/greenways-ai/ignatius/issues/43)
+2. [#44 — GitHub issue, branch, PR and review adapter](https://github.com/greenways-ai/ignatius/issues/44)
+3. [#45 — capability-scoped Git and object-store verification](https://github.com/greenways-ai/ignatius/issues/45)
+4. [#46 — leases, outbox scheduling and checkpoint recovery](https://github.com/greenways-ai/ignatius/issues/46)
+5. [#47 — completed outputs through proposal, main and release](https://github.com/greenways-ai/ignatius/issues/47)
+6. [#48 — ship Agent Workflow v0.1](https://github.com/greenways-ai/ignatius/issues/48)
+
+Parallel architecture tracks remain in the main [roadmap
+#9](https://github.com/greenways-ai/ignatius/issues/9): HPT1 indexes,
+content-addressed Hara definitions, portable execution, structural merge,
+projection retention and explicit capabilities.
 
 ## Application boundary
 
-Ignatius includes generic controller registration, signed transaction admission,
-execution, receipts, integrity verification, snapshots, canonical process and
-artifact records, signed reviews, attestations, build-timeline provenance,
-workspace commit candidates and provider-neutral storage contracts.
-
-It deliberately excludes:
+Ignatius deliberately excludes:
 
 - agent profiles, mandates and product-specific authority policy;
 - private rooms, invitations, membership and negotiation;
-- document OT/CRDT algorithms, editor behavior and delivery UX;
-- scene, DOM and document merge policy until published as generic modules;
-- continuity and recovery ceremonies; and
+- document editor behavior and product UX;
+- storage credentials and expiring provider URLs;
+- ambient network, filesystem, Git or model authority;
 - product services and user interfaces.
 
-Applications such as Hestia own those experiences and policies while committing
-their canonical artifacts, process evidence and accepted lifecycle changes
-through Ignatius.
+Applications such as Hestia and Greenways OS own those experiences while
+committing canonical workflow evidence and accepted lifecycle changes through
+Ignatius.
 
 ## Provenance
 
 The initial source was filtered with history from `greenways-ai/hestia` at
-`62a0cf9c658e9f81c91d3ef16b0f9b3380f0b33c`. See [`MIGRATION.md`](MIGRATION.md)
-for the included and excluded source boundaries.
+`62a0cf9c658e9f81c91d3ef16b0f9b3380f0b33c`. See [`MIGRATION.md`](MIGRATION.md).
 
 ## License
 
