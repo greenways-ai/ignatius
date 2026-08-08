@@ -21,6 +21,7 @@ jobs:
             scripts/ignatius_github_outbox.py \
             scripts/ignatius_github_pull.py \
             scripts/ignatius_github_pull_lifecycle.py \
+            scripts/ignatius_github_review.py \
             scripts/ignatius_github_push.py \
             scripts/ignatius_github_check.py \
             scripts/ignatius-github-event \
@@ -29,6 +30,7 @@ jobs:
             scripts/test-ignatius-github-check \
             scripts/test-ignatius-github-pull \
             scripts/test-ignatius-github-pull-lifecycle \
+            scripts/test-ignatius-github-review \
             scripts/ignatius-agent \
             scripts/ignatius_agent_status_common.py \
             scripts/ignatius_agent_status_sqlite.py \
@@ -44,5 +46,7 @@ jobs:
         run: python3 scripts/test-ignatius-github-pull
       - name: Test exact pull-request lifecycle snapshots
         run: python3 scripts/test-ignatius-github-pull-lifecycle
+      - name: Test exact pull-request review snapshots
+        run: python3 scripts/test-ignatius-github-review
       - name: Test sanitized Agent Workflow operational status
         run: scripts/test-ignatius-agent-workflow-status
