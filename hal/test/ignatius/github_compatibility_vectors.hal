@@ -1,0 +1,164 @@
+(ns ignatius.github-compatibility-vectors)
+
+(def issue-digest
+  "76e0c3ac25a1c6337db4b6ce607c747af6f85c26686df8c5d7c9dd94ede923ba")
+
+(def issue-version
+  (str "sha256:" issue-digest))
+
+(def issue-metadata
+  {:provider/event-id "delivery-opened"
+   :provider/event-kind :github/issues
+   :provider/event-action :opened
+   :github/repository-id 1323525281
+   :github/repository-node-id "R_kgDOTuNkoQ"
+   :github/repository "greenways-ai/ignatius"
+   :github/issue-id 88001
+   :github/issue-node-id "I_kwDOExample"
+   :github/issue-number 44
+   :github/issue-author "planner-agent"
+   :github/issue-updated-at "2026-08-08T06:00:00Z"
+   :github/issue-labels ["agent-workflow" "phase-c"]
+   :github/snapshot-format :json/canonical-v1})
+
+(def issue-open-v1
+  {:compatibility/id :python/issue-open-v1
+   :compatibility/source
+   "scripts/ignatius_github_issue.py::_issue_events"
+   :compatibility/canonical-json-bytes 438
+   :compatibility/snapshot-digest issue-digest
+   :facts
+   {:provider/event-kind :github/issues
+    :provider/event-action :opened
+    :provider/delivery-id "delivery-opened"
+    :workspace/id "greenways/ignatius"
+    :snapshot
+    {:repository/id 1323525281
+     :repository/node-id "R_kgDOTuNkoQ"
+     :repository/full-name "greenways-ai/ignatius"
+     :issue/id 88001
+     :issue/node-id "I_kwDOExample"
+     :issue/number 44
+     :issue/title "Implement GitHub issue ingestion"
+     :issue/body "Create exact provider snapshots and canonical work."
+     :issue/state "open"
+     :issue/author-login "planner-agent"
+     :issue/created-at "2026-08-08T06:00:00Z"
+     :issue/updated-at "2026-08-08T06:00:00Z"
+     :issue/labels ["agent-workflow" "phase-c"]}
+    :snapshot/digest issue-digest
+    :snapshot/size 438
+    :resource/previous-version nil
+    :work/definition-root "definition/github-issue-work-v1"
+    :work/dependency-ids
+    ["github/greenways-ai/ignatius/issues/43"]}
+   :expected
+   [{:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id "github/greenways-ai/ignatius/issues/44"
+     :resource/kind :github/issue-snapshot
+     :resource/provider :github
+     :resource/version issue-version
+     :resource/previous-version nil
+     :resource/parent-versions []
+     :resource/locator
+     {:github/repository "greenways-ai/ignatius"
+      :github/issue-number 44}
+     :resource/digest-algorithm :sha256
+     :resource/digest issue-digest
+     :resource/size 438
+     :resource/metadata issue-metadata}
+    {:action :work/create
+     :workspace/id "greenways/ignatius"
+     :work/id "github/greenways-ai/ignatius/issues/44"
+     :work/kind :agent/task
+     :work/title "Implement GitHub issue ingestion"
+     :work/definition-root "definition/github-issue-work-v1"
+     :work/dependency-ids
+     ["github/greenways-ai/ignatius/issues/43"]
+     :work/input-references
+     [{:record/type :reference/logical
+       :record/version 1
+       :record/extensions {}
+       :reference/scope-id "greenways/ignatius"
+       :reference/kind :resource/version
+       :reference/id "github/greenways-ai/ignatius/issues/44"
+       :reference/root issue-version
+       :reference/metadata {}}]
+     :work/metadata issue-metadata}]})
+
+(def push-before
+  "1111111111111111111111111111111111111111")
+
+(def push-after
+  "2222222222222222222222222222222222222222")
+
+(def push-tree
+  "3333333333333333333333333333333333333333")
+
+(def push-digest
+  "3f5b0c42fe9f3ef181757d2f987782d69f393dd38b5902a9cd14db0ec94a2895")
+
+(def push-update-v1
+  {:compatibility/id :python/push-update-v1
+   :compatibility/source
+   "scripts/ignatius_github_push.py::push_events"
+   :compatibility/canonical-json-bytes 484
+   :compatibility/snapshot-digest push-digest
+   :facts
+   {:provider/event-kind :github/push
+    :provider/delivery-id "delivery-push"
+    :workspace/id "greenways/ignatius"
+    :snapshot
+    {:repository/id 1323525281
+     :repository/node-id "R_kgDOTuNkoQ"
+     :repository/full-name "greenways-ai/ignatius"
+     :git/ref "refs/heads/agent/github-resource"
+     :git/branch "agent/github-resource"
+     :git/before push-before
+     :git/after push-after
+     :git/created false
+     :git/deleted false
+     :git/forced false
+     :git/commit-sha push-after
+     :git/tree push-tree
+     :git/parents [push-before]}
+    :snapshot/digest push-digest
+    :snapshot/size 484
+    :resource/previous-version push-before
+    :process/id "github/greenways-ai/ignatius/issues/44"}
+   :expected
+   [{:action :resource/register
+     :workspace/id "greenways/ignatius"
+     :resource/id
+     "github/greenways-ai/ignatius/refs/heads/agent/github-resource"
+     :resource/kind :git/commit
+     :resource/provider :github
+     :resource/version push-after
+     :resource/previous-version push-before
+     :resource/parent-versions [push-before]
+     :resource/locator
+     {:github/repository "greenways-ai/ignatius"
+      :git/ref "refs/heads/agent/github-resource"
+      :git/tree push-tree}
+     :resource/digest-algorithm :git/sha1
+     :resource/digest push-after
+     :resource/metadata
+     {:provider/event-id "delivery-push"
+      :provider/event-kind :github/push
+      :provider/event-action :updated
+      :github/repository-id 1323525281
+      :github/repository-node-id "R_kgDOTuNkoQ"
+      :github/repository "greenways-ai/ignatius"
+      :github/before push-before
+      :github/after push-after
+      :github/created false
+      :github/forced false
+      :git/tree push-tree
+      :git/parents [push-before]
+      :github/snapshot-version (str "sha256:" push-digest)}
+     :process/id "github/greenways-ai/ignatius/issues/44"}]})
+
+(def vectors
+  [issue-open-v1
+   push-update-v1])
