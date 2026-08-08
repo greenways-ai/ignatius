@@ -56,12 +56,14 @@
   "Looks up one root through a benchmark-only hex-text JDBC boundary."
   {:added "0.18"}
   [:text i-map-root-hex :text i-key-root-hex]
-  (return
-   (pg/encode
-    (value/map-get
-     (pg/decode i-map-root-hex "hex")
-     (pg/decode i-key-root-hex "hex"))
-    "hex")))
+  (let [(:bytea o-value-root)
+        (value/map-get
+         (pg/decode i-map-root-hex "hex")
+         (pg/decode i-key-root-hex "hex"))]
+    (cond [o-value-root :is-null]
+          (return nil)
+          :else
+          (return (pg/encode o-value-root "hex")))))
 
 (defn.pg ^{:- [:text]}
   benchmark-map-assoc
@@ -78,50 +80,40 @@
      (pg/decode i-value-root-hex "hex"))
     "hex")))
 
-(defn.pg ^{:- [:jsonb]}
-  benchmark-map-shape
-  "Returns the stored payload bytes and derived key/value reference counts."
+(defn.pg ^{:- [:integer]}
+  benchmark-map-payload-bytes
+  "Returns the canonical payload size through a typed scalar boundary."
   {:added "0.18"}
   [:text i-map-root-hex]
   (let [(:bytea v-map-root) (pg/decode i-map-root-hex "hex")
         o-cell (cell/cell-by-hash v-map-root)
         _ (pg/assert [o-cell :is-not-null]
                      [:ledger/missing-benchmark-map])]
-    (return
-     (pg/jsonb-build-object
-      "payload_bytes" (:integer (:->> o-cell "byte_size"))
-      "key_refs" (cell/cell-ref-count v-map-root "key")
-      "value_refs" (cell/cell-ref-count v-map-root "value")))))
+    (return (:integer (:->> o-cell "byte_size")))))
+
+(defn.pg ^{:- [:integer]}
+  benchmark-map-key-ref-count
+  "Returns the number of derived map-key references."
+  {:added "0.18"}
+  [:text i-map-root-hex]
+  (return
+   (cell/cell-ref-count
+    (pg/decode i-map-root-hex "hex")
+    "key")))
+
+(defn.pg ^{:- [:integer]}
+  benchmark-map-value-ref-count
+  "Returns the number of derived map-value references."
+  {:added "0.18"}
+  [:text i-map-root-hex]
+  (return
+   (cell/cell-ref-count
+    (pg/decode i-map-root-hex "hex")
+    "value")))
 
 (def default-entry-counts [16 64 256 1024 4096])
 (def default-warmup-count 2)
 (def default-sample-count 7)
-
-(defn json-object
-  "Normalises JSONB values returned by supported JDBC drivers.
-
-  The ordinary PostgreSQL driver may decode JSONB into a Clojure map, while
-  pgjdbc-ng exposes its textual JSON representation. Benchmark evidence should
-  not depend on that driver-specific choice."
-  [value]
-  (cond
-    (map? value)
-    value
-
-    (string? value)
-    (json/read-str value)
-
-    (nil? value)
-    nil
-
-    :else
-    (json/read-str (str value))))
-
-(defn json-field
-  [value field]
-  (let [object (json-object value)]
-    (or (get object field)
-        (get object (keyword field)))))
 
 (defn environment-value
   [name fallback]
@@ -147,10 +139,12 @@
 
 (defn map-shape
   [root]
-  (let [value (-/benchmark-map-shape root)]
-    {:payload-bytes (long (json-field value "payload_bytes"))
-     :key-refs (long (json-field value "key_refs"))
-     :value-refs (long (json-field value "value_refs"))}))
+  {:payload-bytes
+   (long (-/benchmark-map-payload-bytes root))
+   :key-refs
+   (long (-/benchmark-map-key-ref-count root))
+   :value-refs
+   (long (-/benchmark-map-value-ref-count root))})
 
 (defn timed
   [f]
