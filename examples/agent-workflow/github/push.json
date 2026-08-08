@@ -1,0 +1,29 @@
+{
+  "ref": "refs/heads/agent/github-resource",
+  "before": "1111111111111111111111111111111111111111",
+  "after": "2222222222222222222222222222222222222222",
+  "created": false,
+  "deleted": false,
+  "forced": false,
+  "base_ref": null,
+  "compare": "https://github.com/greenways-ai/ignatius/compare/111...222",
+  "commits": [],
+  "head_commit": {
+    "id": "2222222222222222222222222222222222222222",
+    "message": "Publish exact Git resource"
+  },
+  "repository": {
+    "id": 1323525281,
+    "node_id": "R_kgDOTuNkoQ",
+    "full_name": "greenways-ai/ignatius"
+  },
+  "pusher": {
+    "name": "planner-agent"
+  },
+  "sender": {
+    "login": "planner-agent"
+  },
+  "installation": {
+    "id": 123
+  }
+}
