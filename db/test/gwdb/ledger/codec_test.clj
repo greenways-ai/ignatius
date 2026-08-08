@@ -37,6 +37,17 @@
    [:select (codec/hash-valid (pg/decode "00" "hex"))])
   => '("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" true false))
 
+^{:refer gwdb.ledger.codec/compare :added "0.12"}
+(fact "canonical byte strings have a deterministic total order"
+  (!.pg
+   [:select (codec/compare (pg/decode "00" "hex")
+                           (pg/decode "01" "hex"))]
+   [:select (codec/compare (pg/decode "01" "hex")
+                           (pg/decode "01" "hex"))]
+   [:select (codec/compare (pg/decode "ff" "hex")
+                           (pg/decode "01" "hex"))])
+  => '(-1 0 1))
+
 ^{:refer gwdb.ledger.codec/canonical-encode :added "0.1"}
 (fact "canonical envelopes commit version, tag, payload length, and bytes"
   (!.pg
