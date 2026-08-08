@@ -32,17 +32,14 @@ def parser() -> argparse.ArgumentParser:
 
 def current_review_limits(value: dict[str, Any]) -> None:
     """Expose constraints enforced by the current canonical review protocol."""
-    canonical = value["canonical_review"]
-    canonical.update(
-        {
-            "evidence_roots": [],
-            "provider_snapshot_binding": None,
-            "provider_snapshot_binding_supported": False,
-            "recorded_at": None,
-            "process_run_id": None,
-            "process_run_root": None,
-        }
-    )
+    value["canonical_review_protocol"] = {
+        "evidence_roots": [],
+        "provider_snapshot_binding": None,
+        "provider_snapshot_binding_supported": False,
+        "recorded_at": None,
+        "process_run_id": None,
+        "process_run_root": None,
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
