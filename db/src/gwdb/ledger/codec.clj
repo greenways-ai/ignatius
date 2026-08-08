@@ -30,6 +30,18 @@
   [:bytea input]
   (== (pg/length input) 32))
 
+(defn.pg ^{:- [:integer]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  compare
+  "Compares canonical byte strings using PostgreSQL's deterministic byte order."
+  {:added "0.12"}
+  [:bytea i-left :bytea i-right]
+  (pg/case
+   (> i-left i-right) 1
+   (< i-left i-right) -1
+   :else 0))
+
 (defn.pg ^{:- [:bytea]
            :%% :sql
            :props [:immutable :parallel-safe]}
