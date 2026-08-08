@@ -1,0 +1,132 @@
+(ns ignatius.github-issue-test
+  (:require [std.lib.test :as test]
+            [ignatius.github.issue :as issue]
+            [ignatius.github-workflow :as workflow]))
+
+(def digest
+  "76e0c3ac25a1c6337db4b6ce607c747af6f85c26686df8c5d7c9dd94ede923ba")
+
+(def version
+  (str "sha256:" digest))
+
+(def snapshot
+  {:repository/id 1323525281
+   :repository/node-id "R_kgDOTuNkoQ"
+   :repository/full-name "greenways-ai/ignatius"
+   :issue/id 88001
+   :issue/node-id "I_kwDOExample"
+   :issue/number 44
+   :issue/title "Implement GitHub issue ingestion"
+   :issue/body "Create exact provider snapshots and canonical work."
+   :issue/state "open"
+   :issue/author-login "planner-agent"
+   :issue/created-at "2026-08-08T06:00:00Z"
+   :issue/updated-at "2026-08-08T06:00:00Z"
+   :issue/labels ["agent-workflow" "phase-c"]})
+
+(def opened-facts
+  {:provider/event-kind :github/issues
+   :provider/event-action :opened
+   :provider/delivery-id "delivery-opened"
+   :workspace/id "greenways/ignatius"
+   :snapshot snapshot
+   :snapshot/digest digest
+   :snapshot/size 438
+   :resource/previous-version nil
+   :work/definition-root "definition/github-issue-work-v1"
+   :work/dependency-ids
+   ["github/greenways-ai/ignatius/issues/43"
+    "github/greenways-ai/ignatius/issues/43"]})
+
+(def expected-metadata
+  {:provider/event-id "delivery-opened"
+   :provider/event-kind :github/issues
+   :provider/event-action :opened
+   :github/repository-id 1323525281
+   :github/repository-node-id "R_kgDOTuNkoQ"
+   :github/repository "greenways-ai/ignatius"
+   :github/issue-id 88001
+   :github/issue-node-id "I_kwDOExample"
+   :github/issue-number 44
+   :github/issue-author "planner-agent"
+   :github/issue-updated-at "2026-08-08T06:00:00Z"
+   :github/issue-labels ["agent-workflow" "phase-c"]
+   :github/snapshot-format :json/canonical-v1})
+
+(def expected-resource
+  {:action :resource/register
+   :workspace/id "greenways/ignatius"
+   :resource/id "github/greenways-ai/ignatius/issues/44"
+   :resource/kind :github/issue-snapshot
+   :resource/provider :github
+   :resource/version version
+   :resource/previous-version nil
+   :resource/parent-versions []
+   :resource/locator
+   {:github/repository "greenways-ai/ignatius"
+    :github/issue-number 44}
+   :resource/digest-algorithm :sha256
+   :resource/digest digest
+   :resource/size 438
+   :resource/metadata expected-metadata})
+
+(def expected-work
+  {:action :work/create
+   :workspace/id "greenways/ignatius"
+   :work/id "github/greenways-ai/ignatius/issues/44"
+   :work/kind :agent/task
+   :work/title "Implement GitHub issue ingestion"
+   :work/definition-root "definition/github-issue-work-v1"
+   :work/dependency-ids
+   ["github/greenways-ai/ignatius/issues/43"]
+   :work/input-references
+   [{:record/type :reference/logical
+     :record/version 1
+     :record/extensions {}
+     :reference/scope-id "greenways/ignatius"
+     :reference/kind :resource/version
+     :reference/id "github/greenways-ai/ignatius/issues/44"
+     :reference/root version
+     :reference/metadata {}}]
+   :work/metadata expected-metadata})
+
+(def opened-plan
+  (issue/plan opened-facts))
+
+(def edited-facts
+  (assoc
+   (assoc opened-facts
+          :provider/event-action :edited)
+   :resource/previous-version version))
+
+(def results
+  [(test/check "opened issue emits exact resource plus work"
+               opened-plan
+               [expected-resource expected-work])
+   (test/check "workflow facade delegates issue planning to Hara"
+               (workflow/event-plan opened-facts)
+               opened-plan)
+   (test/check "duplicate dependency facts are removed in Hara"
+               (get (nth opened-plan 1) :work/dependency-ids)
+               ["github/greenways-ai/ignatius/issues/43"])
+   (test/check "edited issue emits one successor resource"
+               (count (issue/plan edited-facts))
+               1)
+   (test/check "edited issue retains the exact CAS predecessor"
+               (get (first (issue/plan edited-facts))
+                    :resource/previous-version)
+               version)
+   (test/check "closed action refuses an open provider snapshot"
+               (issue/plan
+                (assoc edited-facts :provider/event-action :closed))
+               {:error :github/issue-action-state-mismatch})
+   (test/check "opened action refuses an existing predecessor"
+               (issue/plan
+                (assoc opened-facts :resource/previous-version version))
+               {:error :github/invalid-issue-predecessor})
+   (test/check "unsupported provider action fails closed"
+               (issue/plan
+                (assoc opened-facts :provider/event-action :deleted))
+               {:error :github/unsupported-issue-action})])
+
+(test/print-results results)
