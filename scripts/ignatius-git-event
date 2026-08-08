@@ -78,6 +78,8 @@ def sanitize_remote(remote: str) -> str:
         return remote
     parsed = urlsplit(remote)
     host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     if parsed.port is not None:
         host = f"{host}:{parsed.port}"
     return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
@@ -156,13 +158,15 @@ def resource_event(args: argparse.Namespace) -> dict[Any, Any]:
         raise RuntimeError(
             "working tree is dirty; commit or pass --allow-dirty"
         )
+    if args.initial and args.previous_version is not None:
+        raise ValueError(
+            "--initial and --previous-version are mutually exclusive"
+        )
 
-    if args.initial:
-        previous = None
-    elif args.previous_version is not None:
-        previous = args.previous_version
-    else:
-        previous = details["parents"][0] if details["parents"] else None
+    # Git parents describe content ancestry. They are not a safe substitute for
+    # the currently selected Ignatius resource version. Ref advancement must
+    # therefore carry an explicit CAS expectation from workflow state.
+    previous = None if args.initial else args.previous_version
 
     event = event_base("resource/register", args.workspace)
     event.update(
@@ -273,8 +277,18 @@ def parser() -> argparse.ArgumentParser:
     resource.add_argument("--repo", default=".")
     resource.add_argument("--provider", default="git")
     resource.add_argument("--process-id")
-    resource.add_argument("--previous-version")
-    resource.add_argument("--initial", action="store_true")
+    resource.add_argument(
+        "--previous-version",
+        help=(
+            "exact version currently selected for this resource ID; "
+            "omit only when creating the resource"
+        ),
+    )
+    resource.add_argument(
+        "--initial",
+        action="store_true",
+        help="assert that this resource ID has no selected version yet",
+    )
     resource.add_argument("--allow-dirty", action="store_true")
     resource.set_defaults(build=resource_event)
 
