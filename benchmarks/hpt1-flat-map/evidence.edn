@@ -1,0 +1,1123 @@
+{:evidence/version 1,
+ :generated-at "2026-08-08T01:17:04.551987400Z",
+ :root-transport :lowercase-hex-text,
+ :toolchain
+ {:ignatius-commit "47e64139840644d92487e311065fb845d72a2b33",
+  :hara-commit "99a0b106158dec0902ebe08349c8f8b113d97ea9",
+  :foundation-commit "baa75aabd6a879753d7d5cb07271b1448271e7cb",
+  :postgres-image "gw-ledger-postgres:15-pgsodium"},
+ :evidence/kind :hcv1-flat-map-jdbc-baseline,
+ :entry-counts [16 64 256 1024 4096],
+ :sample-count 7,
+ :timing/clock :system-nanotime,
+ :warmup-count 2,
+ :environment
+ {:java-version "17.0.19",
+  :os-name "Linux",
+  :os-version "6.17.0-1020-azure",
+  :available-processors 4},
+ :write-accounting :canonical-structural-model,
+ :timing/scope :jdbc-round-trip,
+ :results
+ [{:status :ok,
+   :entry-count 16,
+   :map-root
+   "e66a230226e0f720c4f0c8c404e0f01deecfea657ab61572be9322693aaab901",
+   :construction
+   {:elapsed-ns 15863512,
+    :write-model :canonical-map-cell-and-derived-refs,
+    :new-map-cells 1,
+    :derived-ref-writes 32,
+    :payload-bytes 2053,
+    :key-refs 16,
+    :value-refs 16},
+   :get
+   {:first
+    {:sample-count 7,
+     :samples-ns
+     [1345964 1798021 1817467 1634676 1319414 1212595 1217020],
+     :median-ns 1345964,
+     :p95-ns 1817467},
+    :middle
+    {:sample-count 7,
+     :samples-ns
+     [2033955 1790307 2312906 1833247 1779063 1582737 1706349],
+     :median-ns 1790307,
+     :p95-ns 2312906},
+    :last
+    {:sample-count 7,
+     :samples-ns
+     [1858374 1809844 1900132 1810805 2080060 1808992 1794304],
+     :median-ns 1810805,
+     :p95-ns 2080060},
+    :missing-before
+    {:sample-count 7,
+     :samples-ns
+     [1277225 1300579 1412559 2083877 1665442 1741495 1519549],
+     :median-ns 1519549,
+     :p95-ns 2083877},
+    :missing-after
+    {:sample-count 7,
+     :samples-ns
+     [2548699 3094342 2793658 2554239 2469329 2363180 3363335],
+     :median-ns 2554239,
+     :p95-ns 3363335}},
+   :assoc-existing
+   {:first
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 32,
+     :samples-ns
+     [10351017 11450021 8402273 7165146 8801059 7086496 7460347],
+     :median-ns 8402273,
+     :p95-ns 11450021,
+     :observations
+     [{:elapsed-ns 10351017,
+       :result-root
+       "e3ebe653d8397650d9e88aed4b380fbec8120ea6f7b4dd537ff781a0fd08025d"}
+      {:elapsed-ns 11450021,
+       :result-root
+       "d44994933e80b3c1a06ffbc9df0751e6bf4eb5d9e3a2c15094c8ff679a2dbe66"}
+      {:elapsed-ns 8402273,
+       :result-root
+       "c80ba3e864317b986ed8c8a816fc620edfa38c89317d7e227ea46468f2ed661b"}
+      {:elapsed-ns 7165146,
+       :result-root
+       "d27a57b7ba527679e65b4edaac5f3175cbe0cd19d8df6a200d11497a2f689ced"}
+      {:elapsed-ns 8801059,
+       :result-root
+       "990216ff0e94f8fc1718de6c6775ff803a3f0df439b239f23225a2d7dac6e4e4"}
+      {:elapsed-ns 7086496,
+       :result-root
+       "e95087024ba96d7292129166a9eed5e1942bdb78dde3389ca1a96d18089085fd"}
+      {:elapsed-ns 7460347,
+       :result-root
+       "cf3f658755d59f8a7e0de02f3ec0a7c7d070f53b4888b66b9474cd617f49a890"}]},
+    :middle
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 32,
+     :samples-ns
+     [6717456 6332421 6800171 6674343 7115521 7217241 6590556],
+     :median-ns 6717456,
+     :p95-ns 7217241,
+     :observations
+     [{:elapsed-ns 6717456,
+       :result-root
+       "7c2734ba873375550fb348522b889ff91e1f6689a79ceaf44da9594a76533fe2"}
+      {:elapsed-ns 6332421,
+       :result-root
+       "db698cc1f9323665933af8a8eb63b0d17dc3d58f85dff6301df9a23335da1d27"}
+      {:elapsed-ns 6800171,
+       :result-root
+       "2b6608a5526c69b6bd02b990c3dd71083bdfbf1440b0b00aa8a3ff474698845b"}
+      {:elapsed-ns 6674343,
+       :result-root
+       "b19a0cf482584e996a5e9b0cff224c786af870c32206757615d4fbeef9577ac6"}
+      {:elapsed-ns 7115521,
+       :result-root
+       "50a3883eb7db2ae52f23ada7980929c0f9b998f6c4aa897f9e2826f839e4b07e"}
+      {:elapsed-ns 7217241,
+       :result-root
+       "b6a0641a8e533f2e0391b8bfb0d4934838066f2e146e6235b17ec03bcad02a3a"}
+      {:elapsed-ns 6590556,
+       :result-root
+       "a5be8c939c84270d860273ed0d68bd68735563a1e1566ff44710a68e3a58cb9d"}]},
+    :last
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 32,
+     :samples-ns
+     [6746449 6413775 6484291 10835311 7790827 7154104 7150176],
+     :median-ns 7150176,
+     :p95-ns 10835311,
+     :observations
+     [{:elapsed-ns 6746449,
+       :result-root
+       "59ecf7fb1c6cac3d9eaf915e122be63b9a76c249476c4ecf742e772d858eab25"}
+      {:elapsed-ns 6413775,
+       :result-root
+       "fca3090e23acdbb683915320826f114d94c96d2c8c811eda559c491c20164bb1"}
+      {:elapsed-ns 6484291,
+       :result-root
+       "409fb56becbaccd5c2e6d6bc3832b86e96702246de2b0015586cc87a30606f9f"}
+      {:elapsed-ns 10835311,
+       :result-root
+       "5efa251024b1e9da7c70117f239635b8c18e98f0c5854b0f9afc4f0e2de82010"}
+      {:elapsed-ns 7790827,
+       :result-root
+       "516598aa9ed6780b18b3301229ddbe11a29b5160b4434f5e273b3e03aee10dae"}
+      {:elapsed-ns 7154104,
+       :result-root
+       "b3088cf6a3053e6ce47b51b29ac8a822c60b16d2f447f04202a0b9c39a1b8bb5"}
+      {:elapsed-ns 7150176,
+       :result-root
+       "4012538bc234454b804c1600f58f5fb4c73f187af54d64355918a00fe354e7b2"}]}},
+   :assoc-new
+   {:append
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 34,
+     :samples-ns
+     [6157966 6404848 8188068 6965329 14260119 13910430 10613904],
+     :median-ns 8188068,
+     :p95-ns 14260119,
+     :observations
+     [{:elapsed-ns 6157966,
+       :result-root
+       "925b73af92e943110c061914eea13b7d5e06481a1796ed839db5461d426da921"}
+      {:elapsed-ns 6404848,
+       :result-root
+       "7c9b78189ce7467f79172086cba8a066fe679465afc27864b5f9e5205548eef6"}
+      {:elapsed-ns 8188068,
+       :result-root
+       "3cc2c8641ea339f4e9dc6155458416e98f885847a37a46d230eff8fc20213141"}
+      {:elapsed-ns 6965329,
+       :result-root
+       "2fd38a4d1cc359eceb329f89346d981cb84e695529a8cc9f91251fd1b9b39a18"}
+      {:elapsed-ns 14260119,
+       :result-root
+       "9ffa8ab7beb22ee040fa5921df33e3d13ed7f1241062ef69e00d80b9085405c6"}
+      {:elapsed-ns 13910430,
+       :result-root
+       "f00f126e7a871621fff1498ccca744dc7fe3aa83fd7828ab13d6744e9a27e5ee"}
+      {:elapsed-ns 10613904,
+       :result-root
+       "85122fe15fd31aef06c1256acb2de7fff24cd6111cae689b688349b948288c88"}]},
+    :interior
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 34,
+     :samples-ns
+     [6075941 6141765 6716964 6692978 7311919 6571150 6257131],
+     :median-ns 6571150,
+     :p95-ns 7311919,
+     :observations
+     [{:elapsed-ns 6075941,
+       :result-root
+       "6062eadf281953a4ee7f700e388eaa2071d67c570ec6b3202149f153f9bf0ec3"}
+      {:elapsed-ns 6141765,
+       :result-root
+       "87c9be2ae59f6ea77b54dce0acc41c9337aff587f26df4c478d597a794b80ba9"}
+      {:elapsed-ns 6716964,
+       :result-root
+       "384a2ed528121ce1fa0add946b4b31f05e740e7891d4cd48b1682d787c0c0a3d"}
+      {:elapsed-ns 6692978,
+       :result-root
+       "4dd0292fe0ed4b01b6a449011dbe7eafb06c61fbe4892044e11c39744cb757c1"}
+      {:elapsed-ns 7311919,
+       :result-root
+       "eac9f737508b14bf5cea7c42dfeb13fdb861ebf12eae16af8c87733b9555dd52"}
+      {:elapsed-ns 6571150,
+       :result-root
+       "620a6c85c15c36ce3279eae3b0972b0f43ad520ee723004d5636b57d976ea78e"}
+      {:elapsed-ns 6257131,
+       :result-root
+       "f00bf43fd672d036d6fa4c7de9de93cf385a00f03129e9a8d720a2f0f3038d78"}]}}}
+  {:status :ok,
+   :entry-count 64,
+   :map-root
+   "6fee8a1b7f334381e84444c6b25aa63697f636ecdcf392375a2b6cc9dcff3f4e",
+   :construction
+   {:elapsed-ns 26420449,
+    :write-model :canonical-map-cell-and-derived-refs,
+    :new-map-cells 1,
+    :derived-ref-writes 128,
+    :payload-bytes 8197,
+    :key-refs 64,
+    :value-refs 64},
+   :get
+   {:first
+    {:sample-count 7,
+     :samples-ns
+     [1514560 1451595 1225919 1198487 1277131 1502250 1418529],
+     :median-ns 1418529,
+     :p95-ns 1514560},
+    :middle
+    {:sample-count 7,
+     :samples-ns
+     [2267711 2266278 2634880 2527799 2419346 4565400 4581790],
+     :median-ns 2527799,
+     :p95-ns 4581790},
+    :last
+    {:sample-count 7,
+     :samples-ns
+     [6619480 6188282 5586494 5840059 6280414 6370624 6413074],
+     :median-ns 6280414,
+     :p95-ns 6619480},
+    :missing-before
+    {:sample-count 7,
+     :samples-ns
+     [1929738 1563432 1424585 1162450 1105433 1054306 1054467],
+     :median-ns 1162450,
+     :p95-ns 1929738},
+    :missing-after
+    {:sample-count 7,
+     :samples-ns
+     [3251286 7073992 6373855 6767438 6500388 7135698 6542877],
+     :median-ns 6542877,
+     :p95-ns 7135698}},
+   :assoc-existing
+   {:first
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 128,
+     :samples-ns
+     [19990654 20472943 19939566 20001510 19933698 19928909 19779875],
+     :median-ns 19939566,
+     :p95-ns 20472943,
+     :observations
+     [{:elapsed-ns 19990654,
+       :result-root
+       "7a3a20679a3c46a026403ac8879975d4be6d315455cb8d08ec0d8849be43ccc6"}
+      {:elapsed-ns 20472943,
+       :result-root
+       "e3b59fc22620e19872dabe5b92d738ec8a1139847d49163caad1d956fba2c665"}
+      {:elapsed-ns 19939566,
+       :result-root
+       "5b411866f964a8f2c48169e14498ffaf6e5df0bcc03d4cfe1fd604c57ec727b3"}
+      {:elapsed-ns 20001510,
+       :result-root
+       "10eba0cf3af4d18b99daccd2e0c4f3d679421bd82a8ca5044488b4ca09f855c8"}
+      {:elapsed-ns 19933698,
+       :result-root
+       "1889a427787ded4bbc3bb9fb51c4e3ab8c8c0346e3d510725e535fa2e30f6c05"}
+      {:elapsed-ns 19928909,
+       :result-root
+       "fa1d290bab2f00bd4e538fdd136bb6ce3de7848e6d9bb3333862a36247df5332"}
+      {:elapsed-ns 19779875,
+       :result-root
+       "07e502fb869b0b9187a76f2442921fc26b718015b713134d5cc0bd4a2b75873a"}]},
+    :middle
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 128,
+     :samples-ns
+     [20257741 20287206 21211960 20584894 19943261 19852921 20592668],
+     :median-ns 20287206,
+     :p95-ns 21211960,
+     :observations
+     [{:elapsed-ns 20257741,
+       :result-root
+       "951032db608e17bba543ad21cbf23150e5d0762e8e1fd7a99b2850fa1d655963"}
+      {:elapsed-ns 20287206,
+       :result-root
+       "c2b41d3c376ffb2eddd5a3626528f8910f91f4346a16d5af42056e83063ebe79"}
+      {:elapsed-ns 21211960,
+       :result-root
+       "89846f3b44cf4fd676f11d20589337e1fc127d2e56d295c7df377998d540440a"}
+      {:elapsed-ns 20584894,
+       :result-root
+       "c36e93a6947d47afa4e70e695fecb75d9f738e9061565abe0c2217232e32d8a7"}
+      {:elapsed-ns 19943261,
+       :result-root
+       "b3065ecfdb33d87a5ff84e0e36784c50e1185461962ba9602f5636dba8406c3f"}
+      {:elapsed-ns 19852921,
+       :result-root
+       "e2d26df80b9f4c9a180614aa0a7f1ed5ff2e9050ac09fe1bd47611ec8f9bb99a"}
+      {:elapsed-ns 20592668,
+       :result-root
+       "622846c4971cd282e0042d72c1cd1588182c5078d21f9304e0bd7876698d2f56"}]},
+    :last
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 128,
+     :samples-ns
+     [21138352 20673695 20953615 21288086 20889925 21788090 21639842],
+     :median-ns 21138352,
+     :p95-ns 21788090,
+     :observations
+     [{:elapsed-ns 21138352,
+       :result-root
+       "8117c3e6f3731afddf2ec73eeb38e523be65cbe054e38e81d020dadc6def3423"}
+      {:elapsed-ns 20673695,
+       :result-root
+       "c3c9dd44a0c4cc6e4eab562e84ff01e04451264b367c98013a262c6dca5be947"}
+      {:elapsed-ns 20953615,
+       :result-root
+       "8dd25a3d8f35fee25080dea06ecedf7267478ac91adb20ef2150ea65e1a457c7"}
+      {:elapsed-ns 21288086,
+       :result-root
+       "48953ad4be2e6eb914cc9fffa93fa53b06d95b64e9dcb0defd6136e6489f3242"}
+      {:elapsed-ns 20889925,
+       :result-root
+       "f59579228028481a8ad1c069a5c5c254c6bbe4e4751fd3024325394e737ac8c4"}
+      {:elapsed-ns 21788090,
+       :result-root
+       "d44acb6a4bdbc5e79449d9ddd95bfcecc326af57f2917aa4c500bb4c71dff416"}
+      {:elapsed-ns 21639842,
+       :result-root
+       "ded3001de880e4422831602e7d8b2ae0b96d86ec66756570a58af7fed6aa6c4a"}]}},
+   :assoc-new
+   {:append
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 130,
+     :samples-ns
+     [19593105 19771228 20486169 19335812 19716556 19580771 20176585],
+     :median-ns 19716556,
+     :p95-ns 20486169,
+     :observations
+     [{:elapsed-ns 19593105,
+       :result-root
+       "ade3d95de8050783566d54ba7bc5354c262f3188c838328f56a8260ad0ec8230"}
+      {:elapsed-ns 19771228,
+       :result-root
+       "b531fbb15a85e676444cd86a860866ac8e329c38a8dae36de0df761c53c97673"}
+      {:elapsed-ns 20486169,
+       :result-root
+       "24f595991214d648b1b7c35bbf6f53bbdd8259743c9e30c313a4fc3018172bd9"}
+      {:elapsed-ns 19335812,
+       :result-root
+       "15acbdf7264c4aaded09650059742b85124ef0f85ccc0289cfb8bed81bd04807"}
+      {:elapsed-ns 19716556,
+       :result-root
+       "4ec2323ae6589f93983114e0710f2db01223ac3e5128c87417d7fb1542cad61f"}
+      {:elapsed-ns 19580771,
+       :result-root
+       "c6e33a9613bcc10bc131695bc08c9fd3365e53f06f344d7418698dce357a953f"}
+      {:elapsed-ns 20176585,
+       :result-root
+       "545bfb6eb6d1e643f62b15cfcdf2766e831ea594c6a254884033a24f68bf4aa8"}]},
+    :interior
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 130,
+     :samples-ns
+     [19915138 20834983 20606124 20415005 20226612 20229418 20258222],
+     :median-ns 20258222,
+     :p95-ns 20834983,
+     :observations
+     [{:elapsed-ns 19915138,
+       :result-root
+       "1e42cbcf4b01058492b9c2825132b52c7aecdf76dae62b95a5e9683ac8ee18f9"}
+      {:elapsed-ns 20834983,
+       :result-root
+       "9a18f868e3087561400474233e5738979b3c31187731575308a025d38421df3b"}
+      {:elapsed-ns 20606124,
+       :result-root
+       "7b400a3915819d32b48d803175b66b7dcd0c8d67c700d9bb739389dda3566703"}
+      {:elapsed-ns 20415005,
+       :result-root
+       "e4c8ae18770d482651ffb6fc93e59044510e5a6a1e5b10637c7dead9f5155778"}
+      {:elapsed-ns 20226612,
+       :result-root
+       "7b5d53d18645f525b35a5bdc8bb21e8e70955c636eac75669066c0fe7f908683"}
+      {:elapsed-ns 20229418,
+       :result-root
+       "5a7bfb19afa09e2d5e55c6212d20df1d685bb0921aa5916e32b0b346c617169f"}
+      {:elapsed-ns 20258222,
+       :result-root
+       "2e58b98ef8529118dd67be2704336d735a06d3e0766f6150497913618a02778b"}]}}}
+  {:status :ok,
+   :entry-count 256,
+   :map-root
+   "8d1323839c6fef204516d8f1a85729c4271f85c4da015bca2269da40c838307d",
+   :construction
+   {:elapsed-ns 126136414,
+    :write-model :canonical-map-cell-and-derived-refs,
+    :new-map-cells 1,
+    :derived-ref-writes 512,
+    :payload-bytes 32774,
+    :key-refs 256,
+    :value-refs 256},
+   :get
+   {:first
+    {:sample-count 7,
+     :samples-ns
+     [1171447 1025583 1038993 1092843 1015584 1012578 974266],
+     :median-ns 1025583,
+     :p95-ns 1171447},
+    :middle
+    {:sample-count 7,
+     :samples-ns
+     [6162182 6115274 6277078 6085980 10193410 8786332 7441746],
+     :median-ns 6277078,
+     :p95-ns 10193410},
+    :last
+    {:sample-count 7,
+     :samples-ns
+     [10808112 10733582 10713735 10873806 10763819 10596926 10642912],
+     :median-ns 10733582,
+     :p95-ns 10873806},
+    :missing-before
+    {:sample-count 7,
+     :samples-ns
+     [943078 921197 1040962 1146870 1146620 1074725 1160887],
+     :median-ns 1074725,
+     :p95-ns 1160887},
+    :missing-after
+    {:sample-count 7,
+     :samples-ns
+     [10127717 10349923 10618346 10569865 10434542 10528548 10793785],
+     :median-ns 10528548,
+     :p95-ns 10793785}},
+   :assoc-existing
+   {:first
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 512,
+     :samples-ns
+     [117657346
+      115370117
+      115849926
+      115922983
+      116501577
+      116873815
+      116025776],
+     :median-ns 116025776,
+     :p95-ns 117657346,
+     :observations
+     [{:elapsed-ns 117657346,
+       :result-root
+       "5e7c511bfe7cc80417d05ad8516f0daecaf98aa7f5a0e4f0c741a0356d130770"}
+      {:elapsed-ns 115370117,
+       :result-root
+       "3b7d297f66e80c136084d703c9b9c2b30ebda64ea775ac3a811f75fe45d43853"}
+      {:elapsed-ns 115849926,
+       :result-root
+       "61d3983dff0c0853c94c8d7461e57922ab872dd7cc643cdd32cc3fdb78c0a3a6"}
+      {:elapsed-ns 115922983,
+       :result-root
+       "99f6fcf388b81d90f2d9ee79ee9477bf40cc2ee324e2b581cd2b5efab9395980"}
+      {:elapsed-ns 116501577,
+       :result-root
+       "6078481507e155b0463fa38d6b6f76f2e00ed52cfadc458ba1a6cb4805d2fef9"}
+      {:elapsed-ns 116873815,
+       :result-root
+       "89e9ed3d15e7776c8c6b0c4121ec9c28dee61460597898d687e06284a38cce18"}
+      {:elapsed-ns 116025776,
+       :result-root
+       "33c1b12c15f53ee8cbc55c452835c259503a43ed840032de4de37e17fd6ce32d"}]},
+    :middle
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 512,
+     :samples-ns
+     [120732676
+      119413477
+      119787658
+      119784903
+      119665519
+      136734403
+      128336538],
+     :median-ns 119787658,
+     :p95-ns 136734403,
+     :observations
+     [{:elapsed-ns 120732676,
+       :result-root
+       "ce41cea9e6bf76bf0a54aeebb1867f7c331b0e8dc96720bb2795b165cfeb0da4"}
+      {:elapsed-ns 119413477,
+       :result-root
+       "2d8daa71faa4b2edc6cc6cc079073b7fa5cd4993114d7af796c0431f1704321d"}
+      {:elapsed-ns 119787658,
+       :result-root
+       "432a1f2a9135d35346fbba81c6920ef1c8d6d8bc9b506c44236657267f061b76"}
+      {:elapsed-ns 119784903,
+       :result-root
+       "0091e5426cd61f9e12b0eda3168979eeea6263842a0586842bc779e653b34d71"}
+      {:elapsed-ns 119665519,
+       :result-root
+       "cfd6298ac7e5266e386bfc2586f0d0fefb85fec235c2bc3757bcf6858fcb825a"}
+      {:elapsed-ns 136734403,
+       :result-root
+       "818c6f4c5e47ea2e72c5c6221ebd08f40e669d2f002be5f5b0eaf75e6d511777"}
+      {:elapsed-ns 128336538,
+       :result-root
+       "04aeb92382dcacc8fbbacdf3a7a911eef35da4aed105555464a1f96b01bcc073"}]},
+    :last
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 512,
+     :samples-ns
+     [131641731
+      131898903
+      133396230
+      132638179
+      124538144
+      123665318
+      123140343],
+     :median-ns 131641731,
+     :p95-ns 133396230,
+     :observations
+     [{:elapsed-ns 131641731,
+       :result-root
+       "63462563a4ac156e5e36bc12cf45648654df0ac4cbb1a1e2f8762d2dede89fc0"}
+      {:elapsed-ns 131898903,
+       :result-root
+       "e7614c6edabb9a98e4f8b966bf83ff546964691cde3b9fe37ee8d2b18f49d778"}
+      {:elapsed-ns 133396230,
+       :result-root
+       "80e1c59b85e420228020004cbcb22eb23cfb37826f314513636ed80f4223a84e"}
+      {:elapsed-ns 132638179,
+       :result-root
+       "88ca88eb8d1b41fc577e3c674415f2d116a5a2f5f312ec70d53f041144054110"}
+      {:elapsed-ns 124538144,
+       :result-root
+       "340e6ab4e5446d37348ecc5d2d1e9a7c811118eb5b27520b2b158a313b9a2a34"}
+      {:elapsed-ns 123665318,
+       :result-root
+       "7a465779585e165b560c2947d61d8710a400956fb4194eb5f604c993510f12fd"}
+      {:elapsed-ns 123140343,
+       :result-root
+       "62b71b65090bd1f1cef951eef0014b5145b7795fb0db4cfc123750c96bfbbfd2"}]}},
+   :assoc-new
+   {:append
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 514,
+     :samples-ns
+     [116410336
+      115808678
+      119505139
+      117280297
+      116569866
+      116128227
+      116359602],
+     :median-ns 116410336,
+     :p95-ns 119505139,
+     :observations
+     [{:elapsed-ns 116410336,
+       :result-root
+       "3924ca81176c30da4acb8ab70423e1f26f114286c354d6bea3dc554d009f6f40"}
+      {:elapsed-ns 115808678,
+       :result-root
+       "a94a7171ad9439aa225988840e89363501d58fb394faf7bc4003dd7637beac69"}
+      {:elapsed-ns 119505139,
+       :result-root
+       "0a10588fc9a5f2d55f984e47d2d94ac693bf9cfc1ae4b7aa2c6f8acdba71dfa4"}
+      {:elapsed-ns 117280297,
+       :result-root
+       "31513d8146cf4c595c48e3f98023a98fd86e6a9b1cd223ff4b7555b149053ad0"}
+      {:elapsed-ns 116569866,
+       :result-root
+       "09e8f75f85b8d9558b8d3ce4bae4369f583a38660c8a63bd11259d089b9982bb"}
+      {:elapsed-ns 116128227,
+       :result-root
+       "23992dd6c970584bdc6225726b1f3c985d9e60b9189781a348a711d404e033bb"}
+      {:elapsed-ns 116359602,
+       :result-root
+       "bfe74ab97446e59de14b60b11af8088c9609326c51426cf5aa2bb3a977253c68"}]},
+    :interior
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 514,
+     :samples-ns
+     [125085410
+      125648063
+      108688250
+      109176796
+      107970575
+      108567252
+      107201623],
+     :median-ns 108688250,
+     :p95-ns 125648063,
+     :observations
+     [{:elapsed-ns 125085410,
+       :result-root
+       "30ef137c54039b9f0ddebe93a9c8708895d014c5cf4f39fb776401bc2d3adf99"}
+      {:elapsed-ns 125648063,
+       :result-root
+       "b64d405b50d066b5e3784816047efc6bef3144069d7d431696c91eb1290c0505"}
+      {:elapsed-ns 108688250,
+       :result-root
+       "129a08d6fd6bf4872501640bd17482856fe373eaabb1ab99df4c31c48a769224"}
+      {:elapsed-ns 109176796,
+       :result-root
+       "ad5490a9108aa32a940a04fb6c03a7207c6b7f9dc588b2bc9b65bf8fe993cac0"}
+      {:elapsed-ns 107970575,
+       :result-root
+       "e07c8793e555438a65ca19e7dc7d57cda1a015d416c4d0ee125973790411b89c"}
+      {:elapsed-ns 108567252,
+       :result-root
+       "1c152b02b7aa6bb8d46a0ebc64e516a1e07ed4877da7b8422098e8fe2b3b783b"}
+      {:elapsed-ns 107201623,
+       :result-root
+       "7207b43e5d8348913581be393c995fb62b97cd15d31a5084d24982451d0e43af"}]}}}
+  {:status :ok,
+   :entry-count 1024,
+   :map-root
+   "e10f0e1a2d25693ed113591e0388168d1296bf93ca1f24fbb444ef6c42688109",
+   :construction
+   {:elapsed-ns 1255064776,
+    :write-model :canonical-map-cell-and-derived-refs,
+    :new-map-cells 1,
+    :derived-ref-writes 2048,
+    :payload-bytes 131079,
+    :key-refs 1024,
+    :value-refs 1024},
+   :get
+   {:first
+    {:sample-count 7,
+     :samples-ns
+     [1582277 1575454 1540348 1498690 1500052 1490645 1496686],
+     :median-ns 1500052,
+     :p95-ns 1582277},
+    :middle
+    {:sample-count 7,
+     :samples-ns
+     [20992096 21054684 20612004 20355201 21175103 21392426 21088657],
+     :median-ns 21054684,
+     :p95-ns 21392426},
+    :last
+    {:sample-count 7,
+     :samples-ns
+     [39530141 39025054 38965923 40818591 42714641 44583475 39508441],
+     :median-ns 39530141,
+     :p95-ns 44583475},
+    :missing-before
+    {:sample-count 7,
+     :samples-ns
+     [1461520 1484392 1442044 1576566 1706579 1629134 1540639],
+     :median-ns 1540639,
+     :p95-ns 1706579},
+    :missing-after
+    {:sample-count 7,
+     :samples-ns
+     [39208427 39254204 39305401 39809303 39483684 39244877 39537685],
+     :median-ns 39305401,
+     :p95-ns 39809303}},
+   :assoc-existing
+   {:first
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 2048,
+     :samples-ns
+     [615093884
+      613426568
+      615735947
+      610058293
+      615385048
+      627047876
+      616314109],
+     :median-ns 615385048,
+     :p95-ns 627047876,
+     :observations
+     [{:elapsed-ns 615093884,
+       :result-root
+       "fa57fa74cee45494a7f70710540e1f672fc5f47226218650658d2996ffedd8e4"}
+      {:elapsed-ns 613426568,
+       :result-root
+       "c46d840de089258637344808f8d68e715b3731f181ff3e69fd0fc426b306add1"}
+      {:elapsed-ns 615735947,
+       :result-root
+       "57929d1c3ac1a669af0c624c839291c4aa82cd653d38f00d158219f32456541c"}
+      {:elapsed-ns 610058293,
+       :result-root
+       "ff603805585626414c646ba7f2bcd7dbeb1d8b761db186528775cb1eb1f405b2"}
+      {:elapsed-ns 615385048,
+       :result-root
+       "130883b8ef7543122ec890a92e65a0d3ee6bce0161bc19db939e8cc1344a42e6"}
+      {:elapsed-ns 627047876,
+       :result-root
+       "4aa4f041de087adb6b3025116fb9d6b889ca522ebf88df1e3564d5fd6ed8ec8d"}
+      {:elapsed-ns 616314109,
+       :result-root
+       "3dbd349b6e29830585e07bebcdb0334f8587fe6dec1d9549a10f0b168a89a755"}]},
+    :middle
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 2048,
+     :samples-ns
+     [631728421
+      1290171849
+      1298301918
+      1297851233
+      1293232474
+      631834800
+      630346873],
+     :median-ns 1290171849,
+     :p95-ns 1298301918,
+     :observations
+     [{:elapsed-ns 631728421,
+       :result-root
+       "b26d27c791cd9b9f2a64a0c5a83557ccd881208b0cbfe2a825d27c713e80e208"}
+      {:elapsed-ns 1290171849,
+       :result-root
+       "8e2a70b1637c7c5d6309fe5eb83d52d2378d40a1bd8a2bf8ed69717e59c72764"}
+      {:elapsed-ns 1298301918,
+       :result-root
+       "1f532f6c201e1aabd567bee57601d3a3df189707a496dfbbee5d51f28fbd1086"}
+      {:elapsed-ns 1297851233,
+       :result-root
+       "456b1f3c51b81d200782d57fbe714f740893b9701055e6b5396163d3afc51376"}
+      {:elapsed-ns 1293232474,
+       :result-root
+       "a8f8e35682554a03585002df17bfd2295e3c7460fae508bc110846f033438533"}
+      {:elapsed-ns 631834800,
+       :result-root
+       "85a311183edea41f14f8a8180732acc3fb3b8fa8f5ddfbe107e9f5d9b0b67afb"}
+      {:elapsed-ns 630346873,
+       :result-root
+       "7da65a7ca34b9a6222e5f26f933f524ce80ab755666bbccf92580da82464f05e"}]},
+    :last
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 2048,
+     :samples-ns
+     [653407022
+      649678666
+      647787323
+      651930186
+      648668544
+      650890456
+      648810318],
+     :median-ns 649678666,
+     :p95-ns 653407022,
+     :observations
+     [{:elapsed-ns 653407022,
+       :result-root
+       "cd8b9122d5657acf2224c9e89f24b959cd643719efd93438dad4195b08977918"}
+      {:elapsed-ns 649678666,
+       :result-root
+       "abeca8c9e7f0702bc388b6b6af49902cd64c0f31d471895d63e3ef9a415125db"}
+      {:elapsed-ns 647787323,
+       :result-root
+       "f11de1db191add123ef56d4d84efce0495cdea733d482385b5e7a5a575b0e9da"}
+      {:elapsed-ns 651930186,
+       :result-root
+       "328c4caa70ed5a9b23a4e8917c8f52f2406230318c2b1a71065a2976ea548f4f"}
+      {:elapsed-ns 648668544,
+       :result-root
+       "7be8f98d0bc2f80478429cfd64a44d1c834473e58f06ac316d7a5d3fcda6d23f"}
+      {:elapsed-ns 650890456,
+       :result-root
+       "45867101bd9faa7e28718ce83d2d15e95ee0ef0a47396c2a54f3c947912c91f0"}
+      {:elapsed-ns 648810318,
+       :result-root
+       "624e6354a579235eb5a3b4e29466a389b872fb362f4a0d566682fb3a46d18d19"}]}},
+   :assoc-new
+   {:append
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 2050,
+     :samples-ns
+     [609526069
+      618593219
+      616337964
+      610216105
+      611535376
+      612585895
+      610105338],
+     :median-ns 611535376,
+     :p95-ns 618593219,
+     :observations
+     [{:elapsed-ns 609526069,
+       :result-root
+       "e58364b963d5a7d99818397dfd58b475ea3f81b27d5b13849c5552397a86da1e"}
+      {:elapsed-ns 618593219,
+       :result-root
+       "bd098ffeb8b95bd565d1df3e607d2dda4a702ef6b8242e9a7e83792c1a1bf1b4"}
+      {:elapsed-ns 616337964,
+       :result-root
+       "47e77bf93fcf0e9710ca6ebb59df2d333549ad1ed4916459b3fad5cd74da7137"}
+      {:elapsed-ns 610216105,
+       :result-root
+       "c2299bd4aee675b799ba5a8511c598ac4b8d1812c830ae4eda26fab99971da59"}
+      {:elapsed-ns 611535376,
+       :result-root
+       "4f951bdde8b196a11dc0c53b936c233261a61b4723c38ccf9d4194f521ea0621"}
+      {:elapsed-ns 612585895,
+       :result-root
+       "1d181f606fda842cafd9fb5d8dba80f045570e9624687ec3769079eda7c039d4"}
+      {:elapsed-ns 610105338,
+       :result-root
+       "b8b57dda13b3154434c32b34c2385e76864250c4427f0898708485f56fe901f1"}]},
+    :interior
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 2050,
+     :samples-ns
+     [615288223
+      615783378
+      618784860
+      618368099
+      626791266
+      617129288
+      616520627],
+     :median-ns 617129288,
+     :p95-ns 626791266,
+     :observations
+     [{:elapsed-ns 615288223,
+       :result-root
+       "2285b382c5e4dfa68fa290bb91a7011d34ee821125227efd8df1d768aec968c2"}
+      {:elapsed-ns 615783378,
+       :result-root
+       "8d469040738b2a1f90829c4ed11afc15aba6ed9cba88381eeb86f34cb2b4b19c"}
+      {:elapsed-ns 618784860,
+       :result-root
+       "95e90b08a24be559765a9f3d3b9333ef4c3cf428cdf03a6a0b32203c60fe2c62"}
+      {:elapsed-ns 618368099,
+       :result-root
+       "b06d73ee5f718498df46e0c1e31a1032ea79d848c4a8c8e7a7ba20e6ffbf9f03"}
+      {:elapsed-ns 626791266,
+       :result-root
+       "fecdc203f65658d5a42daa23ff3130d237f1773b8f018eba549f61cec27cd2ad"}
+      {:elapsed-ns 617129288,
+       :result-root
+       "63ab38a53ca487c0b20f610491f6965de3d38caa8ef65d1c5ccf890aab75fbca"}
+      {:elapsed-ns 616520627,
+       :result-root
+       "3120bd88a13af54d5763fd9977fe4ba75976d792305d23bb41dac101ae1839e1"}]}}}
+  {:status :ok,
+   :entry-count 4096,
+   :map-root
+   "479f30b88ff3d2cd5800102c81be273c60bcca63236061d256e9f3b438f9156c",
+   :construction
+   {:elapsed-ns 16718023116,
+    :write-model :canonical-map-cell-and-derived-refs,
+    :new-map-cells 1,
+    :derived-ref-writes 8192,
+    :payload-bytes 524295,
+    :key-refs 4096,
+    :value-refs 4096},
+   :get
+   {:first
+    {:sample-count 7,
+     :samples-ns
+     [3859595 3760079 3678175 3694405 3757394 3760199 3713682],
+     :median-ns 3757394,
+     :p95-ns 3859595},
+    :middle
+    {:sample-count 7,
+     :samples-ns
+     [79014499 79067378 79313870 78739202 78653953 79163189 78665414],
+     :median-ns 79014499,
+     :p95-ns 79313870},
+    :last
+    {:sample-count 7,
+     :samples-ns
+     [153847929
+      152355582
+      153360857
+      153095420
+      153538490
+      152675422
+      153715481],
+     :median-ns 153360857,
+     :p95-ns 153847929},
+    :missing-before
+    {:sample-count 7,
+     :samples-ns
+     [4088143 3957308 3661443 3644552 3646285 3683114 3652336],
+     :median-ns 3661443,
+     :p95-ns 4088143},
+    :missing-after
+    {:sample-count 7,
+     :samples-ns
+     [153421871
+      152352346
+      152709536
+      152420364
+      153185949
+      151836940
+      152474128],
+     :median-ns 152474128,
+     :p95-ns 153421871}},
+   :assoc-existing
+   {:first
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 8192,
+     :samples-ns
+     [17491304368
+      17565511003
+      17544469842
+      17525995820
+      17299306658
+      17342285282
+      17509098681],
+     :median-ns 17509098681,
+     :p95-ns 17565511003,
+     :observations
+     [{:elapsed-ns 17491304368,
+       :result-root
+       "20918fe31e3ce2ee7b0da79a332512d223f159ddafcf55bfa6baac6ce0c7b3ad"}
+      {:elapsed-ns 17565511003,
+       :result-root
+       "5997faf10ee78da3d7ab21562a694d3a6ea3b68db413f3e68f6ed7105677ef13"}
+      {:elapsed-ns 17544469842,
+       :result-root
+       "f6384a432cfbb937e5270e6060cc7d1b23f9d25257d836ca5a8934a08d160589"}
+      {:elapsed-ns 17525995820,
+       :result-root
+       "5488f5f141fc6c6bac15119731eb49248e932057312333acf51839861f055679"}
+      {:elapsed-ns 17299306658,
+       :result-root
+       "f1d33f66f7c68a69f7168863a3653938d71abce0547fc3677f6164ee4046a1f2"}
+      {:elapsed-ns 17342285282,
+       :result-root
+       "14b79b8b8d6fd1ab881f205c5d4fdf33d33165877b0bacaa2064dffc3ad64ab7"}
+      {:elapsed-ns 17509098681,
+       :result-root
+       "8ed7a34307364ead74d7fe94b8fafaaa2bc83aad375f4691be877c1240feec80"}]},
+    :middle
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 8192,
+     :samples-ns
+     [17571473597
+      17571865259
+      17484584350
+      17538938396
+      17581460631
+      17587232505
+      17516071412],
+     :median-ns 17571473597,
+     :p95-ns 17587232505,
+     :observations
+     [{:elapsed-ns 17571473597,
+       :result-root
+       "2c1dbc0d1306f4269cf4c511f71f6a226e09d9e05c1cb3aba63d5da43ea58ba7"}
+      {:elapsed-ns 17571865259,
+       :result-root
+       "847dc9b181a11d48a1e59189b755c184a282ec56529a883eedee570658e0db40"}
+      {:elapsed-ns 17484584350,
+       :result-root
+       "ac253530aaa161318058f55d124c6b3ece16b85c2f83379eca7e4747f39765fd"}
+      {:elapsed-ns 17538938396,
+       :result-root
+       "249dc0b396b502c40ee8feacef814fc126e1545c8f7d5139710e6770229e7257"}
+      {:elapsed-ns 17581460631,
+       :result-root
+       "3d723d08a1af1aa51afa5aa2506d942d3b89d53a17033deb72a09058f872a13e"}
+      {:elapsed-ns 17587232505,
+       :result-root
+       "f29215d8224e6417cebea1b1b9a234754d9e402c77603d676187f70b5735705d"}
+      {:elapsed-ns 17516071412,
+       :result-root
+       "0964e7b82bce878536e9011cb0407c45c83d9939e568fce10a956e73ef5f706d"}]},
+    :last
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 8192,
+     :samples-ns
+     [17467336008
+      17448399486
+      17562625762
+      17437688625
+      17566210873
+      17488028657
+      17493009650],
+     :median-ns 17488028657,
+     :p95-ns 17566210873,
+     :observations
+     [{:elapsed-ns 17467336008,
+       :result-root
+       "7217cfeb00429a8585e4b10b0ffbc35e1e4935e87b01b6e1e7752825c1fcaaea"}
+      {:elapsed-ns 17448399486,
+       :result-root
+       "c5ea8f306511f66b8f81ce35ddbeb96c4e8ac2aac05f0d1a273794f36b15cac8"}
+      {:elapsed-ns 17562625762,
+       :result-root
+       "c4e45806b9a98f33fa41c397fd8402de9c9c8dc4d2ae98cca149ceee8134b52d"}
+      {:elapsed-ns 17437688625,
+       :result-root
+       "cefd44ca7fec573e8555b79dd0f86cdeb946eed9856ce74fa9a8b0bb29e4a230"}
+      {:elapsed-ns 17566210873,
+       :result-root
+       "05d956c892ad0663185e6b0f3ed0b94329d5e55e333b5665ca857c0a34c175ec"}
+      {:elapsed-ns 17488028657,
+       :result-root
+       "21f519b05eb2c98513f5eaf03eabf5dee94f5bbc8006a821f0425e7e85d7da63"}
+      {:elapsed-ns 17493009650,
+       :result-root
+       "91d8c3420a32c86de24426d2e90b5a9b946b1ddf10c358052001a07b04169984"}]}},
+   :assoc-new
+   {:append
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 8194,
+     :samples-ns
+     [17551866709
+      17430557111
+      17399573633
+      17450558431
+      17423008045
+      17513445899
+      17321305006],
+     :median-ns 17430557111,
+     :p95-ns 17551866709,
+     :observations
+     [{:elapsed-ns 17551866709,
+       :result-root
+       "cab9403105edcd1f264c835549a3f73f267976754bc4a4638568b268030b4234"}
+      {:elapsed-ns 17430557111,
+       :result-root
+       "843daedf0e16ef21b709dad64ee7b242c68a57637313b5a1584a7e061e236b5a"}
+      {:elapsed-ns 17399573633,
+       :result-root
+       "24ef2e8fbecd0953a6d623a5f9cf46a1326b417d0de7e7b37b9f7f461e9d72dd"}
+      {:elapsed-ns 17450558431,
+       :result-root
+       "712b4b17f553e1c661198ba4fd1753c318f9cd6f48e599ea6e21678882130d78"}
+      {:elapsed-ns 17423008045,
+       :result-root
+       "fdffc8838afa8f614419e7381eccdf224b0e01ee59a4fb3f80ffdaf3d173d189"}
+      {:elapsed-ns 17513445899,
+       :result-root
+       "33c5c18d361fa1220e135c60e0f818e97213f7d2a85c6d509f9e486e3500863d"}
+      {:elapsed-ns 17321305006,
+       :result-root
+       "93b8f785449cb710bb5d77f58a024d9ef333b7288a9676df75573c5187571938"}]},
+    :interior
+    {:sample-count 7,
+     :write-model :canonical-map-cell-and-derived-refs,
+     :new-map-cells-per-operation 1,
+     :derived-ref-writes-per-operation 8194,
+     :samples-ns
+     [17292200907
+      17245904247
+      17268738207
+      17229809323
+      17261787385
+      17325991153
+      17325759851],
+     :median-ns 17268738207,
+     :p95-ns 17325991153,
+     :observations
+     [{:elapsed-ns 17292200907,
+       :result-root
+       "ae83660e8bd5de289dcac2eb38ab57d831dc7fb39d1c555f624d24b8d15f2ac1"}
+      {:elapsed-ns 17245904247,
+       :result-root
+       "d72be23efb9eee3f4cc9b506d0252d13ce7c826795f9995d49d987098c206a36"}
+      {:elapsed-ns 17268738207,
+       :result-root
+       "7b36ae9effc9dddd5c441cb36ac8c594917dfa39b5403dec16e15774d494be61"}
+      {:elapsed-ns 17229809323,
+       :result-root
+       "64c21d5e853736ef1c28fff5d4cf8d547be803f2d0531e8e581c0262e4acfc46"}
+      {:elapsed-ns 17261787385,
+       :result-root
+       "d3498b0b1a4b963813ee950589bd08d5b045f25da818542d8bc835cb87f8f303"}
+      {:elapsed-ns 17325991153,
+       :result-root
+       "eda8ffcb00410aeed0e8fd12fb0c5b12faf3cd9ff8417f8ade55022466aa427b"}
+      {:elapsed-ns 17325759851,
+       :result-root
+       "1c74d9994fcb62e98f51a80974b261d2da43c04123067900536a5ec6d4e8a300"}]}}}]}
