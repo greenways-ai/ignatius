@@ -33,76 +33,69 @@
             :seed ["gw_ledger"]
             :all {:schema ["gw_ledger"]}}})
 
-(defn.pg ^{:- [:bytea]}
+(defn.pg ^{:- [:text]}
+  benchmark-put-string
+  "Stores one canonical string and returns its root as lowercase hex text."
+  {:added "0.18"}
+  [:text i-value]
+  (return
+   (pg/encode (value/put-string i-value) "hex")))
+
+(defn.pg ^{:- [:text]}
   benchmark-put-map
   "Builds a map from a JSON text array of canonical key/value root hex."
   {:added "0.18"}
   [:text i-root-pairs-json]
   (return
-   (value/put-map (:jsonb i-root-pairs-json))))
+   (pg/encode
+    (value/put-map (:jsonb i-root-pairs-json))
+    "hex")))
+
+(defn.pg ^{:- [:text]}
+  benchmark-map-get
+  "Looks up one root through a benchmark-only hex-text JDBC boundary."
+  {:added "0.18"}
+  [:text i-map-root-hex :text i-key-root-hex]
+  (return
+   (pg/encode
+    (value/map-get
+     (pg/decode i-map-root-hex "hex")
+     (pg/decode i-key-root-hex "hex"))
+    "hex")))
+
+(defn.pg ^{:- [:text]}
+  benchmark-map-assoc
+  "Associates one root through a benchmark-only hex-text JDBC boundary."
+  {:added "0.18"}
+  [:text i-map-root-hex
+   :text i-key-root-hex
+   :text i-value-root-hex]
+  (return
+   (pg/encode
+    (value/map-assoc
+     (pg/decode i-map-root-hex "hex")
+     (pg/decode i-key-root-hex "hex")
+     (pg/decode i-value-root-hex "hex"))
+    "hex")))
 
 (defn.pg ^{:- [:jsonb]}
   benchmark-map-shape
   "Returns the stored payload bytes and derived key/value reference counts."
   {:added "0.18"}
-  [:bytea i-map-root]
-  (let [o-cell (cell/cell-by-hash i-map-root)
+  [:text i-map-root-hex]
+  (let [(:bytea v-map-root) (pg/decode i-map-root-hex "hex")
+        o-cell (cell/cell-by-hash v-map-root)
         _ (pg/assert [o-cell :is-not-null]
                      [:ledger/missing-benchmark-map])]
     (return
      (pg/jsonb-build-object
       "payload_bytes" (:integer (:->> o-cell "byte_size"))
-      "key_refs" (cell/cell-ref-count i-map-root "key")
-      "value_refs" (cell/cell-ref-count i-map-root "value")))))
+      "key_refs" (cell/cell-ref-count v-map-root "key")
+      "value_refs" (cell/cell-ref-count v-map-root "value")))))
 
 (def default-entry-counts [16 64 256 1024 4096])
 (def default-warmup-count 2)
 (def default-sample-count 7)
-
-(def byte-array-class
-  (class (byte-array 0)))
-
-(defn bytea-bytes
-  "Normalises the bytea shapes returned by supported JDBC drivers.
-
-  The ordinary PostgreSQL driver returns byte arrays. pgjdbc-ng streams bytea
-  through ByteBufInputStream. The benchmark owns this conversion boundary so
-  the canonical ledger implementation and its generated SQL remain untouched."
-  [value]
-  (cond
-    (nil? value)
-    nil
-
-    (instance? byte-array-class value)
-    value
-
-    (instance? java.io.InputStream value)
-    (with-open [input ^java.io.InputStream value
-                output (java.io.ByteArrayOutputStream.)]
-      (io/copy input output)
-      (.toByteArray output))
-
-    (instance? java.nio.ByteBuffer value)
-    (let [buffer (.duplicate ^java.nio.ByteBuffer value)
-          bytes (byte-array (.remaining buffer))]
-      (.get buffer bytes)
-      bytes)
-
-    :else
-    (throw
-     (ex-info
-      "unsupported JDBC bytea value"
-      {:value/class (.getName (class value))}))))
-
-(defn hex-bytes
-  [text]
-  (.parseHex (java.util.HexFormat/of) text))
-
-(defn bytes-hex
-  [bytes]
-  (.formatHex
-   (java.util.HexFormat/of)
-   (bytea-bytes bytes)))
 
 (defn json-field
   [value field]
@@ -129,8 +122,7 @@
 
 (defn put-string-root
   [text]
-  (bytea-bytes
-   (value/put-string text)))
+  (-/benchmark-put-string text))
 
 (defn map-shape
   [root]
@@ -179,9 +171,7 @@
                   (put-string-root (fixed-name "v" position))]
               (recur
                (+ position 1)
-               (conj root-pairs
-                     (bytes-hex key-root)
-                     (bytes-hex value-root))
+               (conj root-pairs key-root value-root)
                (conj key-roots key-root)
                (conj value-roots value-root)))))
         key-roots (:key-roots built)
@@ -190,7 +180,7 @@
         (timed
          #(-/benchmark-put-map
            (json/write-str (:root-pairs built))))
-        map-root (bytea-bytes (:result measured))
+        map-root (:result measured)
         middle-position (quot entry-count 2)]
     {:entry-count entry-count
      :map-root map-root
@@ -232,7 +222,7 @@
            (let [measured
                  (timed #(f (+ warmup-count position)))]
              {:elapsed-ns (:elapsed-ns measured)
-              :result-root (bytes-hex (:result measured))}))
+              :result-root (:result measured)}))
          (range sample-count))]
     {:sample-count sample-count
      :write-model :canonical-map-cell-and-derived-refs
@@ -249,9 +239,9 @@
   [fixture warmup-count sample-count]
   (let [map-root (:map-root fixture)
         expected
-        {:first (bytes-hex (:first-value fixture))
-         :middle (bytes-hex (:middle-value fixture))
-         :last (bytes-hex (:last-value fixture))
+        {:first (:first-value fixture)
+         :middle (:middle-value fixture)
+         :last (:last-value fixture)
          :missing-before nil
          :missing-after nil}
         scenarios
@@ -262,20 +252,21 @@
          :missing-after (:missing-after-key fixture)}]
     (reduce-kv
      (fn [out scenario key-root]
-       (let [observed (value/map-get map-root key-root)
-             observed-hex (when observed (bytes-hex observed))
-             _ (when (not (= observed-hex (get expected scenario)))
+       (let [observed
+             (-/benchmark-map-get map-root key-root)
+             _ (when (not (= observed (get expected scenario)))
                  (throw
                   (ex-info
                    "flat-map get returned an unexpected root"
                    {:scenario scenario
                     :expected (get expected scenario)
-                    :observed observed-hex})))]
+                    :observed observed})))]
          (assoc
           out scenario
           (warm-and-sample
            warmup-count sample-count
-           (fn [_] (value/map-get map-root key-root))))))
+           (fn [_]
+             (-/benchmark-map-get map-root key-root))))))
      {}
      scenarios)))
 
@@ -324,7 +315,7 @@
           (measured-mutations
            warmup-count sample-count (* entry-count 2)
            (fn [position]
-             (value/map-assoc
+             (-/benchmark-map-assoc
               map-root key-root (get roots position)))))))
      {}
      scenarios)))
@@ -345,7 +336,7 @@
           (measured-mutations
            warmup-count sample-count (* (+ entry-count 1) 2)
            (fn [position]
-             (value/map-assoc
+             (-/benchmark-map-assoc
               map-root
               (get key-roots position)
               (get value-roots position)))))))
@@ -357,7 +348,7 @@
   (let [fixture (build-fixture entry-count)]
     {:status :ok
      :entry-count entry-count
-     :map-root (bytes-hex (:map-root fixture))
+     :map-root (:map-root fixture)
      :construction (:construction fixture)
      :get (get-benchmark fixture warmup-count sample-count)
      :assoc-existing
@@ -372,6 +363,7 @@
    :generated-at (str (java.time.Instant/now))
    :timing/scope :jdbc-round-trip
    :timing/clock :system-nanotime
+   :root-transport :lowercase-hex-text
    :write-accounting :canonical-structural-model
    :warmup-count warmup-count
    :sample-count sample-count

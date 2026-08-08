@@ -35,27 +35,65 @@
             :seed ["gw_ledger"]
             :all {:schema ["gw_ledger"]}}})
 
-(defn.pg ^{:- [:bytea]}
+(defn.pg ^{:- [:text]}
+  benchmark-put-string
+  "Stores one canonical string and returns its root as lowercase hex text."
+  {:added "0.18"}
+  [:text i-value]
+  (return
+   (pg/encode (value/put-string i-value) "hex")))
+
+(defn.pg ^{:- [:text]}
   benchmark-put-map
   "Builds a map from a JSON text array of canonical key/value root hex."
   {:added "0.18"}
   [:text i-root-pairs-json]
   (return
-   (value/put-map (:jsonb i-root-pairs-json))))
+   (pg/encode
+    (value/put-map (:jsonb i-root-pairs-json))
+    "hex")))
+
+(defn.pg ^{:- [:text]}
+  benchmark-map-get
+  "Looks up one root through a benchmark-only hex-text JDBC boundary."
+  {:added "0.18"}
+  [:text i-map-root-hex :text i-key-root-hex]
+  (return
+   (pg/encode
+    (value/map-get
+     (pg/decode i-map-root-hex "hex")
+     (pg/decode i-key-root-hex "hex"))
+    "hex")))
+
+(defn.pg ^{:- [:text]}
+  benchmark-map-assoc
+  "Associates one root through a benchmark-only hex-text JDBC boundary."
+  {:added "0.18"}
+  [:text i-map-root-hex
+   :text i-key-root-hex
+   :text i-value-root-hex]
+  (return
+   (pg/encode
+    (value/map-assoc
+     (pg/decode i-map-root-hex "hex")
+     (pg/decode i-key-root-hex "hex")
+     (pg/decode i-value-root-hex "hex"))
+    "hex")))
 
 (defn.pg ^{:- [:jsonb]}
   benchmark-map-shape
   "Returns the stored payload bytes and derived key/value reference counts."
   {:added "0.18"}
-  [:bytea i-map-root]
-  (let [o-cell (cell/cell-by-hash i-map-root)
+  [:text i-map-root-hex]
+  (let [(:bytea v-map-root) (pg/decode i-map-root-hex "hex")
+        o-cell (cell/cell-by-hash v-map-root)
         _ (pg/assert [o-cell :is-not-null]
                      [:ledger/missing-benchmark-map])]
     (return
      (pg/jsonb-build-object
       "payload_bytes" (:integer (:->> o-cell "byte_size"))
-      "key_refs" (cell/cell-ref-count i-map-root "key")
-      "value_refs" (cell/cell-ref-count i-map-root "value")))))
+      "key_refs" (cell/cell-ref-count v-map-root "key")
+      "value_refs" (cell/cell-ref-count v-map-root "value")))))
 
 (def benchmark-namespace
   'ledger.hpt1-flat-map-benchmark-runner)
@@ -224,13 +262,19 @@
             (str benchmark/default-sample-count)))
           runtime
           (l/rt benchmark-namespace :postgres)
+          put-string-pointer benchmark-put-string
           put-map-pointer benchmark-put-map
+          map-get-pointer benchmark-map-get
+          map-assoc-pointer benchmark-map-assoc
           map-shape-pointer benchmark-map-shape]
       (l/rt:setup runtime benchmark-module)
       (try
         (let [evidence
               (with-redefs
-               [benchmark/benchmark-put-map put-map-pointer
+               [benchmark/benchmark-put-string put-string-pointer
+                benchmark/benchmark-put-map put-map-pointer
+                benchmark/benchmark-map-get map-get-pointer
+                benchmark/benchmark-map-assoc map-assoc-pointer
                 benchmark/benchmark-map-shape map-shape-pointer]
                 (benchmark/benchmark-evidence
                  entry-counts warmup-count sample-count))
