@@ -16,6 +16,63 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
+      - name: Test Git workflow event adapter
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/ignatius-git-event
+
+          repo="$(mktemp -d)"
+          trap 'rm -rf "$repo"' EXIT
+          git -C "$repo" init -q
+          git -C "$repo" config user.email test@example.com
+          git -C "$repo" config user.name "Ignatius Test"
+          git -C "$repo" remote add origin \
+            'https://secret-user:secret-pass@example.com/owner/repo.git?token=bad#fragment'
+
+          printf 'first\n' > "$repo/README.md"
+          git -C "$repo" add README.md
+          git -C "$repo" commit -qm first
+          first="$(git -C "$repo" rev-parse HEAD)"
+
+          initial="$(
+            scripts/ignatius-git-event resource \
+              --workspace test/workspace \
+              --resource-id git/test/main \
+              --repo "$repo" \
+              --initial
+          )"
+          grep -q ':action :resource/register' <<< "$initial"
+          grep -q ':resource/previous-version nil' <<< "$initial"
+          grep -q 'https://example.com/owner/repo.git' <<< "$initial"
+          ! grep -q 'secret\|token=bad\|#fragment' <<< "$initial"
+
+          printf 'second\n' >> "$repo/README.md"
+          git -C "$repo" add README.md
+          git -C "$repo" commit -qm second
+          second="$(git -C "$repo" rev-parse HEAD)"
+
+          advanced="$(
+            scripts/ignatius-git-event resource \
+              --workspace test/workspace \
+              --resource-id git/test/main \
+              --repo "$repo" \
+              --previous-version "$first"
+          )"
+          grep -q ":resource/version \"$second\"" <<< "$advanced"
+          grep -q ":resource/previous-version \"$first\"" <<< "$advanced"
+          grep -q ":resource/parent-versions \[\"$first\"\]" <<< "$advanced"
+
+          created="$(
+            scripts/ignatius-git-event work-create \
+              --workspace test/workspace \
+              --work-id work/change \
+              --title 'Change the repository' \
+              --definition-root definition/change \
+              --input "git/test/main=$second"
+          )"
+          grep -q ':action :work/create' <<< "$created"
+          grep -q ':reference/kind :resource/version' <<< "$created"
+
       - name: Reject Hestia application modules
         run: |
           set -euo pipefail
