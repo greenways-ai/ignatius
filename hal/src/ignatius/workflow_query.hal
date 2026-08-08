@@ -1,0 +1,200 @@
+(ns ignatius.workflow-query
+  (:require [ignatius.record :as record]
+            [ignatius.workflow :as workflow]))
+
+(def scheduler-view-version 1)
+
+(defn vector-or-empty
+  [value]
+  (record/vector-or-empty value))
+
+(defn checkpoint
+  [state checkpoint-id]
+  (get (workflow/checkpoints state) checkpoint-id))
+
+(defn work-status
+  [state work-id]
+  (get (workflow/work-item state work-id) :run/status))
+
+(defn unresolved-dependency-ids
+  "Returns dependency IDs that are absent or not complete.
+
+  Projection builders supply work IDs in a deterministic order. The canonical
+  reducer remains independent of any one database enumeration strategy."
+  [state work-id]
+  (let [work (workflow/work-item state work-id)]
+    (if (= nil work)
+      []
+      (reduce
+       (fn [out dependency-id]
+         (let [dependency
+               (workflow/work-item state dependency-id)]
+           (if (= :complete (get dependency :run/status))
+             out
+             (conj out dependency-id))))
+       []
+       (workflow/work-dependency-ids work)))))
+
+(defn classification
+  "Classifies one exact work item for portable scheduler projections."
+  [state work-id]
+  (let [work (workflow/work-item state work-id)
+        status (get work :run/status)]
+    (cond
+      (= nil work)
+      :missing
+
+      (= :open status)
+      (if (= 0 (count (unresolved-dependency-ids state work-id)))
+        :ready
+        :blocked)
+
+      (= :claimed status)
+      :claimed
+
+      (= :running status)
+      :running
+
+      (= :complete status)
+      :complete
+
+      :else
+      :unknown)))
+
+(defn latest-checkpoint
+  "Returns the last checkpoint for work-id in the supplied canonical order.
+
+  PostgreSQL projections retain checkpoint order and can pass those IDs here for
+  conformance. This keeps map enumeration and storage indexes outside the
+  portable query law."
+  [state work-id checkpoint-ids]
+  (reduce
+   (fn [latest checkpoint-id]
+     (let [current (checkpoint state checkpoint-id)]
+       (if (and (= false (= nil current))
+                (= work-id (get current :checkpoint/run-id)))
+         current
+         latest)))
+   nil
+   (vector-or-empty checkpoint-ids)))
+
+(defn work-summary
+  "Creates the compact provider-neutral scheduler view for one work ID."
+  [state work-id checkpoint-ids]
+  (let [work (workflow/work-item state work-id)
+        latest (latest-checkpoint state work-id checkpoint-ids)]
+    (if (= nil work)
+      {:scheduler/view-version scheduler-view-version
+       :workspace/id (get state :workspace/id)
+       :workspace/latest-entry-id
+       (get state :workspace/latest-entry-id)
+       :work/id work-id
+       :work/classification :missing
+       :work/status nil
+       :work/assignee nil
+       :work/dependency-ids []
+       :work/unresolved-dependency-ids []
+       :work/input-references []
+       :work/output-references []
+       :work/latest-checkpoint-id nil
+       :work/latest-checkpoint nil}
+      {:scheduler/view-version scheduler-view-version
+       :workspace/id (get state :workspace/id)
+       :workspace/latest-entry-id
+       (get state :workspace/latest-entry-id)
+       :work/id work-id
+       :work/classification (classification state work-id)
+       :work/status (get work :run/status)
+       :work/title (workflow/extension work :work/title)
+       :work/kind (workflow/extension work :work/kind)
+       :work/definition-root (get work :run/definition-root)
+       :work/assignee (workflow/work-assignee work)
+       :work/dependency-ids
+       (workflow/work-dependency-ids work)
+       :work/unresolved-dependency-ids
+       (unresolved-dependency-ids state work-id)
+       :work/input-references
+       (vector-or-empty
+        (workflow/extension work :work/input-references))
+       :work/output-references
+       (vector-or-empty
+        (workflow/extension work :work/output-references))
+       :work/result-root (get work :run/result-root)
+       :work/receipt-root (get work :run/receipt-root)
+       :work/created-evidence
+       (workflow/extension work :work/created-evidence)
+       :work/claim-evidence
+       (workflow/extension work :work/claim-evidence)
+       :work/started-evidence (get work :run/started-evidence)
+       :work/completed-evidence (get work :run/completed-evidence)
+       :work/latest-checkpoint-id
+       (if (= nil latest)
+         nil
+         (get latest :checkpoint/id))
+       :work/latest-checkpoint latest})))
+
+(defn work-summaries
+  [state work-ids checkpoint-ids]
+  (reduce
+   (fn [out work-id]
+     (conj out
+           (work-summary state work-id checkpoint-ids)))
+   []
+   (vector-or-empty work-ids)))
+
+(defn select-work-ids
+  [state work-ids wanted-classification]
+  (reduce
+   (fn [out work-id]
+     (if (= wanted-classification
+            (classification state work-id))
+       (conj out work-id)
+       out))
+   []
+   (vector-or-empty work-ids)))
+
+(defn ready-work-ids
+  [state work-ids]
+  (select-work-ids state work-ids :ready))
+
+(defn blocked-work-ids
+  [state work-ids]
+  (select-work-ids state work-ids :blocked))
+
+(defn claimed-work-ids
+  [state work-ids]
+  (select-work-ids state work-ids :claimed))
+
+(defn running-work-ids
+  [state work-ids]
+  (select-work-ids state work-ids :running))
+
+(defn complete-work-ids
+  [state work-ids]
+  (select-work-ids state work-ids :complete))
+
+(defn work-ids-for-assignee
+  [state work-ids assignee]
+  (reduce
+   (fn [out work-id]
+     (let [work (workflow/work-item state work-id)]
+       (if (= assignee (workflow/work-assignee work))
+         (conj out work-id)
+         out)))
+   []
+   (vector-or-empty work-ids)))
+
+(defn scheduler-snapshot
+  "Returns a compact scheduler snapshot over explicitly ordered IDs."
+  [state work-ids checkpoint-ids]
+  {:scheduler/view-version scheduler-view-version
+   :workspace/id (get state :workspace/id)
+   :workspace/latest-entry-id
+   (get state :workspace/latest-entry-id)
+   :work/items
+   (work-summaries state work-ids checkpoint-ids)
+   :work/ready-ids (ready-work-ids state work-ids)
+   :work/blocked-ids (blocked-work-ids state work-ids)
+   :work/claimed-ids (claimed-work-ids state work-ids)
+   :work/running-ids (running-work-ids state work-ids)
+   :work/complete-ids (complete-work-ids state work-ids)})
