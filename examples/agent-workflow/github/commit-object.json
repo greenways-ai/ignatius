@@ -1,0 +1,30 @@
+{
+  "sha": "2222222222222222222222222222222222222222",
+  "node_id": "C_kwDOExample",
+  "url": "https://api.github.com/repos/greenways-ai/ignatius/git/commits/2222222222222222222222222222222222222222",
+  "author": {
+    "name": "Planner Agent",
+    "email": "planner@example.com",
+    "date": "2026-08-08T07:00:00Z"
+  },
+  "committer": {
+    "name": "Planner Agent",
+    "email": "planner@example.com",
+    "date": "2026-08-08T07:00:00Z"
+  },
+  "tree": {
+    "sha": "3333333333333333333333333333333333333333",
+    "url": "https://api.github.com/repos/greenways-ai/ignatius/git/trees/3333333333333333333333333333333333333333"
+  },
+  "message": "Publish exact Git resource",
+  "parents": [
+    {
+      "sha": "1111111111111111111111111111111111111111",
+      "url": "https://api.github.com/repos/greenways-ai/ignatius/git/commits/1111111111111111111111111111111111111111"
+    }
+  ],
+  "verification": {
+    "verified": false,
+    "reason": "unsigned"
+  }
+}

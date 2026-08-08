@@ -19,7 +19,11 @@ jobs:
             scripts/ignatius_github_common.py \
             scripts/ignatius_github_issue.py \
             scripts/ignatius_github_outbox.py \
+            scripts/ignatius_github_push.py \
             scripts/ignatius-github-event \
-            scripts/test-ignatius-github-event
+            scripts/test-ignatius-github-event \
+            scripts/test-ignatius-github-push
       - name: Test issue creation, lifecycle snapshots and durable replay
         run: python3 scripts/test-ignatius-github-event
+      - name: Test exact Git branch resources and force-push ancestry
+        run: python3 scripts/test-ignatius-github-push
