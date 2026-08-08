@@ -8,7 +8,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from ignatius_agent_github_review_materialize import MaterializationError, materialize_review
 from ignatius_github_common import canonical_json
@@ -30,6 +30,21 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def current_review_limits(value: dict[str, Any]) -> None:
+    """Expose constraints enforced by the current canonical review protocol."""
+    canonical = value["canonical_review"]
+    canonical.update(
+        {
+            "evidence_roots": [],
+            "provider_snapshot_binding": None,
+            "provider_snapshot_binding_supported": False,
+            "recorded_at": None,
+            "process_run_id": None,
+            "process_run_root": None,
+        }
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -42,6 +57,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_origin_root=args.origin_root,
             redact_body=args.redact_body,
         )
+        current_review_limits(value)
     except (
         MaterializationError,
         OSError,
