@@ -243,30 +243,5 @@ jobs:
                  gwdb.ledger.actor-runtime-test \
                  gwdb.ledger.contract-runtime-test
 
-      - name: Test SHA extension with a current lockfile
-        env:
-          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          manifest=extensions/sha/rust/Cargo.toml
-          lockfile=extensions/sha/rust/Cargo.lock
-
-          if ! cargo metadata \
-              --locked \
-              --format-version 1 \
-              --manifest-path "$manifest" >/dev/null 2>&1; then
-            cargo metadata \
-              --format-version 1 \
-              --manifest-path "$manifest" >/dev/null
-          fi
-
-          cargo test --locked --manifest-path "$manifest"
-
-          if git diff --quiet -- "$lockfile"; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$lockfile"
-          git commit -m "Regenerate SHA extension lockfile"
-          git push origin "HEAD:${TARGET_BRANCH}"
+      - name: Test SHA extension
+        run: make extension-sha-test
