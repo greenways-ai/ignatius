@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LEDGER_DIR="$ROOT_DIR/db/src/gwdb/ledger"
+TEST_DIR="$ROOT_DIR/db/test/gwdb/ledger"
+TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+clj_count=0
+hal_count=0
+
+for source_file in "$LEDGER_DIR"/*.clj; do
+  clj_count=$((clj_count + 1))
+  filename="$(basename "$source_file" .clj)"
+  hal_file="$LEDGER_DIR/$filename.hal"
+
+  if [[ ! -f "$hal_file" ]]; then
+    echo "missing HAL shadow: db/src/gwdb/ledger/$filename.hal" >&2
+    exit 1
+  fi
+
+  normalized_file="$TEMP_DIR/$filename.hal"
+  perl -pe 's/\[tahto\.core :as l\]/[lang.core :as l]/g;
+            s/^\(defonce \+run\+ \[\]\)$/\(def \+run\+ \[\]\)/g;
+            s/^\(l\/script :postgres postgres\.core \{:macro-only true\}\)$/\(l\/script :postgres \{:macro-only true\}\)/g' \
+    "$source_file" > "$normalized_file"
+
+  if ! cmp -s "$normalized_file" "$hal_file"; then
+    echo "HAL shadow diverges from PostgreSQL source: db/src/gwdb/ledger/$filename.hal" >&2
+    diff -u "$normalized_file" "$hal_file" || true
+    exit 1
+  fi
+done
+
+for hal_file in "$LEDGER_DIR"/*.hal; do
+  hal_count=$((hal_count + 1))
+  filename="$(basename "$hal_file" .hal)"
+  if [[ ! -f "$LEDGER_DIR/$filename.clj" ]]; then
+    echo "HAL source has no migration source: db/src/gwdb/ledger/$filename.hal" >&2
+    exit 1
+  fi
+done
+
+if [[ "$clj_count" -ne "$hal_count" ]]; then
+  echo "ledger source counts differ: .clj=$clj_count .hal=$hal_count" >&2
+  exit 1
+fi
+
+echo "ledger HAL parity: $hal_count namespaces"
+
+clj_test_count=0
+hal_test_count=0
+
+for source_file in "$TEST_DIR"/*_test.clj; do
+  clj_test_count=$((clj_test_count + 1))
+  filename="$(basename "$source_file" .clj)"
+  hal_file="$TEST_DIR/$filename.hal"
+
+  if [[ ! -f "$hal_file" ]]; then
+    echo "missing HAL test: db/test/gwdb/ledger/$filename.hal" >&2
+    exit 1
+  fi
+
+  # The emitter test uses the HAL module compiler instead of the removed
+  # tahto.core.impl entry API, so it has an intentionally translated body.
+  if [[ "$filename" == "emit_test" ]]; then
+    continue
+  fi
+
+  normalized_file="$TEMP_DIR/$filename.hal"
+  perl -pe 's/\[tahto\.core :as l\]/[lang.core :as l]/g;
+            s/\(l\/rt:teardown :postgres\)/(l\/rt:stop)/g;
+            s/\(l\/rt:setup :postgres\)/(l\/rt:restart)/g;
+            END {
+              print "\n\n(def legacy-results (code.test/run {}))\n\n";
+              print "(std.lib.test/print-results\n";
+              print " [(std.lib.test/check \"ported Foundation facts pass\"\n";
+              print "                      (:status legacy-results)\n";
+              print "                      :passed)])\n";
+            }' "$source_file" > "$normalized_file"
+
+  if ! cmp -s "$normalized_file" "$hal_file"; then
+    echo "HAL test diverges from PostgreSQL test: db/test/gwdb/ledger/$filename.hal" >&2
+    diff -u "$normalized_file" "$hal_file" || true
+    exit 1
+  fi
+done
+
+for hal_file in "$TEST_DIR"/*_test.hal; do
+  hal_test_count=$((hal_test_count + 1))
+done
+
+if [[ "$clj_test_count" -ne "$hal_test_count" ]]; then
+  echo "ledger test counts differ: .clj=$clj_test_count .hal=$hal_test_count" >&2
+  exit 1
+fi
+
+echo "ledger HAL test parity: $hal_test_count namespaces"

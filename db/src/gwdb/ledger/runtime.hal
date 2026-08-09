@@ -1,0 +1,646 @@
+(ns gwdb.ledger.runtime
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.function :as function]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.function :as function]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(def +runtime-version+ 1)
+
+(deftype.pg ExecutionResult
+  "Optional projection for retained receipts; result protocol is JSONB at v1."
+  {:added "0.2"}
+  [:result-root  {:type :bytea :primary true}
+   :status       {:type :text :required true}
+   :context-root {:type :bytea :required true}
+   :value-root   {:type :bytea}
+   :error-code   {:type :text}
+   :cost-used    {:type :long :required true}])
+
+(defn.pg result-ok
+  "Creates the stable successful execution-result protocol value."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-value-root]
+  (let [o-context (context/context-get i-context-root)]
+    (return {:status "ok"
+             :context-root i-context-root
+             :value-root i-value-root
+             :cost-used (:bigint (:->> o-context "cost_used"))})))
+
+(defn.pg result-error
+  "Expected VM failures are values, never PostgreSQL exception text."
+  {:added "0.2"}
+  [:bytea i-context-root :text i-error-code]
+  (let [o-context (context/context-get i-context-root)
+        (:bigint v-cost-used)
+        (pg/case [o-context :is-null] (:bigint 0)
+                 :else (:bigint (:->> o-context "cost_used")))]
+    (return {:status "error"
+             :context-root i-context-root
+             :error {:code i-error-code}
+             :cost-used v-cost-used})))
+
+(defn.pg execute-constant
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)]
+    (cond [o-context :is-null]
+          (return (-/result-error i-context-root "missing-context"))
+          (not (op/op-valid i-op-root))
+          (return (-/result-error i-context-root "invalid-op"))
+          (not (== (:text (:->> o-op "op_kind")) "constant"))
+          (return (-/result-error i-context-root "wrong-op-kind"))
+          (not (context/context-can-charge i-context-root 1))
+          (return (-/result-error i-context-root "cost-limit"))
+          :else
+          (let [(:bytea v-next-context) (context/context-charge i-context-root 1)]
+            (return (-/result-ok v-next-context
+                                 (:bytea (:->> o-op "value_root"))))))))
+
+(defn.pg execute-special
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        o-symbol (cell/cell-by-hash (:bytea (:->> o-op "symbol_root")))
+        (:text v-special) (pg/encode (:bytea (:->> o-symbol "payload")) "escape")]
+    (cond [o-context :is-null]
+          (return (-/result-error i-context-root "missing-context"))
+          (not (op/op-valid i-op-root))
+          (return (-/result-error i-context-root "invalid-op"))
+          (not (== (:text (:->> o-op "op_kind")) "special"))
+          (return (-/result-error i-context-root "wrong-op-kind"))
+          (not (context/context-can-charge i-context-root 1))
+          (return (-/result-error i-context-root "cost-limit"))
+          (== v-special "state-root")
+          (return (-/result-ok (context/context-charge i-context-root 1)
+                               (:bytea (:->> o-context "state_root"))))
+          (== v-special "origin")
+          (return (-/result-ok (context/context-charge i-context-root 1)
+                               (:bytea (:->> o-context "origin"))))
+          (== v-special "address")
+          (return (-/result-ok (context/context-charge i-context-root 1)
+                               (:bytea (:->> o-context "address"))))
+          (== v-special "caller")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (pg/case [(:->> o-context "caller") :is-null]
+                            (value/put-nil)
+                            :else (:bytea (:->> o-context "caller")))))
+          (== v-special "transaction")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (pg/case [(:->> o-context "transaction_root") :is-null]
+                            (value/put-nil)
+                            :else (:bytea (:->> o-context "transaction_root")))))
+          (== v-special "block-height")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (value/put-integer-number
+                    (:bigint (:->> o-context "block_height")))))
+          (== v-special "timestamp")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (value/put-integer-number
+                    (:bigint (:->> o-context "timestamp")))))
+          (== v-special "depth")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (value/put-integer-number
+                    (:integer (:->> o-context "depth")))))
+          (== v-special "cost-used")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (value/put-integer-number
+                    (:bigint (:->> o-context "cost_used")))))
+          (== v-special "cost-limit")
+          (return (-/result-ok
+                   (context/context-charge i-context-root 1)
+                   (value/put-integer-number
+                    (:bigint (:->> o-context "cost_limit")))))
+          :else
+          (return (-/result-error i-context-root "unknown-special")))))
+
+(defn.pg execute-lookup
+  "Resolves a symbol from the account embedded in the current state root."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "lookup"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        _ (when (not (context/context-can-charge i-context-root 2))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-account-root)
+        (state/state-account-root (:bytea (:->> o-context "state_root"))
+                                  (:bytea (:->> o-context "address")))
+        _ (when [v-account-root :is-null]
+            (return (-/result-error i-context-root "missing-account")))
+        (:bytea v-value-root)
+        (account/account-value-lookup
+         v-account-root (:bytea (:->> o-op "symbol_root")))]
+    (cond [v-value-root :is-null]
+          (return (-/result-error i-context-root "unbound-symbol"))
+          :else
+          (return (-/result-ok (context/context-charge i-context-root 2)
+                               v-value-root)))))
+
+(defn.pg execute-local
+  "Reads one lexical root from the explicit vector frame of the context."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "local"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        _ (when (not (context/context-can-charge i-context-root 1))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:integer v-depth) (:integer (:->> o-op "local_depth"))
+        (:integer v-index) (:integer (:->> o-op "local_index"))
+        _ (when (not (== v-depth 0))
+            (return (-/result-error i-context-root "unsupported-local-depth")))
+        (:bytea v-value-root)
+        (value/vector-get (:bytea (:->> o-context "locals_root")) v-index)]
+    (cond [v-value-root :is-null]
+          (return (-/result-error i-context-root "missing-local"))
+          :else
+          (return (-/result-ok (context/context-charge i-context-root 1)
+                               v-value-root)))))
+
+(defn.pg execute-let
+  "Executes v1's one-binding lexical let with an immutable local frame."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "let"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        _ (when (not (context/context-can-charge i-context-root 3))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-binding-op) (op/op-child-root i-op-root 0)
+        (:bytea v-body-op) (op/op-child-root i-op-root 1)
+        o-binding-op (op/op-get v-binding-op)
+        o-body-op (op/op-get v-body-op)
+        _ (when (or [o-binding-op :is-null]
+                    (not (== (:text (:->> o-binding-op "op_kind")) "constant")))
+            (return (-/result-error i-context-root "unsupported-let-binding")))
+        o-binding-result (-/execute-constant i-context-root v-binding-op)
+        _ (when (== (:text (:->> o-binding-result "status")) "error")
+            (return o-binding-result))
+        (:bytea v-frame) (value/put-vector
+                            (pg/jsonb-build-array
+                             (pg/encode
+                              (:bytea (:->> o-binding-result "value_root")) "hex")))
+        (:bytea v-frame-context)
+        (context/context-with-locals
+         (:bytea (:->> o-binding-result "context_root"))
+         v-frame (+ (:integer (:->> o-context "depth")) 1))
+        (:bytea v-let-context) (context/context-charge v-frame-context 1)]
+    (cond [o-body-op :is-null]
+          (return (-/result-error v-let-context "missing-let-body"))
+          (== (:text (:->> o-body-op "op_kind")) "local")
+          (return (-/execute-local v-let-context v-body-op))
+          (== (:text (:->> o-body-op "op_kind")) "constant")
+          (return (-/execute-constant v-let-context v-body-op))
+          :else
+          (return (-/result-error v-let-context "unsupported-let-body")))))
+
+(defn.pg execute-lambda
+  "Captures the explicit lexical vector in a persistent compiled function."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "lambda"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        _ (when (not (context/context-can-charge i-context-root 2))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-metadata) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-function-root)
+        (function/function-put
+         (:bytea (:->> o-op "parameter_root"))
+         (:bytea (:->> o-op "body_root"))
+         (:bytea (:->> o-context "locals_root"))
+         v-metadata)
+        (:bytea v-next-context) (context/context-charge i-context-root 2)]
+    (return (-/result-ok v-next-context v-function-root))))
+
+(defn.pg execute-operand
+  "Evaluates the subset of operand operations accepted by v1 invocation."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-op (op/op-get i-op-root)]
+    (cond [o-op :is-null]
+          (return (-/result-error i-context-root "invalid-operand"))
+          (== (:text (:->> o-op "op_kind")) "constant")
+          (return (-/execute-constant i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "local")
+          (return (-/execute-local i-context-root i-op-root))
+          :else
+          (return (-/result-error i-context-root "unsupported-operand")))))
+
+(defn.pg execute-integer-add
+  "Evaluates two operands left-to-right and applies the closed integer/add core."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-left-op :bytea i-right-op]
+  (let [_ (when (not (context/context-can-charge i-context-root 4))
+            (return (-/result-error i-context-root "cost-limit")))
+        o-left-result (-/execute-operand i-context-root i-left-op)
+        _ (when (== (:text (:->> o-left-result "status")) "error")
+            (return o-left-result))
+        o-right-result
+        (-/execute-operand (:bytea (:->> o-left-result "context_root"))
+                           i-right-op)
+        _ (when (== (:text (:->> o-right-result "status")) "error")
+            (return o-right-result))
+        o-left-cell (cell/cell-by-hash (:bytea (:->> o-left-result "value_root")))
+        o-right-cell (cell/cell-by-hash (:bytea (:->> o-right-result "value_root")))
+        _ (when (not (and (== (:smallint (:->> o-left-cell "type_tag")) 2)
+                          (== (:smallint (:->> o-right-cell "type_tag")) 2)))
+            (return (-/result-error i-context-root "integer-required")))
+        (:bigint v-left) (:bigint (pg/encode (:bytea (:->> o-left-cell "payload")) "escape"))
+        (:bigint v-right) (:bigint (pg/encode (:bytea (:->> o-right-cell "payload")) "escape"))
+        (:bytea v-value) (value/put-integer-number (+ v-left v-right))
+        (:bytea v-next-context)
+        (context/context-charge (:bytea (:->> o-right-result "context_root")) 2)]
+    (return (-/result-ok v-next-context v-value))))
+
+(defn.pg execute-integer-multiply
+  "Evaluates two operands left-to-right and applies integer/multiply."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-left-op :bytea i-right-op]
+  (let [_ (when (not (context/context-can-charge i-context-root 4))
+            (return (-/result-error i-context-root "cost-limit")))
+        o-left-result (-/execute-operand i-context-root i-left-op)
+        _ (when (== (:text (:->> o-left-result "status")) "error")
+            (return o-left-result))
+        o-right-result
+        (-/execute-operand (:bytea (:->> o-left-result "context_root"))
+                           i-right-op)
+        _ (when (== (:text (:->> o-right-result "status")) "error")
+            (return o-right-result))
+        o-left-cell (cell/cell-by-hash (:bytea (:->> o-left-result "value_root")))
+        o-right-cell (cell/cell-by-hash (:bytea (:->> o-right-result "value_root")))
+        _ (when (not (and (== (:smallint (:->> o-left-cell "type_tag")) 2)
+                          (== (:smallint (:->> o-right-cell "type_tag")) 2)))
+            (return (-/result-error i-context-root "integer-required")))
+        (:bigint v-left) (:bigint (pg/encode (:bytea (:->> o-left-cell "payload")) "escape"))
+        (:bigint v-right) (:bigint (pg/encode (:bytea (:->> o-right-cell "payload")) "escape"))
+        (:bytea v-value) (value/put-integer-number (* v-left v-right))
+        (:bytea v-next-context)
+        (context/context-charge (:bytea (:->> o-right-result "context_root")) 2)]
+    (return (-/result-ok v-next-context v-value))))
+
+(defn.pg execute-function-invoke-zero
+  "Executes a stored zero-argument function body by immutable operation root."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root :bytea i-function-root]
+  (let [o-function (function/function-get i-function-root)
+        _ (when [o-function :is-null]
+            (return (-/result-error i-context-root "unknown-function")))
+        _ (when (not (function/function-valid i-function-root))
+            (return (-/result-error i-context-root "invalid-function")))
+        (:integer v-parameter-count)
+        (cell/cell-ref-count (:bytea (:->> o-function "parameters_root")) "element")
+        (:integer v-argument-count) (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (and (== v-parameter-count 0) (== v-argument-count 0)))
+            (return (-/result-error i-context-root "arity")))
+        _ (when (not (context/context-can-charge i-context-root 3))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-body-root) (:bytea (:->> o-function "body_root"))
+        o-body (op/op-get v-body-root)
+        _ (when [o-body :is-null]
+            (return (-/result-error i-context-root "missing-function-body")))
+        _ (when (not (== (:text (:->> o-body "op_kind")) "constant"))
+            (return (-/result-error i-context-root "unsupported-function-body")))
+        o-body-result (-/execute-constant i-context-root v-body-root)
+        _ (when (== (:text (:->> o-body-result "status")) "error")
+            (return o-body-result))
+        (:bytea v-next-context)
+        (context/context-charge
+         (:bytea (:->> o-body-result "context_root")) 2)]
+    (return (-/result-ok v-next-context
+                         (:bytea (:->> o-body-result "value_root"))))))
+
+(defn.pg execute-function-invoke-one
+  "Executes a one-argument stored body with a fresh immutable argument frame."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root :bytea i-function-root]
+  (let [o-function (function/function-get i-function-root)
+        _ (when [o-function :is-null]
+            (return (-/result-error i-context-root "unknown-function")))
+        _ (when (not (function/function-valid i-function-root))
+            (return (-/result-error i-context-root "invalid-function")))
+        (:integer v-parameter-count)
+        (cell/cell-ref-count (:bytea (:->> o-function "parameters_root")) "element")
+        (:integer v-argument-count) (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (and (== v-parameter-count 1) (== v-argument-count 1)))
+            (return (-/result-error i-context-root "arity")))
+        _ (when (not (context/context-can-charge i-context-root 7))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-argument-op) (op/op-child-root i-op-root 0)
+        o-argument-result (-/execute-operand i-context-root v-argument-op)
+        _ (when (== (:text (:->> o-argument-result "status")) "error")
+            (return o-argument-result))
+        (:bytea v-frame)
+        (value/put-vector
+         (pg/jsonb-build-array
+          (pg/encode (:bytea (:->> o-argument-result "value_root")) "hex")))
+        (:bytea v-function-context)
+        (context/context-with-locals
+         (:bytea (:->> o-argument-result "context_root")) v-frame 1)
+        (:bytea v-call-context) (context/context-charge v-function-context 2)
+        (:bytea v-body-root) (:bytea (:->> o-function "body_root"))
+        o-body (op/op-get v-body-root)
+        o-body-primitive (primitive/primitive-get-root
+                          (:bytea (:->> o-body "function_root")))]
+    (cond [o-body :is-null]
+          (return (-/result-error v-call-context "missing-function-body"))
+          (== (:text (:->> o-body "op_kind")) "local")
+          (return (-/execute-local v-call-context v-body-root))
+          (== (:text (:->> o-body "op_kind")) "constant")
+          (return (-/execute-constant v-call-context v-body-root))
+          (and (== (:text (:->> o-body "op_kind")) "invoke")
+               [o-body-primitive :is-not-null]
+               (== (:text (:->> o-body-primitive "primitive_id")) "integer/add")
+               (== (cell/cell-ref-count v-body-root "op-child") 2))
+          (return (-/execute-integer-add
+                   v-call-context
+                   (op/op-child-root v-body-root 0)
+                   (op/op-child-root v-body-root 1)))
+          (and (== (:text (:->> o-body "op_kind")) "invoke")
+               [o-body-primitive :is-not-null]
+               (== (:text (:->> o-body-primitive "primitive_id")) "integer/multiply")
+               (== (cell/cell-ref-count v-body-root "op-child") 2))
+          (return (-/execute-integer-multiply
+                   v-call-context
+                   (op/op-child-root v-body-root 0)
+                   (op/op-child-root v-body-root 1)))
+          :else
+          (return (-/result-error v-call-context "unsupported-function-body")))))
+
+(defn.pg execute-function-invoke
+  "Selects the deterministic function arity implementation."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root :bytea i-function-root]
+  (let [o-function (function/function-get i-function-root)
+        _ (when [o-function :is-null]
+            (return (-/result-error i-context-root "unknown-function")))
+        (:integer v-parameter-count)
+        (cell/cell-ref-count (:bytea (:->> o-function "parameters_root")) "element")]
+    (cond (== v-parameter-count 0)
+          (return (-/execute-function-invoke-zero
+                   i-context-root i-op-root i-function-root))
+          (== v-parameter-count 1)
+          (return (-/execute-function-invoke-one
+                   i-context-root i-op-root i-function-root))
+          :else
+          (return (-/result-error i-context-root "unsupported-function-arity")))))
+
+(defn.pg execute-invoke
+  "Dispatches the initial closed primitive set in argument order."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "invoke"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        o-primitive (primitive/primitive-get-root
+                     (:bytea (:->> o-op "function_root")))
+        o-function (function/function-get
+                    (:bytea (:->> o-op "function_root")))
+        (:integer v-count) (cell/cell-ref-count i-op-root "op-child")
+        _ (when (and [o-primitive :is-null] [o-function :is-null])
+            (return (-/result-error i-context-root "unknown-callable")))
+        _ (when [o-function :is-not-null]
+            (return (-/execute-function-invoke
+                     i-context-root i-op-root
+                     (:bytea (:->> o-op "function_root")))))
+        _ (when (not (and (or (== (:text (:->> o-primitive "primitive_id")) "integer/add")
+                              (== (:text (:->> o-primitive "primitive_id")) "integer/multiply"))
+                          (== (:integer (:->> o-primitive "arity")) 2)
+                          (== v-count 2)))
+            (return (-/result-error i-context-root "arity")))
+        (:bytea v-left-op) (op/op-child-root i-op-root 0)
+        (:bytea v-right-op) (op/op-child-root i-op-root 1)]
+    (cond (== (:text (:->> o-primitive "primitive_id")) "integer/add")
+          (return (-/execute-integer-add i-context-root v-left-op v-right-op))
+          :else
+          (return (-/execute-integer-multiply i-context-root v-left-op v-right-op)))))
+
+(defn.pg execute-def
+  "Evaluates a constant definition and returns the next immutable state root."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-context (context/context-get i-context-root)
+        o-op (op/op-get i-op-root)
+        _ (when [o-context :is-null]
+            (return (-/result-error i-context-root "missing-context")))
+        _ (when (not (op/op-valid i-op-root))
+            (return (-/result-error i-context-root "invalid-op")))
+        _ (when (not (== (:text (:->> o-op "op_kind")) "def"))
+            (return (-/result-error i-context-root "wrong-op-kind")))
+        _ (when (not (context/context-can-charge i-context-root 3))
+            (return (-/result-error i-context-root "cost-limit")))
+        (:bytea v-value-op-root) (op/op-child-root i-op-root 0)
+        o-value-op (op/op-get v-value-op-root)
+        _ (when (or [o-value-op :is-null]
+                    (not (== (:text (:->> o-value-op "op_kind")) "constant")))
+            (return (-/result-error i-context-root "unsupported-definition")))
+        o-value-result (-/execute-constant i-context-root v-value-op-root)
+        _ (when (== (:text (:->> o-value-result "status")) "error")
+            (return o-value-result))
+        (:bytea v-account-root)
+        (state/state-account-root (:bytea (:->> o-context "state_root"))
+                                  (:bytea (:->> o-context "address")))
+        _ (when [v-account-root :is-null]
+            (return (-/result-error i-context-root "missing-account")))
+        (:bytea v-next-account)
+        (account/account-value-define
+         v-account-root (:bytea (:->> o-op "symbol_root"))
+         (:bytea (:->> o-value-result "value_root")))
+        (:bytea v-next-state)
+        (state/state-assoc-account
+         (:bytea (:->> o-context "state_root"))
+         (:bytea (:->> o-context "address"))
+         v-next-account
+         (:bigint (:->> o-context "block_height")))
+        (:bytea v-state-context)
+        (context/context-with-state
+         (:bytea (:->> o-value-result "context_root")) v-next-state)
+        (:bytea v-next-context) (context/context-charge v-state-context 2)]
+    (return (-/result-ok v-next-context
+                         (:bytea (:->> o-value-result "value_root"))))))
+
+(defn.pg execute-cond-step
+  "Evaluates ordered boolean condition/body pairs without evaluating later arms."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root :integer i-position :integer i-count]
+  (cond (>= i-position i-count)
+        (return (-/result-ok i-context-root (value/put-nil)))
+        :else
+        (let [(:bytea v-test-root) (op/op-child-root i-op-root i-position)
+              (:bytea v-body-root) (op/op-child-root i-op-root (+ i-position 1))
+              o-test-op (op/op-get v-test-root)
+              o-body-op (op/op-get v-body-root)
+              o-test-result (pg/case [o-test-op :is-null]
+                                     (-/result-error i-context-root "invalid-condition")
+                                     (== (:text (:->> o-test-op "op_kind")) "constant")
+                                     (-/execute-constant i-context-root v-test-root)
+                                     :else
+                                     (-/result-error i-context-root "unsupported-condition"))
+              o-test-cell (cell/cell-by-hash
+                           (:bytea (:->> o-test-result "value_root")))
+              (:boolean v-true)
+              (and (== (:smallint (:->> o-test-cell "type_tag")) 1)
+                   (== (:bytea (:->> o-test-cell "payload"))
+                       (pg/decode "01" "hex")))]
+          (cond (== (:text (:->> o-test-result "status")) "error")
+                (return o-test-result)
+                (not v-true)
+                (return (-/execute-cond-step
+                         (:bytea (:->> o-test-result "context_root"))
+                         i-op-root (+ i-position 2) i-count))
+                [o-body-op :is-null]
+                (return (-/result-error
+                         (:bytea (:->> o-test-result "context_root"))
+                         "missing-branch"))
+                (== (:text (:->> o-body-op "op_kind")) "constant")
+                (return (-/execute-constant
+                         (:bytea (:->> o-test-result "context_root")) v-body-root))
+                (== (:text (:->> o-body-op "op_kind")) "invoke")
+                (return (-/execute-invoke
+                         (:bytea (:->> o-test-result "context_root")) v-body-root))
+                :else
+                (return (-/result-error
+                         (:bytea (:->> o-test-result "context_root"))
+                         "unsupported-branch"))))))
+
+(defn.pg execute-cond
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count) (cell/cell-ref-count i-op-root "op-child")]
+    (cond (not (== (pg/mod v-count 2) 0))
+          (return (-/result-error i-context-root "uneven-condition-children"))
+          :else
+          (return (-/execute-cond-step i-context-root i-op-root 0 v-count)))))
+
+(defn.pg execute-do-step
+  "Executes children in their committed order, threading the immutable context."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root :integer i-position
+   :integer i-count :jsonb i-last-result]
+  (cond (>= i-position i-count)
+        (return i-last-result)
+        :else
+        (let [(:bytea v-child-root) (op/op-child-root i-op-root i-position)
+              o-child (op/op-get v-child-root)
+              o-result (pg/case [o-child :is-null]
+                                (-/result-error i-context-root "invalid-op")
+                                (== (:text (:->> o-child "op_kind")) "constant")
+                                (-/execute-constant i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "special")
+                                (-/execute-special i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "lookup")
+                                (-/execute-lookup i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "local")
+                                (-/execute-local i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "let")
+                                (-/execute-let i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "lambda")
+                                (-/execute-lambda i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "invoke")
+                                (-/execute-invoke i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "def")
+                                (-/execute-def i-context-root v-child-root)
+                                (== (:text (:->> o-child "op_kind")) "cond")
+                                (-/execute-cond i-context-root v-child-root)
+                                :else
+                                (-/result-error i-context-root "unsupported-do-child"))]
+          (cond (== (:text (:->> o-result "status")) "error")
+                (return o-result)
+                :else
+                (return (-/execute-do-step
+                         (:bytea (:->> o-result "context_root"))
+                         i-op-root (+ i-position 1) i-count o-result))))))
+
+(defn.pg execute-do
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count) (cell/cell-ref-count i-op-root "op-child")]
+    (cond (== v-count 0)
+          (return (-/result-error i-context-root "empty-do"))
+          :else
+          (return (-/execute-do-step i-context-root i-op-root 0 v-count nil)))))
+
+(defn.pg execute
+  "Deterministic v1 dispatcher.  It reads no clock, sequence or session state."
+  {:added "0.2"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [o-op (op/op-get i-op-root)]
+    (cond [o-op :is-null]
+          (return (-/result-error i-context-root "unknown-op"))
+          (not (op/op-valid i-op-root))
+          (return (-/result-error i-context-root "invalid-op"))
+          (== (:text (:->> o-op "op_kind")) "constant")
+          (return (-/execute-constant i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "special")
+          (return (-/execute-special i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "lookup")
+          (return (-/execute-lookup i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "local")
+          (return (-/execute-local i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "let")
+          (return (-/execute-let i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "lambda")
+          (return (-/execute-lambda i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "invoke")
+          (return (-/execute-invoke i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "def")
+          (return (-/execute-def i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "cond")
+          (return (-/execute-cond i-context-root i-op-root))
+          (== (:text (:->> o-op "op_kind")) "do")
+          (return (-/execute-do i-context-root i-op-root))
+          :else
+          (return (-/result-error i-context-root "unsupported-op")))))

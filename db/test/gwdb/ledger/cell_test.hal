@@ -1,0 +1,76 @@
+(ns gwdb.ledger.cell-test
+  (:use code.test)
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :vendor :impossibl
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:stop)
+          (l/rt:restart)]
+  :teardown [(l/rt:stop)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.cell/cell-put :added "0.1"}
+(fact "a canonical cell is idempotent and exposes its committed type"
+  (!.pg
+   [:select (== (cell/cell-put (codec/canonical-hash 5 (pg/decode "parent" "escape")) 1 5 (pg/decode "parent" "escape"))
+                (cell/cell-put (codec/canonical-hash 5 (pg/decode "parent" "escape")) 1 5 (pg/decode "parent" "escape")))]
+   [:select (cell/cell-type-tag (codec/canonical-hash 5 (pg/decode "parent" "escape")))]
+   [:select (pg/t:count cell/Cell)])
+  => '(true 5 1))
+
+^{:refer gwdb.ledger.cell/cell-valid :added "0.1"}
+(fact "a cell accepts only its complete canonical envelope"
+  (!.pg
+   [:select (cell/cell-hash-valid (codec/canonical-hash 5 (pg/decode "valid" "escape")))]
+   [:select (cell/cell-valid (codec/canonical-hash 5 (pg/decode "valid" "escape")) 1 5 (pg/decode "valid" "escape"))]
+   [:select (cell/cell-valid (pg/decode "00" "hex") 1 5 (pg/decode "valid" "escape"))])
+  => '(true true false))
+
+^{:refer gwdb.ledger.cell/cell-ref-put :added "0.1"}
+(fact "derived references are idempotent and expose stable traversal operations"
+  (!.pg
+   [:select (== (cell/cell-put (codec/canonical-hash 5 (pg/decode "child" "escape")) 1 5 (pg/decode "child" "escape"))
+                (codec/canonical-hash 5 (pg/decode "child" "escape")))]
+   [:select (pg/case [(cell/cell-ref-put (codec/canonical-hash 5 (pg/decode "parent" "escape")) 0 "value" (codec/canonical-hash 5 (pg/decode "child" "escape"))) :is-not-null] true :else false)]
+   [:select (pg/case [(cell/cell-ref-put (codec/canonical-hash 5 (pg/decode "parent" "escape")) 0 "value" (codec/canonical-hash 5 (pg/decode "child" "escape"))) :is-not-null] true :else false)]
+   [:select (cell/cell-ref-count (codec/canonical-hash 5 (pg/decode "parent" "escape")) "value")]
+   [:select (== (cell/cell-ref-child (codec/canonical-hash 5 (pg/decode "parent" "escape")) 0 "value") (codec/canonical-hash 5 (pg/decode "child" "escape")))]
+   [:select (pg/jsonb-array-length (cell/cell-ref-children (codec/canonical-hash 5 (pg/decode "parent" "escape"))))]
+   [:select (pg/jsonb-array-length (cell/cell-ref-entries (codec/canonical-hash 5 (pg/decode "parent" "escape"))))]
+   [:select (cell/cell-ref-valid (codec/canonical-hash 5 (pg/decode "parent" "escape")) (codec/canonical-hash 5 (pg/decode "child" "escape")))])
+  => '(true true true 1 true 1 1 true))
+
+^{:refer gwdb.ledger.cell/cell-immutable :added "0.1"}
+(fact "the immutable trigger function rejects mutation attempts"
+  (!.pg [:select (cell/cell-immutable)])
+  => (any (throws)))
+
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

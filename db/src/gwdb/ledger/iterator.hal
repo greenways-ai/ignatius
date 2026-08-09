@@ -1,0 +1,197 @@
+(ns gwdb.ledger.iterator
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg IteratorPlan
+  "Rebuildable descriptor for a canonical serialisable iterator plan."
+  {:added "0.2"}
+  [:plan-root     {:type :bytea :primary true}
+   :plan-version  {:type :smallint :required true}
+   :plan-type     {:type :text :required true}
+   :function-root {:type :bytea}])
+
+(deftype.pg Iterator
+  "Rebuildable descriptor for canonical attached iterator state."
+  {:added "0.2"}
+  [:iterator-root    {:type :bytea :primary true}
+   :iterator-version {:type :smallint :required true}
+   :iterator-type    {:type :text :required true}
+   :plan-root        {:type :bytea :required true}
+   :source-root      {:type :bytea :required true}
+   :state-root       {:type :bytea :required true}])
+
+(defn.pg ^{:- [:boolean]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  plan-type-valid
+  {:added "0.2"}
+  [:text i-plan-type]
+  (or (== i-plan-type "vector")
+      (== i-plan-type "map")
+      (== i-plan-type "filter")
+      (== i-plan-type "take")
+      (== i-plan-type "drop")))
+
+(defn.pg ^{:- [:text]}
+  iterator-root-hex
+  {:added "0.2"}
+  [:bytea i-root]
+  (return (pg/case [i-root :is-null] "-" :else (pg/encode i-root "hex"))))
+
+(defn.pg ^{:- [:bytea]} plan-payload
+  {:added "0.2"}
+  [:text i-plan-type :bytea i-function-root]
+  (return (pg/decode
+           (|| "R:iterator-plan:1:" i-plan-type ":"
+               (-/iterator-root-hex i-function-root))
+           "escape")))
+
+(defn.pg ^{:- [:bytea]} plan-put
+  "Commits an iterator plan without accepting caller-supplied hash bytes."
+  {:added "0.2"}
+  [:text i-plan-type :bytea i-function-root]
+  (let [_ (pg/assert (-/plan-type-valid i-plan-type)
+                     [:ledger/unknown-iterator-plan])
+        o-function (cell/cell-by-hash i-function-root)
+        _ (pg/assert (or [i-function-root :is-null] [o-function :is-not-null])
+                     [:ledger/missing-iterator-function])
+        (:bytea v-payload) (-/plan-payload i-plan-type i-function-root)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 19 v-payload)
+                                        1 19 v-payload)
+        o-function-ref (pg/case [i-function-root :is-null] nil
+                                :else (cell/cell-ref-put
+                                       v-root 0 "function" i-function-root))
+        o-upsert (pg/t:upsert -/IteratorPlan
+                               {:plan-root v-root :plan-version 1
+                                :plan-type i-plan-type
+                                :function-root i-function-root})]
+    (return v-root)))
+
+(defn.pg plan-get
+  {:added "0.2"}
+  [:bytea i-plan-root]
+  (let [o-row (pg/t:get -/IteratorPlan {:where {:plan-root i-plan-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]} plan-valid
+  {:added "0.2"}
+  [:bytea i-plan-root]
+  (let [o-cell (cell/cell-by-hash i-plan-root)
+        o-plan (-/plan-get i-plan-root)
+        _ (when (or [o-cell :is-null] [o-plan :is-null]) (return false))
+        (:bytea v-payload)
+        (-/plan-payload (:text (:->> o-plan "plan_type"))
+                        (:bytea (:->> o-plan "function_root")))]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 19)
+                 (-/plan-type-valid (:text (:->> o-plan "plan_type")))
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-plan-root 19 v-payload)))))
+
+(defn.pg ^{:- [:bytea]} iterator-payload
+  {:added "0.2"}
+  [:text i-iterator-type :bytea i-plan-root :bytea i-source-root :bytea i-state-root]
+  (return (pg/decode
+           (|| "R:iterator:1:" i-iterator-type ":"
+               (-/iterator-root-hex i-plan-root)
+               (-/iterator-root-hex i-source-root)
+               (-/iterator-root-hex i-state-root))
+           "escape")))
+
+(defn.pg ^{:- [:bytea]} iterator-attach
+  "Attaches a plan to a canonical source and serialisable state root."
+  {:added "0.2"}
+  [:text i-iterator-type :bytea i-plan-root :bytea i-source-root :bytea i-state-root]
+  (let [o-plan (-/plan-get i-plan-root)
+        o-source (cell/cell-by-hash i-source-root)
+        o-state (cell/cell-by-hash i-state-root)
+        _ (pg/assert (-/plan-valid i-plan-root) [:ledger/invalid-iterator-plan])
+        _ (pg/assert (and [o-source :is-not-null]
+                          (== (:smallint (:->> o-source "type_tag")) 10))
+                     [:ledger/vector-iterator-requires-vector])
+        _ (pg/assert (and [o-state :is-not-null]
+                          (== (:smallint (:->> o-state "type_tag")) 2))
+                     [:ledger/iterator-state-not-integer])
+        _ (pg/assert (and (== i-iterator-type "vector")
+                          (== (:text (:->> o-plan "plan_type")) "vector"))
+                     [:ledger/invalid-iterator-attachment])
+        (:bytea v-payload) (-/iterator-payload
+                             i-iterator-type i-plan-root i-source-root i-state-root)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 20 v-payload)
+                                        1 20 v-payload)
+        o-plan-ref (cell/cell-ref-put v-root 0 "plan" i-plan-root)
+        o-source-ref (cell/cell-ref-put v-root 1 "source" i-source-root)
+        o-state-ref (cell/cell-ref-put v-root 2 "state" i-state-root)
+        o-upsert (pg/t:upsert -/Iterator
+                               {:iterator-root v-root :iterator-version 1
+                                :iterator-type i-iterator-type :plan-root i-plan-root
+                                :source-root i-source-root :state-root i-state-root})]
+    (return v-root)))
+
+(defn.pg iterator-get
+  {:added "0.2"}
+  [:bytea i-iterator-root]
+  (let [o-row (pg/t:get -/Iterator {:where {:iterator-root i-iterator-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]} iterator-valid
+  {:added "0.2"}
+  [:bytea i-iterator-root]
+  (let [o-cell (cell/cell-by-hash i-iterator-root)
+        o-iterator (-/iterator-get i-iterator-root)
+        _ (when (or [o-cell :is-null] [o-iterator :is-null]) (return false))
+        (:bytea v-payload)
+        (-/iterator-payload
+         (:text (:->> o-iterator "iterator_type"))
+         (:bytea (:->> o-iterator "plan_root"))
+         (:bytea (:->> o-iterator "source_root"))
+         (:bytea (:->> o-iterator "state_root")))]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 20)
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-iterator-root 20 v-payload)
+                 (== (cell/cell-ref-count i-iterator-root "plan") 1)
+                 (== (cell/cell-ref-count i-iterator-root "source") 1)
+                 (== (cell/cell-ref-count i-iterator-root "state") 1)))))
+
+(defn.pg iterator-step-active
+  "Builds the successor of one known active vector iterator position."
+  {:added "0.2"}
+  [:bytea i-plan-root :bytea i-source-root :bigint i-position
+   :bytea i-value-root]
+  (let [(:bytea v-next-state) (value/put-integer-number (+ i-position 1))
+        (:bytea v-next-root) (-/iterator-attach
+                               "vector" i-plan-root i-source-root v-next-state)]
+    (return {:done false :value i-value-root :next v-next-root
+             :cost-used 1})))
+
+(defn.pg iterator-step
+  "Steps a bounded vector iterator and returns a serialisable successor root."
+  {:added "0.2"}
+  [:bytea i-iterator-root]
+  (let [o-iterator (-/iterator-get i-iterator-root)
+        _ (when [o-iterator :is-null]
+            (return {:done true :next nil :cost-used 1}))
+        _ (when (not (-/iterator-valid i-iterator-root))
+            (return {:done true :next nil :cost-used 1}))
+        (:bytea v-source-root) (:bytea (:->> o-iterator "source_root"))
+        (:bigint v-position) (value/integer-bigint
+                               (:bytea (:->> o-iterator "state_root")))
+        (:bytea v-value-root) (value/vector-get v-source-root (:integer v-position))]
+    (cond [v-value-root :is-null]
+          (return {:done true :next nil :cost-used 1})
+          :else
+          (return (-/iterator-step-active
+                   (:bytea (:->> o-iterator "plan_root"))
+                   v-source-root v-position v-value-root)))))

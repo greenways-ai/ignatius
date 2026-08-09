@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+output="$("$repo_dir/scripts/ignatius-chain-migrate" --plan)"
+
+grep -Eq '^0001 [0-9a-f]{64} 0001-chain-version-registry\.sql$' <<< "$output"
+[[ "$(wc -l <<< "$output" | tr -d ' ')" == 1 ]]
+
+grep -Fq 'CREATE TABLE IF NOT EXISTS "gw_ledger"."ChainMigration"' \
+  "$repo_dir/db/migrations/0001-chain-version-registry.sql"
+grep -Fq 'REVOKE UPDATE, DELETE, TRUNCATE' \
+  "$repo_dir/db/migrations/0001-chain-version-registry.sql"
+
+if grep -R -n -E 'DROP[[:space:]]+(TABLE|SCHEMA)|TRUNCATE[[:space:]]+TABLE' \
+    "$repo_dir/db/migrations" --include='*.sql'; then
+  echo 'Ignatius additive migrations may not drop or truncate chain data.' >&2
+  exit 1
+fi

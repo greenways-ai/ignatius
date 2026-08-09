@@ -1,0 +1,159 @@
+(ns gwdb.ledger.runtime-profile
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(defn.pg ^{:- [:bytea]}
+  field
+  {:added "0.8"}
+  [:bytea i-profile-root :text i-name]
+  (return
+   (value/map-get i-profile-root (value/put-keyword i-name))))
+
+(defn.pg ^{:- [:bytea]}
+  profile-put
+  "Commits a compiler/runtime profile as an ordinary canonical HCV1 map."
+  {:added "0.8"}
+  [:bytea i-name-root :bytea i-version-root
+   :bytea i-bindings-root :bytea i-operations-root]
+  (let [(:bytea v-profile)
+        (value/map-assoc
+         (value/put-map (pg/jsonb-build-array))
+         (value/put-keyword "record/type")
+         (value/put-keyword "runtime-profile"))
+        (:bytea v-named)
+        (value/map-assoc
+         v-profile (value/put-keyword "profile/name") i-name-root)
+        (:bytea v-versioned)
+        (value/map-assoc
+         v-named (value/put-keyword "profile/version") i-version-root)
+        (:bytea v-bound)
+        (value/map-assoc
+         v-versioned (value/put-keyword "profile/bindings") i-bindings-root)]
+    (return
+     (value/map-assoc
+      v-bound (value/put-keyword "profile/operations") i-operations-root))))
+
+(defn.pg ^{:- [:boolean]}
+  profile-valid
+  {:added "0.8"}
+  [:bytea i-profile-root]
+  (let [o-profile (cell/cell-by-hash i-profile-root)
+        _ (when (or [o-profile :is-null]
+                    (not (== (:smallint (:->> o-profile "type_tag")) 11)))
+            (return false))
+        (:bytea v-type-root) (-/field i-profile-root "record/type")
+        (:bytea v-name-root) (-/field i-profile-root "profile/name")
+        (:bytea v-version-root) (-/field i-profile-root "profile/version")
+        (:bytea v-bindings-root) (-/field i-profile-root "profile/bindings")
+        (:bytea v-operations-root) (-/field i-profile-root "profile/operations")]
+    (return
+     (and (== v-type-root (value/put-keyword "runtime-profile"))
+          (== (cell/cell-type-tag v-name-root) 7)
+          (== (cell/cell-type-tag v-version-root) 2)
+          (== (cell/cell-type-tag v-bindings-root) 11)
+          (== (cell/cell-type-tag v-operations-root) 11)))))
+
+(defn.pg ^{:- [:boolean]}
+  runtime-root-valid
+  "Accepts historical runtime 1 or a canonical runtime profile."
+  {:added "0.8"}
+  [:bytea i-runtime-root]
+  (let [o-runtime (cell/cell-by-hash i-runtime-root)]
+    (return
+     (or (and [o-runtime :is-not-null]
+              (== (:smallint (:->> o-runtime "type_tag")) 2)
+              (== (value/integer-bigint i-runtime-root) 1))
+         (-/profile-valid i-runtime-root)))))
+
+(defn.pg ^{:- [:bytea]}
+  profile-lookup
+  "Resolves a source symbol to its canonical primitive/function root."
+  {:added "0.8"}
+  [:bytea i-profile-root :bytea i-symbol-root]
+  (let [_ (when (not (-/profile-valid i-profile-root))
+            (return nil))
+        (:bytea v-bindings-root)
+        (-/field i-profile-root "profile/bindings")]
+    (return (value/map-get v-bindings-root i-symbol-root))))
+
+(defn.pg ^{:- [:bytea]}
+  binding-assoc
+  {:added "0.8"}
+  [:bytea i-bindings-root :text i-symbol
+   :text i-primitive-id :integer i-arity]
+  (return
+   (value/map-assoc
+    i-bindings-root
+    (value/put-symbol i-symbol)
+    (primitive/primitive-put i-primitive-id i-arity))))
+
+(defn.pg ^{:- [:bytea]}
+  operation-assoc
+  {:added "0.8"}
+  [:bytea i-operations-root :text i-symbol :text i-operation]
+  (return
+   (value/map-assoc
+    i-operations-root
+    (value/put-symbol i-symbol)
+    (value/put-symbol i-operation))))
+
+(defn.pg ^{:- [:bytea]}
+  convex-profile-put
+  "Commits the initial Convex-shaped surface over native Ignatius primitives."
+  {:added "0.8"}
+  []
+  (let [(:bytea v-bindings-0) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-bindings-1)
+        (-/binding-assoc v-bindings-0 "+" "integer/add" 2)
+        (:bytea v-bindings-2)
+        (-/binding-assoc v-bindings-1 "-" "integer/subtract" 2)
+        (:bytea v-bindings-3)
+        (-/binding-assoc v-bindings-2 "*" "integer/multiply" 2)
+        (:bytea v-bindings-4)
+        (-/binding-assoc v-bindings-3 "=" "value/equal" 2)
+        (:bytea v-bindings-5)
+        (-/binding-assoc v-bindings-4 "not" "boolean/not" 1)
+        (:bytea v-bindings-6)
+        (-/binding-assoc v-bindings-5 "vector" "vector/new" -1)
+        (:bytea v-bindings-7)
+        (-/binding-assoc v-bindings-6 "count" "vector/count" 1)
+        (:bytea v-bindings-8)
+        (-/binding-assoc v-bindings-7 "get" "map/get" 2)
+        (:bytea v-bindings-9)
+        (-/binding-assoc v-bindings-8 "assoc" "map/assoc" 3)
+        (:bytea v-bindings-10)
+        (-/binding-assoc v-bindings-9 "str" "string/concat" -1)
+        (:bytea v-bindings-11)
+        (-/binding-assoc v-bindings-10 "account" "account/root" 1)
+        (:bytea v-bindings-12)
+        (-/binding-assoc v-bindings-11 "account-key" "account/key" 1)
+        (:bytea v-bindings-13)
+        (-/binding-assoc
+         v-bindings-12 "account-controller" "account/controller" 1)
+        (:bytea v-operations-0) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-operations-1)
+        (-/operation-assoc
+         v-operations-0 "deploy" "ignatius.op/actor-deploy")
+        (:bytea v-operations-2)
+        (-/operation-assoc
+         v-operations-1 "call" "ignatius.op/actor-call")
+        (:bytea v-operations-3)
+        (-/operation-assoc
+         v-operations-2 "query" "ignatius.op/actor-query")]
+    (return
+     (-/profile-put
+      (value/put-symbol "convex.compat")
+      (value/put-integer "1")
+      v-bindings-13 v-operations-3))))

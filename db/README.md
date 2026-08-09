@@ -1,4 +1,4 @@
-# Ignatius PostgreSQL adapter
+# Ignatius PostgreSQL chain
 
 `db/` is the durable multi-writer PostgreSQL implementation of the Ignatius
 Hara chain. It owns canonical chain storage and execution; it does not define
@@ -6,7 +6,7 @@ Hestia agents, rooms, documents, recovery ceremonies, or product projections.
 
 ## Responsibilities
 
-The adapter provides:
+The chain provides:
 
 - HCV1 canonical cells and child references;
 - accounts, controller keys, state roots, operations, functions, modules and
@@ -17,10 +17,28 @@ The adapter provides:
 - HCP1 snapshot export/import and integrity verification; and
 - generated SQL and a generated TypeScript client contract.
 
-PostgreSQL is an Ignatius adapter, not the protocol definition. Portable chain
-framing and client transitions live in `../hal/`. Hestia may add ordinary tables
-and projections beside an Ignatius database, but application rows must retain
-canonical roots and remain rebuildable from admitted records and receipts.
+PostgreSQL is the authoritative Ignatius chain. Portable transaction framing,
+local evaluation, signing, submission and receipt verification live in
+`../hal/` as its client. Those modules must conform to PostgreSQL execution and
+must not replace it. Hestia may add ordinary tables and projections beside an
+Ignatius database, but application rows must retain canonical roots and remain
+rebuildable from admitted records and receipts.
+
+`sql/full.sql` is a destructive fresh-install baseline. It must never be run
+against an existing node. Existing nodes advance only through the ordered,
+non-destructive migrations described in `migrations/README.md`.
+
+Plan or apply those migrations with:
+
+```sh
+scripts/ignatius-chain-migrate --plan
+scripts/ignatius-chain-migrate "$DATABASE_URL"
+```
+
+The runner verifies contiguous versions and exact SHA-256 digests, rejects
+newer or protocol-incompatible nodes, holds a PostgreSQL transaction advisory
+lock, and applies each migration atomically. Build the deterministic installable
+archive and its checksum and metadata with `scripts/build-chain-release`.
 
 ## Generate artefacts
 
@@ -41,6 +59,38 @@ Generated outputs are committed:
 - `contracts/ledger-client/generated.ts`
 
 CI regenerates both and rejects drift.
+
+## PostgreSQL-target HAL source
+
+Every namespace under `src/gwdb/ledger` has a PostgreSQL-target `.hal` shadow
+beside its Foundation `.clj` migration source. The namespace names, DSL forms,
+schema names and canonical algorithms are intentionally unchanged. The only
+bootstrap difference is that HAL sources require `lang.core` rather than the
+legacy `tahto.core` façade.
+
+The HAL project entry point is `gwdb.ledger.base`, so it closes over the entire
+chain implementation rather than only the portable client:
+
+```sh
+make db-hal-parity
+make db-hal-check
+make db-hal-test
+```
+
+`db-hal-parity` is part of `make verify`. It requires a one-for-one source map
+and byte-for-byte equality after normalising the bootstrap require and the
+small closed set of HAL API translations (`defonce`, macro-only script setup,
+runtime lifecycle names and the `code.test` result bridge). During the shadow
+period, change the `.clj` form through the Foundation REPL-first workflow and
+make the corresponding evaluated `.hal` change in the same commit.
+
+`db-hal-test` grants process access because the PostgreSQL test runtime manages
+its disposable database fixture. The Hara runtime used for this command must
+register the `[:postgres :jdbc.client]` provider. Source loading and complete
+PostgreSQL emission do not require that provider; executing `!.pg` integration
+facts does. The `.clj` copies may be removed only after HAL emission matches the
+committed SQL and that provider-backed integration suite passes from the HAL
+entry point.
 
 ## Focused tests
 
@@ -78,5 +128,5 @@ canonical bytes or historical roots.
 
 ## Provenance
 
-This adapter was extracted with filtered Git history from
+This chain implementation was extracted with filtered Git history from
 `greenways-ai/hestia`. See [`../MIGRATION.md`](../MIGRATION.md).

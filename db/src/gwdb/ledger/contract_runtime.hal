@@ -1,0 +1,732 @@
+(ns gwdb.ledger.contract-runtime
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.contract :as contract]
+            [gwdb.ledger.function :as function]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.runtime :as runtime]
+            [gwdb.ledger.runtime-support :as support]
+            [gwdb.ledger.runtime-v2 :as runtime-v2]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.contract :as contract]
+             [gwdb.ledger.function :as function]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.runtime :as runtime]
+             [gwdb.ledger.runtime-support :as support]
+             [gwdb.ledger.runtime-v2 :as runtime-v2]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(defn.pg ^{:- [:boolean]}
+  contract-special
+  {:added "0.9"}
+  [:bytea i-op-root]
+  (let [(:text v-special) (contract/special-name i-op-root)]
+    (return
+     (or (== v-special "contract/publish")
+         (== v-special "contract/open")
+         (== v-special "contract/apply")
+         (== v-special "contract/simulate")
+         (== v-special "contract/state")
+         (== v-special "contract/history")
+         (== v-special "contract/view")))))
+
+(defn.pg ^{:- [:jsonb]}
+  evaluated-roots
+  {:added "0.9"}
+  [:bytea i-context-root :jsonb i-roots]
+  (let [o-context (context/context-get i-context-root)]
+    (return {:status "ok"
+             :context-root i-context-root
+             :roots i-roots
+             :cost-used (:bigint (:->> o-context "cost_used"))})))
+
+(defn.pg ^{:- [:jsonb]}
+  evaluate-children-at
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root
+   :integer i-position :integer i-count :jsonb i-roots]
+  (cond (>= i-position i-count)
+        (return (-/evaluated-roots i-context-root i-roots))
+        :else
+        (let [o-result
+              (runtime-v2/execute
+               i-context-root
+               (op/op-child-root i-op-root i-position))
+              _ (when (== (:text (:->> o-result "status")) "error")
+                  (return o-result))
+              (:jsonb v-next-roots)
+              (|| i-roots
+                  (pg/jsonb-build-array
+                   (pg/encode
+                    (:bytea (:->> o-result "value_root"))
+                    "hex")))]
+          (return
+           (-/evaluate-children-at
+            (:bytea (:->> o-result "context_root"))
+            i-op-root (+ i-position 1) i-count v-next-roots)))))
+
+(defn.pg ^{:- [:jsonb]}
+  evaluate-children
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (return
+   (-/evaluate-children-at
+    i-context-root i-op-root 0
+    (cell/cell-ref-count i-op-root "op-child")
+    (pg/jsonb-build-array))))
+
+(defn.pg ^{:- [:bytea]}
+  root-at
+  {:added "0.9"}
+  [:jsonb i-roots :integer i-position]
+  (return
+   (pg/decode (:text (:->> i-roots i-position)) "hex")))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-one
+  "Executes a committed one-argument function through the recursive VM."
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-function-root :bytea i-argument-root]
+  (let [_ (when (not (contract/function-arity i-function-root 1))
+            (return
+             (runtime/result-error
+              i-context-root "contract/function-arity")))
+        (:bytea v-invoke-root)
+        (op/invoke
+         i-function-root
+         (pg/jsonb-build-array
+          (pg/encode
+           (op/constant i-argument-root) "hex")))]
+    (return
+     (runtime-v2/execute i-context-root v-invoke-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-two
+  "Executes a committed two-argument reducer through the recursive VM."
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-function-root
+   :bytea i-left-root :bytea i-right-root]
+  (let [_ (when (not (contract/function-arity i-function-root 2))
+            (return
+             (runtime/result-error
+              i-context-root "contract/function-arity")))
+        (:bytea v-invoke-root)
+        (op/invoke
+         i-function-root
+         (pg/jsonb-build-array
+          (pg/encode (op/constant i-left-root) "hex")
+          (pg/encode (op/constant i-right-root) "hex")))]
+    (return
+     (runtime-v2/execute i-context-root v-invoke-root))))
+
+(defn.pg ^{:- [:bytea]}
+  pure-context
+  "Discards any ambient state changes attempted while evaluating reducer code."
+  {:added "0.9"}
+  [:bytea i-start-context-root :bytea i-result-context-root]
+  (let [o-start (context/context-get i-start-context-root)]
+    (return
+     (context/context-with-state
+      i-result-context-root
+      (:bytea (:->> o-start "state_root"))))))
+
+(defn.pg ^{:- [:bytea]}
+  event-payload-open
+  {:added "0.9"}
+  [:bytea i-parameters-root]
+  (let [(:bytea v-payload)
+        (value/map-assoc
+         (value/put-map (pg/jsonb-build-array))
+         (value/put-keyword "action")
+         (value/put-keyword "contract/open"))]
+    (return
+     (value/map-assoc
+      v-payload
+      (value/put-keyword "parameters")
+      i-parameters-root))))
+
+(defn.pg ^{:- [:bytea]}
+  append-history
+  {:added "0.9"}
+  [:bytea i-history-root :bytea i-commit-root]
+  (return
+   (value/put-vector
+    (|| (support/vector-roots i-history-root)
+        (pg/jsonb-build-array
+         (pg/encode i-commit-root "hex"))))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-publish
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 2))
+            (return
+             (runtime/result-error
+              i-context-root "contract/publish-arity")))
+        o-arguments (-/evaluate-children i-context-root i-op-root)
+        _ (when (== (:text (:->> o-arguments "status")) "error")
+            (return o-arguments))
+        (:jsonb v-roots) (:jsonb (:->> o-arguments "roots"))
+        (:bytea v-context-root)
+        (:bytea (:->> o-arguments "context_root"))
+        o-context (context/context-get v-context-root)
+        (:bytea v-template-root) (-/root-at v-roots 0)
+        (:bytea v-alias-root) (-/root-at v-roots 1)
+        _ (when (not (contract/template-valid v-template-root))
+            (return
+             (runtime/result-error
+              v-context-root "contract/invalid-template")))
+        _ (when (not
+                 (== (contract/field
+                      v-template-root "contract/publisher")
+                     (:bytea (:->> o-context "origin"))))
+            (return
+             (runtime/result-error
+              v-context-root "contract/publisher-mismatch")))
+        _ (when (not (== (cell/cell-type-tag v-alias-root) 7))
+            (return
+             (runtime/result-error
+              v-context-root "contract/alias-not-symbol")))
+        _ (when (not (context/context-can-charge v-context-root 4))
+            (return
+             (runtime/result-error
+              v-context-root "cost-limit")))
+        (:bytea v-account-root)
+        (state/state-account-root
+         (:bytea (:->> o-context "state_root"))
+         (:bytea (:->> o-context "address")))
+        _ (when [v-account-root :is-null]
+            (return
+             (runtime/result-error
+              v-context-root "missing-account")))
+        (:bytea v-next-account)
+        (account/account-value-define
+         v-account-root v-alias-root v-template-root)
+        (:bytea v-next-state)
+        (state/state-assoc-account
+         (:bytea (:->> o-context "state_root"))
+         (:bytea (:->> o-context "address"))
+         v-next-account
+         (:bigint (:->> o-context "block_height")))
+        (:bytea v-next-context)
+        (context/context-charge
+         (context/context-with-state
+          v-context-root v-next-state)
+         4)
+        (:bytea v-publication-root)
+        (contract/publication-put
+         v-template-root
+         (:bytea (:->> o-context "origin"))
+         v-alias-root
+         (:bytea (:->> o-context "transaction_root"))
+         (:bigint (:->> o-context "timestamp")))]
+    (return
+     (runtime/result-ok
+      v-next-context v-publication-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-open
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 2))
+            (return
+             (runtime/result-error
+              i-context-root "contract/open-arity")))
+        o-arguments (-/evaluate-children i-context-root i-op-root)
+        _ (when (== (:text (:->> o-arguments "status")) "error")
+            (return o-arguments))
+        (:jsonb v-roots) (:jsonb (:->> o-arguments "roots"))
+        (:bytea v-argument-context-root)
+        (:bytea (:->> o-arguments "context_root"))
+        (:bytea v-template-root) (-/root-at v-roots 0)
+        (:bytea v-parameters-root) (-/root-at v-roots 1)
+        _ (when (not (contract/template-valid v-template-root))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/invalid-template")))
+        _ (when (not
+                 (context/context-can-charge
+                  v-argument-context-root 8))
+            (return
+             (runtime/result-error
+              v-argument-context-root "cost-limit")))
+        (:bytea v-charged-context)
+        (context/context-charge v-argument-context-root 8)
+        o-initialized
+        (-/execute-one
+         v-charged-context
+         (contract/field v-template-root "contract/init")
+         v-parameters-root)
+        _ (when (== (:text (:->> o-initialized "status")) "error")
+            (return o-initialized))
+        (:bytea v-pure-context)
+        (-/pure-context
+         v-charged-context
+         (:bytea (:->> o-initialized "context_root")))
+        o-pure-context (context/context-get v-pure-context)
+        (:bytea v-initial-state)
+        (:bytea (:->> o-initialized "value_root"))
+        (:bytea v-address-root)
+        (contract/address-root v-pure-context i-op-root)
+        (:bytea v-existing)
+        (state/state-account-root
+         (:bytea (:->> o-pure-context "state_root"))
+         v-address-root)
+        _ (when [v-existing :is-not-null]
+            (return
+             (runtime/result-error
+              v-pure-context "contract/address-exists")))
+        (:bytea v-nil-root) (value/put-nil)
+        (:bytea v-open-payload)
+        (-/event-payload-open v-parameters-root)
+        (:bytea v-event-root)
+        (contract/verified-event-put
+         v-open-payload
+         v-address-root
+         v-template-root
+         (:bytea (:->> o-pure-context "origin"))
+         (:bytea (:->> o-pure-context "transaction_root"))
+         (:bigint (:->> o-pure-context "timestamp"))
+         v-nil-root)
+        (:bytea v-commit-root)
+        (contract/commit-put
+         v-address-root
+         v-template-root
+         v-nil-root
+         v-event-root
+         (:bytea (:->> o-pure-context "origin"))
+         v-nil-root
+         v-initial-state
+         (:bytea (:->> o-pure-context "transaction_root"))
+         (:bigint (:->> o-pure-context "timestamp")))
+        (:bytea v-history-root)
+        (value/put-vector
+         (pg/jsonb-build-array
+          (pg/encode v-commit-root "hex")))
+        (:bytea v-instance-account)
+        (contract/instance-account-create
+         (:bytea (:->> o-pure-context "address"))
+         v-template-root
+         v-initial-state
+         v-commit-root
+         v-history-root)
+        (:bytea v-next-state)
+        (state/state-assoc-account
+         (:bytea (:->> o-pure-context "state_root"))
+         v-address-root
+         v-instance-account
+         (:bigint (:->> o-pure-context "block_height")))
+        (:bytea v-next-context)
+        (context/context-with-state
+         v-pure-context v-next-state)]
+    (return
+     (runtime/result-ok
+      v-next-context v-address-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-apply
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 3))
+            (return
+             (runtime/result-error
+              i-context-root "contract/apply-arity")))
+        o-arguments (-/evaluate-children i-context-root i-op-root)
+        _ (when (== (:text (:->> o-arguments "status")) "error")
+            (return o-arguments))
+        (:jsonb v-roots) (:jsonb (:->> o-arguments "roots"))
+        (:bytea v-argument-context-root)
+        (:bytea (:->> o-arguments "context_root"))
+        o-context (context/context-get v-argument-context-root)
+        (:bytea v-address-root) (-/root-at v-roots 0)
+        (:bytea v-expected-head-root) (-/root-at v-roots 1)
+        (:bytea v-payload-root) (-/root-at v-roots 2)
+        (:bytea v-global-state)
+        (:bytea (:->> o-context "state_root"))
+        _ (when (not
+                 (contract/instance-valid
+                  v-global-state v-address-root))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/missing-instance")))
+        (:bytea v-template-root)
+        (contract/instance-template
+         v-global-state v-address-root)
+        (:bytea v-current-state)
+        (contract/instance-state
+         v-global-state v-address-root)
+        (:bytea v-current-head)
+        (contract/instance-head
+         v-global-state v-address-root)
+        (:bytea v-history-root)
+        (contract/instance-history
+         v-global-state v-address-root)
+        _ (when (not (== v-current-head v-expected-head-root))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/head-changed")))
+        _ (when (not (== (cell/cell-type-tag v-payload-root) 11))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/event-not-map")))
+        _ (when (not
+                 (context/context-can-charge
+                  v-argument-context-root 8))
+            (return
+             (runtime/result-error
+              v-argument-context-root "cost-limit")))
+        (:bytea v-charged-context)
+        (context/context-charge v-argument-context-root 8)
+        o-charged (context/context-get v-charged-context)
+        (:bytea v-event-root)
+        (contract/verified-event-put
+         v-payload-root
+         v-address-root
+         v-template-root
+         (:bytea (:->> o-charged "origin"))
+         (:bytea (:->> o-charged "transaction_root"))
+         (:bigint (:->> o-charged "timestamp"))
+         v-current-head)
+        o-reduced
+        (-/execute-two
+         v-charged-context
+         (contract/field
+          v-template-root "contract/transition")
+         v-current-state
+         v-event-root)
+        _ (when (== (:text (:->> o-reduced "status")) "error")
+            (return o-reduced))
+        (:bytea v-pure-context)
+        (-/pure-context
+         v-charged-context
+         (:bytea (:->> o-reduced "context_root")))
+        o-pure (context/context-get v-pure-context)
+        (:bytea v-reducer-result)
+        (:bytea (:->> o-reduced "value_root"))
+        _ (when (not (== (cell/cell-type-tag v-reducer-result) 11))
+            (return
+             (runtime/result-error
+              v-pure-context "contract/invalid-transition-result")))
+        (:bytea v-error-root)
+        (value/map-get
+         v-reducer-result (value/put-keyword "error"))
+        (:bytea v-next-contract-state)
+        (value/map-get
+         v-reducer-result (value/put-keyword "ok"))]
+    (cond [v-error-root :is-not-null]
+          (return
+           (runtime/result-ok
+            v-pure-context v-reducer-result))
+
+          [v-next-contract-state :is-null]
+          (return
+           (runtime/result-error
+            v-pure-context "contract/transition-missing-ok"))
+
+          :else
+          (let [(:bytea v-commit-root)
+                (contract/commit-put
+                 v-address-root
+                 v-template-root
+                 v-current-head
+                 v-event-root
+                 (:bytea (:->> o-pure "origin"))
+                 v-current-state
+                 v-next-contract-state
+                 (:bytea (:->> o-pure "transaction_root"))
+                 (:bigint (:->> o-pure "timestamp")))
+                (:bytea v-next-history)
+                (-/append-history
+                 v-history-root v-commit-root)
+                (:bytea v-account-root)
+                (state/state-account-root
+                 (:bytea (:->> o-pure "state_root"))
+                 v-address-root)
+                (:bytea v-next-account)
+                (contract/instance-account-update
+                 v-account-root
+                 v-next-contract-state
+                 v-commit-root
+                 v-next-history)
+                (:bytea v-next-global-state)
+                (state/state-assoc-account
+                 (:bytea (:->> o-pure "state_root"))
+                 v-address-root
+                 v-next-account
+                 (:bigint (:->> o-pure "block_height")))
+                (:bytea v-next-context)
+                (context/context-with-state
+                 v-pure-context v-next-global-state)
+                (:bytea v-result-root)
+                (contract/result-put
+                 v-address-root
+                 v-commit-root
+                 v-next-contract-state
+                 v-reducer-result
+                 true)]
+            (return
+             (runtime/result-ok
+              v-next-context v-result-root))))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-simulate
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 2))
+            (return
+             (runtime/result-error
+              i-context-root "contract/simulate-arity")))
+        o-arguments (-/evaluate-children i-context-root i-op-root)
+        _ (when (== (:text (:->> o-arguments "status")) "error")
+            (return o-arguments))
+        (:jsonb v-roots) (:jsonb (:->> o-arguments "roots"))
+        (:bytea v-argument-context-root)
+        (:bytea (:->> o-arguments "context_root"))
+        o-context (context/context-get v-argument-context-root)
+        (:bytea v-address-root) (-/root-at v-roots 0)
+        (:bytea v-payload-root) (-/root-at v-roots 1)
+        (:bytea v-global-state)
+        (:bytea (:->> o-context "state_root"))
+        _ (when (not
+                 (contract/instance-valid
+                  v-global-state v-address-root))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/missing-instance")))
+        (:bytea v-template-root)
+        (contract/instance-template
+         v-global-state v-address-root)
+        (:bytea v-current-state)
+        (contract/instance-state
+         v-global-state v-address-root)
+        (:bytea v-current-head)
+        (contract/instance-head
+         v-global-state v-address-root)
+        _ (when (not (== (cell/cell-type-tag v-payload-root) 11))
+            (return
+             (runtime/result-error
+              v-argument-context-root "contract/event-not-map")))
+        _ (when (not
+                 (context/context-can-charge
+                  v-argument-context-root 4))
+            (return
+             (runtime/result-error
+              v-argument-context-root "cost-limit")))
+        (:bytea v-charged-context)
+        (context/context-charge v-argument-context-root 4)
+        o-charged (context/context-get v-charged-context)
+        (:bytea v-event-root)
+        (contract/verified-event-put
+         v-payload-root
+         v-address-root
+         v-template-root
+         (:bytea (:->> o-charged "origin"))
+         (:bytea (:->> o-charged "transaction_root"))
+         (:bigint (:->> o-charged "timestamp"))
+         v-current-head)
+        o-reduced
+        (-/execute-two
+         v-charged-context
+         (contract/field
+          v-template-root "contract/transition")
+         v-current-state
+         v-event-root)
+        _ (when (== (:text (:->> o-reduced "status")) "error")
+            (return o-reduced))
+        (:bytea v-pure-context)
+        (-/pure-context
+         v-charged-context
+         (:bytea (:->> o-reduced "context_root")))
+        (:bytea v-reducer-result)
+        (:bytea (:->> o-reduced "value_root"))
+        _ (when (not (== (cell/cell-type-tag v-reducer-result) 11))
+            (return
+             (runtime/result-error
+              v-pure-context "contract/invalid-transition-result")))
+        (:bytea v-error-root)
+        (value/map-get
+         v-reducer-result (value/put-keyword "error"))
+        (:bytea v-next-state)
+        (value/map-get
+         v-reducer-result (value/put-keyword "ok"))
+        (:bytea v-hypothetical-state)
+        (pg/case [v-error-root :is-not-null]
+                 v-current-state
+                 [v-next-state :is-null]
+                 v-current-state
+                 :else v-next-state)
+        (:bytea v-result-root)
+        (contract/result-put
+         v-address-root
+         v-current-head
+         v-hypothetical-state
+         v-reducer-result
+         false)]
+    (return
+     (runtime/result-ok
+      v-pure-context v-result-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-read
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root :boolean i-history]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 1))
+            (return
+             (runtime/result-error
+              i-context-root "contract/read-arity")))
+        o-target
+        (runtime-v2/execute
+         i-context-root
+         (op/op-child-root i-op-root 0))
+        _ (when (== (:text (:->> o-target "status")) "error")
+            (return o-target))
+        (:bytea v-context-root)
+        (:bytea (:->> o-target "context_root"))
+        o-context (context/context-get v-context-root)
+        (:bytea v-address-root)
+        (:bytea (:->> o-target "value_root"))
+        (:bytea v-global-state)
+        (:bytea (:->> o-context "state_root"))
+        _ (when (not
+                 (contract/instance-valid
+                  v-global-state v-address-root))
+            (return
+             (runtime/result-error
+              v-context-root "contract/missing-instance")))
+        _ (when (not (context/context-can-charge v-context-root 1))
+            (return
+             (runtime/result-error
+              v-context-root "cost-limit")))
+        (:bytea v-value-root)
+        (pg/case i-history
+                 (contract/instance-history
+                  v-global-state v-address-root)
+                 :else
+                 (contract/instance-state
+                  v-global-state v-address-root))]
+    (return
+     (runtime/result-ok
+      (context/context-charge v-context-root 1)
+      v-value-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute-view
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:integer v-count)
+        (cell/cell-ref-count i-op-root "op-child")
+        _ (when (not (== v-count 1))
+            (return
+             (runtime/result-error
+              i-context-root "contract/view-arity")))
+        o-target
+        (runtime-v2/execute
+         i-context-root
+         (op/op-child-root i-op-root 0))
+        _ (when (== (:text (:->> o-target "status")) "error")
+            (return o-target))
+        (:bytea v-context-root)
+        (:bytea (:->> o-target "context_root"))
+        o-context (context/context-get v-context-root)
+        o-op (op/op-get i-op-root)
+        (:bytea v-address-root)
+        (:bytea (:->> o-target "value_root"))
+        (:bytea v-global-state)
+        (:bytea (:->> o-context "state_root"))
+        _ (when (not
+                 (contract/instance-valid
+                  v-global-state v-address-root))
+            (return
+             (runtime/result-error
+              v-context-root "contract/missing-instance")))
+        (:bytea v-template-root)
+        (contract/instance-template
+         v-global-state v-address-root)
+        (:bytea v-contract-state)
+        (contract/instance-state
+         v-global-state v-address-root)
+        (:bytea v-views-root)
+        (contract/field v-template-root "contract/views")
+        (:bytea v-view-root)
+        (value/map-get
+         v-views-root
+         (:bytea (:->> o-op "value_root")))
+        _ (when (not (contract/function-arity v-view-root 1))
+            (return
+             (runtime/result-error
+              v-context-root "contract/missing-view")))
+        _ (when (not (context/context-can-charge v-context-root 3))
+            (return
+             (runtime/result-error
+              v-context-root "cost-limit")))
+        (:bytea v-charged-context)
+        (context/context-charge v-context-root 3)
+        o-view
+        (-/execute-one
+         v-charged-context v-view-root v-contract-state)
+        _ (when (== (:text (:->> o-view "status")) "error")
+            (return o-view))
+        (:bytea v-pure-context)
+        (-/pure-context
+         v-charged-context
+         (:bytea (:->> o-view "context_root")))]
+    (return
+     (runtime/result-ok
+      v-pure-context
+      (:bytea (:->> o-view "value_root"))))))
+
+(defn.pg ^{:- [:jsonb]}
+  execute
+  "Executes reducer contract publication, creation, events, reads and simulation."
+  {:added "0.9"}
+  [:bytea i-context-root :bytea i-op-root]
+  (let [(:text v-special) (contract/special-name i-op-root)]
+    (cond (== v-special "contract/publish")
+          (return (-/execute-publish i-context-root i-op-root))
+
+          (== v-special "contract/open")
+          (return (-/execute-open i-context-root i-op-root))
+
+          (== v-special "contract/apply")
+          (return (-/execute-apply i-context-root i-op-root))
+
+          (== v-special "contract/simulate")
+          (return (-/execute-simulate i-context-root i-op-root))
+
+          (== v-special "contract/state")
+          (return (-/execute-read i-context-root i-op-root false))
+
+          (== v-special "contract/history")
+          (return (-/execute-read i-context-root i-op-root true))
+
+          (== v-special "contract/view")
+          (return (-/execute-view i-context-root i-op-root))
+
+          :else
+          (return
+           (runtime/result-error
+            i-context-root "unknown-contract-operation")))))

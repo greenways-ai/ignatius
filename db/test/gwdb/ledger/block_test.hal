@@ -1,0 +1,67 @@
+(ns gwdb.ledger.block-test
+  (:use code.test)
+  (:require [gwdb.ledger.block :refer :all]))
+
+^{:refer gwdb.ledger.block/Block :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/BlockTransaction :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/BlockSignature :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/Head :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-root-hex :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-payload :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-transaction-refs-put :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-put :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-get :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-transaction-roots :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-valid :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/head-get :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/head-lock :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/head-put :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/head-commit :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-commit :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-transaction-bind :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-execute-transaction :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.block/block-commit-one :added "0.1"}
+(fact "TODO")
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

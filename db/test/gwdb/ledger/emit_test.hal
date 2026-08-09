@@ -1,0 +1,26 @@
+(ns gwdb.ledger.emit-test
+  (:require [std.lib.test :as test]
+            [std.foundation.string :as string]
+            [lang.core.compile :as compile]
+            [gwdb.ledger.base]))
+
+(def compiled
+  (:output
+   (compile/compile-module
+    {:lang :postgres
+     :main 'gwdb.ledger.base
+     :layout :module
+     :emit {:code {:label true}}})))
+
+(test/print-results
+ [(test/check
+   "the complete ledger graph emits as PostgreSQL"
+   (and (string/includes? compiled "CREATE OR REPLACE FUNCTION")
+        (string/includes? compiled "gw_ledger")
+        (string/includes? compiled "canonical_hash")
+        (string/includes? compiled "state_version")
+        (string/includes? compiled "transaction")
+        (string/includes? compiled "block_height")
+        (string/includes? compiled "receipt")
+        (string/includes? compiled "workspace"))
+   true)])

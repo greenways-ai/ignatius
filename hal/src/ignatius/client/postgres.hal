@@ -1,0 +1,64 @@
+(ns ignatius.client.postgres)
+
+(def submission-fields
+  [:schema-version
+   :protocol-version
+   :network
+   :account
+   :sequence
+   :transaction-root
+   :operation-root
+   :form-root
+   :runtime-root
+   :cost-limit
+   :pack
+   :operation-manifest
+   :primitive-manifest
+   :signature])
+
+(def result-fields
+  [:status
+   :transaction-root
+   :result-root
+   :receipt-root
+   :previous-state-root
+   :state-root
+   :block-root
+   :height
+   :cost
+   :sequence
+   :ledger-time])
+
+(defn chain-call
+  "Constructs an explicit postgres.core host call without exposing its handle."
+  [operation arguments]
+  {:service "postgres.core"
+   :operation operation
+   :arguments arguments})
+
+(defn compatible-version?
+  "Requires exact schema and protocol compatibility for the first release."
+  [release node]
+  (= [(get release :schema-version)
+      (get release :protocol-version)]
+     [(get node :schema-version)
+      (get node :protocol-version)]))
+
+(defn submission-call
+  "Constructs the one atomic general-submission call."
+  [submission]
+  (chain-call "ignatius/submit" [submission]))
+
+(defn receipt-matches?
+  "Checks every root an application must bind before accepting chain evidence."
+  [expected result]
+  (= [(get expected :transaction-root)
+      (get expected :result-root)
+      (get expected :state-root)
+      (get expected :block-root)
+      (get expected :receipt-root)]
+     [(get result :transaction-root)
+      (get result :result-root)
+      (get result :state-root)
+      (get result :block-root)
+      (get result :receipt-root)]))

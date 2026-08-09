@@ -1,0 +1,390 @@
+(ns gwdb.ledger.workspace-admission
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.admission :as admission]
+            [gwdb.ledger.block :as block]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.crypto :as crypto]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.scoped-ref :as scoped-ref]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.transaction :as transaction]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.workspace :as workspace]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.admission :as admission]
+             [gwdb.ledger.block :as block]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.crypto :as crypto]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.scoped-ref :as scoped-ref]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.transaction :as transaction]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.workspace :as workspace]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"] ["pgsodium"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(defn.pg ^{:- [:text]}
+  workspace-id-text
+  "Reads the stable workspace ID from one canonical HCV1 string value."
+  {:added "0.12"}
+  [:bytea i-workspace-id-root]
+  (let [o-cell (cell/cell-by-hash i-workspace-id-root)
+        _ (pg/assert
+           (and [o-cell :is-not-null]
+                (== (:smallint (:->> o-cell "type_tag")) 5))
+           [:ledger/invalid-workspace-id])]
+    (return
+     (convert-from
+      (:bytea (:->> o-cell "payload")) "UTF8"))))
+
+(defn.pg ^{:- [:text]}
+  personal-scope
+  {:added "0.12"}
+  [:bytea i-workspace-id-root]
+  (return
+   (|| "workspace/" (-/workspace-id-text i-workspace-id-root))))
+
+(defn.pg ^{:- [:text]}
+  personal-name
+  "Derives the only writable ref name from the verified account origin."
+  {:added "0.12"}
+  [:bytea i-address-root]
+  (return
+   (|| "user/" (pg/encode i-address-root "hex"))))
+
+(defn.pg ^{:- [:bytea]}
+  workspace-ref-intent-value
+  "Constructs the canonical personal fast-forward ref-update intent."
+  {:added "0.12"}
+  [:bytea i-workspace-id-root
+   :bytea i-address-root
+   :bytea i-expected-root
+   :bytea i-desired-root]
+  (let [(:text v-scope) (-/personal-scope i-workspace-id-root)
+        (:text v-name) (-/personal-name i-address-root)
+        (:bytea v-empty-map)
+        (value/put-map (pg/jsonb-build-array))
+        (:bytea v-record)
+        (workspace/record-start "workspace/ref-update-intent")
+        (:bytea v-version)
+        (workspace/record-assoc
+         v-record "record/version" (value/put-integer-number 1))
+        (:bytea v-extensions)
+        (workspace/record-assoc
+         v-version "record/extensions" v-empty-map)
+        (:bytea v-workspace)
+        (workspace/record-assoc
+         v-extensions "workspace/id" i-workspace-id-root)
+        (:bytea v-scope-record)
+        (workspace/record-assoc
+         v-workspace "ref/scope" (value/put-string v-scope))
+        (:bytea v-name-record)
+        (workspace/record-assoc
+         v-scope-record "ref/name" (value/put-string v-name))
+        (:bytea v-expected)
+        (workspace/record-assoc
+         v-name-record "ref/expected-root"
+         (workspace/optional-root i-expected-root))
+        (:bytea v-desired)
+        (workspace/record-assoc
+         v-expected "ref/desired-root" i-desired-root)
+        (:bytea v-authority)
+        (workspace/record-assoc
+         v-desired "ref/authorization-root" i-address-root)
+        (:bytea v-policy)
+        (workspace/record-assoc
+         v-authority "ref/policy"
+         (value/put-keyword "personal-fast-forward-v1"))]
+    (return
+     (workspace/record-assoc
+      v-policy "ref/metadata" v-empty-map))))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-ref-intent-valid
+  "Reconstructs the complete constrained intent and compares its exact root."
+  {:added "0.12"}
+  [:bytea i-intent-root
+   :bytea i-workspace-id-root
+   :bytea i-address-root
+   :bytea i-expected-root
+   :bytea i-desired-root]
+  (return
+   (== i-intent-root
+       (-/workspace-ref-intent-value
+        i-workspace-id-root i-address-root
+        i-expected-root i-desired-root))))
+
+(defn.pg ^{:- [:text]}
+  workspace-ref-transition-error
+  "Returns the first personal-branch graph or policy failure, or SQL null."
+  {:added "0.12"}
+  [:bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-desired-root
+   :bytea i-address-root]
+  (let [o-workspace-id (cell/cell-by-hash i-workspace-id-root)
+        o-desired (workspace/workspace-commit-row i-desired-root)
+        o-expected
+        (pg/case [i-expected-root :is-null]
+                 nil
+                 :else
+                 (workspace/workspace-commit-row i-expected-root))]
+    (cond (or [o-workspace-id :is-null]
+              (not
+               (== (:smallint (:->> o-workspace-id "type_tag")) 5)))
+          (return "workspace/invalid-workspace-id")
+
+          (not
+           (scoped-ref/ref-part-valid
+            (-/personal-scope i-workspace-id-root)))
+          (return "workspace/invalid-personal-ref-scope")
+
+          (not
+           (scoped-ref/ref-part-valid
+            (-/personal-name i-address-root)))
+          (return "workspace/invalid-personal-ref-name")
+
+          [i-desired-root :is-null]
+          (return "workspace/missing-desired-commit-root")
+
+          [o-desired :is-null]
+          (return "workspace/desired-commit-not-found")
+
+          (not (workspace/workspace-commit-valid i-desired-root))
+          (return "workspace/invalid-desired-commit")
+
+          (not
+           (== i-workspace-id-root
+               (:bytea (:->> o-desired "workspace_id_root"))))
+          (return "workspace/desired-commit-workspace-mismatch")
+
+          (and [i-expected-root :is-not-null]
+               [o-expected :is-null])
+          (return "workspace/expected-commit-not-found")
+
+          (and [i-expected-root :is-not-null]
+               (not
+                (workspace/workspace-commit-valid i-expected-root)))
+          (return "workspace/invalid-expected-commit")
+
+          (and [i-expected-root :is-not-null]
+               (not
+                (== i-workspace-id-root
+                    (:bytea (:->> o-expected "workspace_id_root")))))
+          (return "workspace/expected-commit-workspace-mismatch")
+
+          (and [i-expected-root :is-not-null]
+               (== i-expected-root i-desired-root))
+          (return "workspace/noop-ref-update")
+
+          (and [i-expected-root :is-not-null]
+               (not
+                (workspace/workspace-commit-ancestor
+                 i-expected-root i-desired-root)))
+          (return "workspace/non-fast-forward-ref-update")
+
+          :else
+          (return nil))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-ref-signing-request
+  "Returns the exact standard transaction bytes for a personal ref update."
+  {:added "0.12"}
+  [:text i-network
+   :bytea i-public-key
+   :bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-desired-root
+   :bigint i-cost-limit]
+  (let [o-head (block/head-get i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/network-missing])
+        _ (pg/assert (>= i-cost-limit 1) [:ledger/invalid-cost-limit])
+        (:bytea v-state-root) (:bytea (:->> o-head "state_root"))
+        (:bytea v-address-root)
+        (admission/admission-address-root i-public-key)
+        (:bytea v-account-root)
+        (state/state-account-root v-state-root v-address-root)
+        _ (pg/assert [v-account-root :is-not-null]
+                     [:ledger/missing-account])
+        (:bytea v-controller-root)
+        (account/account-value-controller-root v-account-root)
+        (:bytea v-expected-controller)
+        (admission/admission-controller-root i-public-key)
+        _ (pg/assert (== v-controller-root v-expected-controller)
+                     [:ledger/controller-mismatch])
+        (:bigint v-sequence)
+        (value/integer-bigint
+         (account/account-value-sequence-root v-account-root))
+        (:text v-transition-error)
+        (-/workspace-ref-transition-error
+         i-workspace-id-root i-expected-root
+         i-desired-root v-address-root)
+        _ (pg/assert [v-transition-error :is-null]
+                     [:ledger/invalid-workspace-ref-update
+                      v-transition-error])
+        (:bytea v-intent-root)
+        (-/workspace-ref-intent-value
+         i-workspace-id-root v-address-root
+         i-expected-root i-desired-root)
+        _ (pg/assert
+           (-/workspace-ref-intent-valid
+            v-intent-root i-workspace-id-root v-address-root
+            i-expected-root i-desired-root)
+           [:ledger/invalid-workspace-ref-intent])
+        (:bytea v-op-root) (op/constant v-intent-root)
+        (:bytea v-runtime-root) (value/put-integer "1")
+        (:bytea v-payload)
+        (transaction/transaction-signing-payload
+         i-network v-address-root v-sequence
+         v-op-root nil i-cost-limit v-runtime-root)]
+    (return
+     (pg/jsonb-build-object
+      "address" (pg/encode v-address-root "hex")
+      "sequence" v-sequence
+      "workspace_id_root" (pg/encode i-workspace-id-root "hex")
+      "scope" (-/personal-scope i-workspace-id-root)
+      "name" (-/personal-name v-address-root)
+      "expected_root" (scoped-ref/root-hex i-expected-root)
+      "desired_root" (pg/encode i-desired-root "hex")
+      "intent_root" (pg/encode v-intent-root "hex")
+      "operation_root" (pg/encode v-op-root "hex")
+      "signing_payload" (pg/encode v-payload "hex")))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-ref-submit
+  "Atomically admits one signed personal ref update into the linear chain.
+
+  A stale compare-and-set returns a conflict before transaction insertion or
+  account-sequence advancement. Candidate commits and the immutable intent
+  remain available for rebase or inspection."
+  {:added "0.12"}
+  [:text i-network
+   :bytea i-public-key
+   :bigint i-sequence
+   :bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-desired-root
+   :bigint i-cost-limit
+   :bytea i-signature
+   :bigint i-timestamp]
+  (let [o-head (block/head-lock i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/network-missing])
+        _ (pg/assert (>= i-cost-limit 1) [:ledger/invalid-cost-limit])
+        (:bytea v-previous-state)
+        (:bytea (:->> o-head "state_root"))
+        (:bigint v-previous-height)
+        (:bigint (:->> o-head "height"))
+        (:bytea v-address-root)
+        (admission/admission-address-root i-public-key)
+        (:bytea v-account-root)
+        (state/state-account-root v-previous-state v-address-root)
+        _ (pg/assert [v-account-root :is-not-null]
+                     [:ledger/missing-account])
+        (:bytea v-controller-root)
+        (account/account-value-controller-root v-account-root)
+        (:bytea v-expected-controller)
+        (admission/admission-controller-root i-public-key)
+        _ (pg/assert (== v-controller-root v-expected-controller)
+                     [:ledger/controller-mismatch])
+        (:bigint v-current-sequence)
+        (value/integer-bigint
+         (account/account-value-sequence-root v-account-root))
+        _ (pg/assert (== v-current-sequence i-sequence)
+                     [:ledger/sequence-conflict])
+        (:text v-transition-error)
+        (-/workspace-ref-transition-error
+         i-workspace-id-root i-expected-root
+         i-desired-root v-address-root)
+        _ (pg/assert [v-transition-error :is-null]
+                     [:ledger/invalid-workspace-ref-update
+                      v-transition-error])
+        (:text v-scope) (-/personal-scope i-workspace-id-root)
+        (:text v-name) (-/personal-name v-address-root)
+        (:bytea v-intent-root)
+        (-/workspace-ref-intent-value
+         i-workspace-id-root v-address-root
+         i-expected-root i-desired-root)
+        _ (pg/assert
+           (-/workspace-ref-intent-valid
+            v-intent-root i-workspace-id-root v-address-root
+            i-expected-root i-desired-root)
+           [:ledger/invalid-workspace-ref-intent])
+        (:bytea v-op-root) (op/constant v-intent-root)
+        (:bytea v-runtime-root) (value/put-integer "1")
+        (:bytea v-signing-payload)
+        (transaction/transaction-signing-payload
+         i-network v-address-root i-sequence
+         v-op-root nil i-cost-limit v-runtime-root)
+        _ (pg/assert
+           (crypto/signature-verify
+            i-signature v-signing-payload i-public-key)
+           [:ledger/invalid-workspace-ref-signature])
+        o-cas
+        (scoped-ref/scoped-ref-compare-and-set
+         v-scope v-name i-expected-root i-desired-root
+         v-address-root)
+        (:text v-cas-status) (:text (:->> o-cas "status"))]
+    (when (not (== v-cas-status "ok"))
+      (return
+       (|| o-cas
+           (pg/jsonb-build-object
+            "address" (pg/encode v-address-root "hex")
+            "intent_root" (pg/encode v-intent-root "hex")
+            "sequence" i-sequence))))
+    (let [(:bytea v-transaction-root)
+          (transaction/transaction-put
+           i-network v-address-root i-sequence
+           v-op-root nil i-cost-limit v-runtime-root i-signature)
+          (:bytea v-receipt-root)
+          (block/block-execute-signed-transaction
+           v-transaction-root i-network v-previous-state
+           (+ v-previous-height 1) i-timestamp)
+          o-receipt
+          (transaction/transaction-receipt-get v-receipt-root)
+          _ (pg/assert [o-receipt :is-not-null]
+                       [:ledger/missing-receipt])
+          _ (pg/assert
+             (and (== (:text (:->> o-receipt "status")) "ok")
+                  (== (:bytea (:->> o-receipt "result_root"))
+                      v-intent-root))
+             [:ledger/workspace-ref-receipt-mismatch])
+          (:bytea v-state-root)
+          (:bytea (:->> o-receipt "state_root"))
+          (:bytea v-block-root)
+          (block/block-commit
+           i-network v-previous-height v-previous-state
+           (+ v-previous-height 1)
+           (:bytea (:->> o-head "block_root"))
+           v-previous-state v-state-root i-timestamp
+           (admission/admission-proposer-root) nil
+           (pg/jsonb-build-array
+            (pg/encode v-transaction-root "hex")))
+          o-bound
+          (block/block-transaction-bind
+           v-block-root 0 v-receipt-root)]
+      (return
+       (pg/jsonb-build-object
+        "status" "ok"
+        "address" (pg/encode v-address-root "hex")
+        "sequence" i-sequence
+        "scope" v-scope
+        "name" v-name
+        "expected_root" (scoped-ref/root-hex i-expected-root)
+        "desired_root" (pg/encode i-desired-root "hex")
+        "ref_version" (:bigint (:->> o-cas "version"))
+        "intent_root" (pg/encode v-intent-root "hex")
+        "transaction_root" (pg/encode v-transaction-root "hex")
+        "receipt_root" (pg/encode v-receipt-root "hex")
+        "result_root"
+        (pg/encode
+         (:bytea (:->> o-receipt "result_root")) "hex")
+        "state_root" (pg/encode v-state-root "hex")
+        "block_root" (pg/encode v-block-root "hex"))))))

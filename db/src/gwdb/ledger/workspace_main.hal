@@ -1,0 +1,1175 @@
+(ns gwdb.ledger.workspace-main
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.admission :as admission]
+            [gwdb.ledger.block :as block]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.crypto :as crypto]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.scoped-ref :as scoped-ref]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.transaction :as transaction]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.workspace :as workspace]
+            [gwdb.ledger.workspace-admission :as workspace-admission]
+            [gwdb.ledger.workspace-proposal :as workspace-proposal]
+            [gwdb.ledger.workspace-review :as workspace-review]
+            [gwdb.ledger.workspace-acceptance :as workspace-acceptance]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.admission :as admission]
+             [gwdb.ledger.block :as block]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.crypto :as crypto]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.scoped-ref :as scoped-ref]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.transaction :as transaction]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.workspace :as workspace]
+             [gwdb.ledger.workspace-admission :as workspace-admission]
+             [gwdb.ledger.workspace-proposal :as workspace-proposal]
+             [gwdb.ledger.workspace-review :as workspace-review]
+             [gwdb.ledger.workspace-acceptance :as workspace-acceptance]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"] ["pgsodium"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg WorkspaceMainAcceptance
+  "Rebuildable projection of one canonical accepted-main attestation."
+  {:added "0.16"}
+  [:acceptance-root   {:type :bytea :primary true}
+   :workspace-id-root {:type :bytea :required true}
+   :authority-root    {:type :bytea :required true}
+   :expected-root     {:type :bytea}
+   :candidate-root    {:type :bytea :required true}
+   :policy-root       {:type :bytea :required true}
+   :review-roots-root {:type :bytea :required true}
+   :recorded-at       {:type :long :required true}])
+
+(deftype.pg WorkspaceMainSelection
+  "Append-only binding proving that one acceptance caused a successful main CAS."
+  {:added "0.17"}
+  [:acceptance-root   {:type :bytea :primary true}
+   :workspace-id-root {:type :bytea :required true}
+   :authority-root    {:type :bytea :required true}
+   :expected-root     {:type :bytea}
+   :candidate-root    {:type :bytea :required true}
+   :policy-root       {:type :bytea :required true}
+   :ref-version       {:type :long :required true}
+   :network           {:type :text :required true}
+   :transaction-root  {:type :bytea :required true}
+   :receipt-root      {:type :bytea :required true}
+   :block-root        {:type :bytea :required true}
+   :recorded-at       {:type :long :required true}])
+
+(defn.pg ^{:- [:text]}
+  main-scope
+  {:added "0.16"}
+  [:bytea i-workspace-id-root]
+  (return
+   (workspace-admission/personal-scope i-workspace-id-root)))
+
+(defn.pg ^{:- [:text]
+           :%% :sql
+           :props [:immutable :parallel-safe]}
+  main-ref-name
+  {:added "0.16"}
+  []
+  (return "main"))
+
+(defn.pg ^{:- [:text]}
+  main-acceptance-id
+  {:added "0.16"}
+  [:bytea i-workspace-id-root :bytea i-candidate-root]
+  (return
+   (|| "main-acceptance/"
+       (workspace-admission/workspace-id-text i-workspace-id-root)
+       "/"
+       (pg/encode i-candidate-root "hex"))))
+
+(defn.pg ^{:- [:bytea]}
+  main-acceptance-extensions-value
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-candidate-root]
+  (let [(:bytea v-empty-map)
+        (value/put-map (pg/jsonb-build-array))
+        (:bytea v-workspace)
+        (workspace/record-assoc
+         v-empty-map "workspace/id" i-workspace-id-root)
+        (:bytea v-expected)
+        (workspace/record-assoc
+         v-workspace "ref/expected-root"
+         (workspace/optional-root i-expected-root))
+        (:bytea v-desired)
+        (workspace/record-assoc
+         v-expected "ref/desired-root" i-candidate-root)]
+    (return
+     (workspace/record-assoc
+      v-desired "ref/policy"
+      (value/put-keyword "main-acceptance-v1")))))
+
+(defn.pg ^{:- [:bytea]}
+  workspace-main-acceptance-value
+  "Constructs one canonical accepted-main attestation."
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-authority-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bytea i-review-roots-root
+   :bigint i-recorded-at]
+  (let [(:bytea v-empty-map)
+        (value/put-map (pg/jsonb-build-array))
+        (:bytea v-record)
+        (workspace/record-start "attestation/claim")
+        (:bytea v-version)
+        (workspace/record-assoc
+         v-record "record/version" (value/put-integer-number 1))
+        (:bytea v-extensions)
+        (workspace/record-assoc
+         v-version "record/extensions"
+         (-/main-acceptance-extensions-value
+          i-workspace-id-root i-expected-root i-candidate-root))
+        (:bytea v-id)
+        (workspace/record-assoc
+         v-extensions "attestation/id"
+         (value/put-string
+          (-/main-acceptance-id
+           i-workspace-id-root i-candidate-root)))
+        (:bytea v-claim)
+        (workspace/record-assoc
+         v-id "attestation/claim"
+         (value/put-keyword "workspace/main-accepted-v1"))
+        (:bytea v-subject-id)
+        (workspace/record-assoc
+         v-claim "attestation/subject-id"
+         (value/put-string
+          (workspace-proposal/proposal-name i-candidate-root)))
+        (:bytea v-subject-root)
+        (workspace/record-assoc
+         v-subject-id "attestation/subject-root" i-candidate-root)
+        (:bytea v-context)
+        (workspace/record-assoc
+         v-subject-root "attestation/context-root" i-policy-root)
+        (:bytea v-evidence-roots)
+        (workspace/record-assoc
+         v-context "attestation/evidence-roots" i-review-roots-root)
+        (:bytea v-process-id)
+        (workspace/record-assoc
+         v-evidence-roots "attestation/process-run-id" (value/put-nil))
+        (:bytea v-process-root)
+        (workspace/record-assoc
+         v-process-id "attestation/process-run-root" (value/put-nil))
+        (:bytea v-issuer)
+        (workspace/record-assoc
+         v-process-root "attestation/issuer-evidence"
+         (workspace-review/review-recorded-evidence-value
+          i-authority-root i-recorded-at))
+        (:bytea v-scope)
+        (workspace/record-assoc
+         v-issuer "attestation/scope"
+         (value/put-keyword "workspace/main"))
+        (:bytea v-audience)
+        (workspace/record-assoc
+         v-scope "attestation/audience"
+         (value/put-keyword "workspace/members"))
+        (:bytea v-valid-from)
+        (workspace/record-assoc
+         v-audience "attestation/valid-from"
+         (value/put-integer-number i-recorded-at))
+        (:bytea v-valid-until)
+        (workspace/record-assoc
+         v-valid-from "attestation/valid-until" (value/put-nil))
+        (:bytea v-revokes)
+        (workspace/record-assoc
+         v-valid-until "attestation/revokes-root" (value/put-nil))]
+    (return
+     (workspace/record-assoc
+      v-revokes "attestation/metadata" v-empty-map))))
+
+(defn.pg workspace-main-acceptance-row
+  {:added "0.16"}
+  [:bytea i-acceptance-root]
+  (return
+   (pg/t:get -/WorkspaceMainAcceptance
+             {:where {:acceptance-root i-acceptance-root}})))
+
+(defn.pg ^{:- [:boolean]}
+  review-root-seen-before
+  {:added "0.16"}
+  [:bytea i-review-roots-root
+   :integer i-position
+   :bytea i-review-root]
+  (cond (<= i-position 0)
+        (return false)
+
+        :else
+        (let [(:integer v-previous) (- i-position 1)
+              (:bytea v-root)
+              (cell/cell-ref-child
+               i-review-roots-root v-previous "element")]
+          (return
+           (or (== v-root i-review-root)
+               (-/review-root-seen-before
+                i-review-roots-root v-previous i-review-root))))))
+
+(defn.pg ^{:- [:text]}
+  acceptance-review-vector-error-at
+  {:added "0.16"}
+  [:bytea i-review-roots-root
+   :integer i-position
+   :integer i-count]
+  (cond (>= i-position i-count)
+        (return nil)
+
+        :else
+        (let [(:bytea v-review-root)
+              (cell/cell-ref-child
+               i-review-roots-root i-position "element")
+              o-review-cell (cell/cell-by-hash v-review-root)]
+          (cond [o-review-cell :is-null]
+                (return "workspace/main-acceptance-review-not-found")
+
+                (== (:smallint (:->> o-review-cell "type_tag")) 0)
+                (return "workspace/main-acceptance-nil-review-root")
+
+                (-/review-root-seen-before
+                 i-review-roots-root i-position v-review-root)
+                (return "workspace/main-acceptance-duplicate-review-root")
+
+                :else
+                (return
+                 (-/acceptance-review-vector-error-at
+                  i-review-roots-root (+ i-position 1) i-count))))))
+
+(defn.pg ^{:- [:text]}
+  acceptance-review-vector-error
+  {:added "0.16"}
+  [:bytea i-review-roots-root]
+  (let [o-vector (cell/cell-by-hash i-review-roots-root)]
+    (cond [o-vector :is-null]
+          (return "workspace/main-acceptance-reviews-not-found")
+
+          (not
+           (== (:smallint (:->> o-vector "type_tag")) 10))
+          (return "workspace/main-acceptance-reviews-not-vector")
+
+          :else
+          (let [(:integer v-count)
+                (cell/cell-ref-count i-review-roots-root "element")]
+            (cond (= v-count 0)
+                  (return "workspace/main-acceptance-missing-reviews")
+
+                  :else
+                  (return
+                   (-/acceptance-review-vector-error-at
+                    i-review-roots-root 0 v-count)))))))
+
+(defn.pg ^{:- [:text]}
+  workspace-main-acceptance-error
+  "Returns the first canonical acceptance failure, or SQL null."
+  {:added "0.16"}
+  [:bytea i-acceptance-root]
+  (cond (not
+         (workspace/record-kind i-acceptance-root "attestation/claim"))
+        (return "workspace/invalid-main-acceptance-record")
+
+        (not (workspace/record-version-one i-acceptance-root))
+        (return "workspace/unsupported-main-acceptance-version")
+
+        :else
+        (let [(:bytea v-id-root)
+              (workspace/field i-acceptance-root "attestation/id")
+              (:bytea v-claim-root)
+              (workspace/field i-acceptance-root "attestation/claim")
+              (:bytea v-subject-id-root)
+              (workspace/field i-acceptance-root "attestation/subject-id")
+              (:bytea v-candidate-root)
+              (workspace/field i-acceptance-root "attestation/subject-root")
+              (:bytea v-policy-root)
+              (workspace/optional-field
+               i-acceptance-root "attestation/context-root")
+              (:bytea v-review-roots-root)
+              (workspace/field
+               i-acceptance-root "attestation/evidence-roots")
+              (:bytea v-process-id-root)
+              (workspace/optional-field
+               i-acceptance-root "attestation/process-run-id")
+              (:bytea v-process-root)
+              (workspace/optional-field
+               i-acceptance-root "attestation/process-run-root")
+              (:bytea v-issuer-root)
+              (workspace/field
+               i-acceptance-root "attestation/issuer-evidence")
+              (:bytea v-authority-root)
+              (workspace/field v-issuer-root "ledger/signer")
+              (:bytea v-recorded-at-root)
+              (workspace/field v-issuer-root "ledger/timestamp")
+              (:bytea v-scope-root)
+              (workspace/field i-acceptance-root "attestation/scope")
+              (:bytea v-audience-root)
+              (workspace/field i-acceptance-root "attestation/audience")
+              (:bytea v-valid-from-root)
+              (workspace/field i-acceptance-root "attestation/valid-from")
+              (:bytea v-valid-until-root)
+              (workspace/optional-field
+               i-acceptance-root "attestation/valid-until")
+              (:bytea v-revokes-root)
+              (workspace/optional-field
+               i-acceptance-root "attestation/revokes-root")
+              (:bytea v-metadata-root)
+              (workspace/field i-acceptance-root "attestation/metadata")
+              (:bytea v-extensions-root)
+              (workspace/field i-acceptance-root "record/extensions")
+              (:bytea v-workspace-id-root)
+              (workspace/field v-extensions-root "workspace/id")
+              (:bytea v-expected-root)
+              (workspace/optional-field
+               v-extensions-root "ref/expected-root")
+              (:bytea v-desired-root)
+              (workspace/field v-extensions-root "ref/desired-root")
+              (:bytea v-ref-policy-root)
+              (workspace/field v-extensions-root "ref/policy")
+              (:bytea v-empty-map)
+              (value/put-map (pg/jsonb-build-array))
+              o-workspace (cell/cell-by-hash v-workspace-id-root)
+              o-candidate (workspace/workspace-commit-row v-candidate-root)
+              o-policy
+              (workspace-acceptance/workspace-main-policy-row v-policy-root)
+              o-recorded-at (cell/cell-by-hash v-recorded-at-root)]
+          (cond (or [o-workspace :is-null]
+                    (not
+                     (== (:smallint (:->> o-workspace "type_tag")) 5)))
+                (return "workspace/invalid-main-acceptance-workspace-id")
+
+                [o-candidate :is-null]
+                (return "workspace/main-candidate-not-found")
+
+                (not (workspace/workspace-commit-valid v-candidate-root))
+                (return "workspace/invalid-main-candidate")
+
+                [o-policy :is-null]
+                (return "workspace/main-policy-not-found")
+
+                (not
+                 (workspace-acceptance/workspace-main-policy-valid
+                  v-policy-root))
+                (return "workspace/invalid-main-policy")
+
+                (not (== v-desired-root v-candidate-root))
+                (return "workspace/main-acceptance-desired-root-mismatch")
+
+                (not (== v-ref-policy-root
+                         (value/put-keyword "main-acceptance-v1")))
+                (return "workspace/unsupported-main-acceptance-policy")
+
+                (== v-expected-root v-candidate-root)
+                (return "workspace/noop-main-acceptance")
+
+                [v-process-id-root :is-not-null]
+                (return "workspace/main-acceptance-process-not-supported")
+
+                [v-process-root :is-not-null]
+                (return "workspace/main-acceptance-process-not-supported")
+
+                (not
+                 (workspace/record-kind
+                  v-issuer-root "ledger/evidence"))
+                (return "workspace/invalid-main-acceptance-evidence")
+
+                (not
+                 (workspace/record-version-one v-issuer-root))
+                (return "workspace/unsupported-main-acceptance-evidence")
+
+                [(cell/cell-by-hash v-authority-root) :is-null]
+                (return "workspace/main-acceptance-authority-not-found")
+
+                (or [o-recorded-at :is-null]
+                    (not
+                     (== (:smallint (:->> o-recorded-at "type_tag")) 2)))
+                (return "workspace/invalid-main-acceptance-recorded-at")
+
+                [ (workspace/optional-field
+                    v-issuer-root "ledger/transaction-root")
+                  :is-not-null]
+                (return "workspace/main-acceptance-transaction-evidence-not-supported")
+
+                [ (workspace/optional-field
+                    v-issuer-root "ledger/previous-head-root")
+                  :is-not-null]
+                (return "workspace/main-acceptance-head-evidence-not-supported")
+
+                [ (workspace/optional-field
+                    v-issuer-root "ledger/contract-root")
+                  :is-not-null]
+                (return "workspace/main-acceptance-contract-evidence-not-supported")
+
+                [ (workspace/optional-field
+                    v-issuer-root "ledger/template-root")
+                  :is-not-null]
+                (return "workspace/main-acceptance-template-evidence-not-supported")
+
+                [ (workspace/optional-field
+                    v-issuer-root "ledger/global-state-root")
+                  :is-not-null]
+                (return "workspace/main-acceptance-state-evidence-not-supported")
+
+                (not (== v-scope-root
+                         (value/put-keyword "workspace/main")))
+                (return "workspace/main-acceptance-scope-mismatch")
+
+                (not (== v-audience-root
+                         (value/put-keyword "workspace/members")))
+                (return "workspace/main-acceptance-audience-mismatch")
+
+                (not (== v-valid-from-root v-recorded-at-root))
+                (return "workspace/main-acceptance-valid-from-mismatch")
+
+                [v-valid-until-root :is-not-null]
+                (return "workspace/main-acceptance-expiry-not-supported")
+
+                [v-revokes-root :is-not-null]
+                (return "workspace/main-acceptance-revocation-not-supported")
+
+                (not (== v-metadata-root v-empty-map))
+                (return "workspace/main-acceptance-metadata-not-supported")
+
+                :else
+                (let [(:text v-review-vector-error)
+                      (-/acceptance-review-vector-error v-review-roots-root)
+                      (:bigint v-recorded-at)
+                      (value/integer-bigint v-recorded-at-root)
+                      (:bytea v-reconstructed)
+                      (-/workspace-main-acceptance-value
+                       v-workspace-id-root v-authority-root
+                       v-expected-root v-candidate-root v-policy-root
+                       v-review-roots-root v-recorded-at)]
+                  (cond [v-review-vector-error :is-not-null]
+                        (return v-review-vector-error)
+
+                        (< v-recorded-at 0)
+                        (return "workspace/invalid-main-acceptance-recorded-at")
+
+                        (not (== v-id-root
+                                 (value/put-string
+                                  (-/main-acceptance-id
+                                   v-workspace-id-root
+                                   v-candidate-root))))
+                        (return "workspace/main-acceptance-id-not-derived")
+
+                        (not (== v-claim-root
+                                 (value/put-keyword
+                                  "workspace/main-accepted-v1")))
+                        (return "workspace/unsupported-main-acceptance-claim")
+
+                        (not (== v-subject-id-root
+                                 (value/put-string
+                                  (workspace-proposal/proposal-name
+                                   v-candidate-root))))
+                        (return "workspace/main-acceptance-subject-id-mismatch")
+
+                        (not (== v-issuer-root
+                                 (workspace-review/review-recorded-evidence-value
+                                  v-authority-root v-recorded-at)))
+                        (return "workspace/noncanonical-main-acceptance-evidence")
+
+                        (not (== v-extensions-root
+                                 (-/main-acceptance-extensions-value
+                                  v-workspace-id-root v-expected-root
+                                  v-candidate-root)))
+                        (return "workspace/noncanonical-main-acceptance-extensions")
+
+                        (not (== i-acceptance-root v-reconstructed))
+                        (return "workspace/noncanonical-main-acceptance")
+
+                        :else
+                        (return nil)))))))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-main-acceptance-valid
+  {:added "0.16"}
+  [:bytea i-acceptance-root]
+  (let [o-row (-/workspace-main-acceptance-row i-acceptance-root)]
+    (when [o-row :is-null]
+      (return false))
+    (let [(:bytea v-workspace-id-root)
+          (:bytea (:->> o-row "workspace_id_root"))
+          (:bytea v-authority-root)
+          (:bytea (:->> o-row "authority_root"))
+          (:bytea v-expected-root)
+          (:bytea (:->> o-row "expected_root"))
+          (:bytea v-candidate-root)
+          (:bytea (:->> o-row "candidate_root"))
+          (:bytea v-policy-root)
+          (:bytea (:->> o-row "policy_root"))
+          (:bytea v-review-roots-root)
+          (:bytea (:->> o-row "review_roots_root"))
+          (:bigint v-recorded-at)
+          (:bigint (:->> o-row "recorded_at"))]
+      (return
+       (and [(-/workspace-main-acceptance-error i-acceptance-root) :is-null]
+            (== i-acceptance-root
+                (-/workspace-main-acceptance-value
+                 v-workspace-id-root v-authority-root
+                 v-expected-root v-candidate-root v-policy-root
+                 v-review-roots-root v-recorded-at)))))))
+
+(defn.pg workspace-main-selection-row
+  {:added "0.17"}
+  [:bytea i-acceptance-root]
+  (return
+   (pg/t:get -/WorkspaceMainSelection
+             {:where {:acceptance-root i-acceptance-root}})))
+
+(defn.pg ^{:- [:boolean]}
+  workspace-main-selection-valid
+  "Verifies the append-only CAS, transaction, receipt and block binding."
+  {:added "0.17"}
+  [:bytea i-acceptance-root]
+  (let [o-selection (-/workspace-main-selection-row i-acceptance-root)
+        o-acceptance
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (-/workspace-main-acceptance-row i-acceptance-root))
+        (:bytea v-selection-expected-root)
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-selection "expected_root")))
+        (:bytea v-acceptance-expected-root)
+        (pg/case [o-acceptance :is-null]
+                 nil
+                 :else
+                 (:bytea (:->> o-acceptance "expected_root")))
+        o-transaction
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (transaction/transaction-get
+                  (:bytea (:->> o-selection "transaction_root"))))
+        o-receipt
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (transaction/transaction-receipt-get
+                  (:bytea (:->> o-selection "receipt_root"))))
+        o-block
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (block/block-get
+                  (:bytea (:->> o-selection "block_root"))))
+        o-binding
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (pg/t:get
+                  block/BlockTransaction
+                  {:where
+                   {:block-root
+                    (:bytea (:->> o-selection "block_root"))
+                    :transaction-root
+                    (:bytea (:->> o-selection "transaction_root"))
+                    :receipt-root
+                    (:bytea (:->> o-selection "receipt_root"))}}))
+        (:bytea v-operation-root)
+        (pg/case [o-selection :is-null]
+                 nil
+                 :else
+                 (op/constant i-acceptance-root))]
+    (return
+     (and [o-selection :is-not-null]
+          [o-acceptance :is-not-null]
+          [o-transaction :is-not-null]
+          [o-receipt :is-not-null]
+          [o-block :is-not-null]
+          [o-binding :is-not-null]
+          (-/workspace-main-acceptance-valid i-acceptance-root)
+          (== (:bytea (:->> o-selection "workspace_id_root"))
+              (:bytea (:->> o-acceptance "workspace_id_root")))
+          (== (:bytea (:->> o-selection "authority_root"))
+              (:bytea (:->> o-acceptance "authority_root")))
+          (or (and [v-selection-expected-root :is-null]
+                   [v-acceptance-expected-root :is-null])
+              (and [v-selection-expected-root :is-not-null]
+                   [v-acceptance-expected-root :is-not-null]
+                   (== v-selection-expected-root
+                       v-acceptance-expected-root)))
+          (== (:bytea (:->> o-selection "candidate_root"))
+              (:bytea (:->> o-acceptance "candidate_root")))
+          (== (:bytea (:->> o-selection "policy_root"))
+              (:bytea (:->> o-acceptance "policy_root")))
+          (== (:bigint (:->> o-selection "recorded_at"))
+              (:bigint (:->> o-acceptance "recorded_at")))
+          (>= (:bigint (:->> o-selection "ref_version")) 1)
+          (== (:text (:->> o-transaction "network"))
+              (:text (:->> o-selection "network")))
+          (== (:bytea (:->> o-transaction "origin"))
+              (:bytea (:->> o-selection "authority_root")))
+          (== (:bytea (:->> o-transaction "op_root"))
+              v-operation-root)
+          (== (:bytea (:->> o-receipt "transaction_root"))
+              (:bytea (:->> o-selection "transaction_root")))
+          (== (:text (:->> o-receipt "status")) "ok")
+          (== (:bytea (:->> o-receipt "result_root"))
+              i-acceptance-root)
+          (== (:bytea (:->> o-receipt "previous_state_root"))
+              (:bytea (:->> o-block "previous_state_root")))
+          (== (:bytea (:->> o-receipt "state_root"))
+              (:bytea (:->> o-block "state_root")))
+          (== (:text (:->> o-block "network"))
+              (:text (:->> o-selection "network")))
+          (== (:bigint (:->> o-block "timestamp"))
+              (:bigint (:->> o-selection "recorded_at")))
+          (block/block-valid
+           (:bytea (:->> o-selection "block_root")))
+          (transaction/transaction-signed-valid
+           (:bytea (:->> o-selection "transaction_root"))
+           (:text (:->> o-selection "network"))
+           (:bytea (:->> o-block "previous_state_root")))))))
+
+(defn.pg ^{:- [:bytea]}
+  workspace-main-selection-put
+  "Records the exact successful main CAS and its canonical ledger evidence."
+  {:added "0.17"}
+  [:text i-network
+   :bytea i-acceptance-root
+   :bytea i-workspace-id-root
+   :bytea i-authority-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bigint i-ref-version
+   :bytea i-transaction-root
+   :bytea i-receipt-root
+   :bytea i-block-root
+   :bigint i-recorded-at]
+  (let [o-existing (-/workspace-main-selection-row i-acceptance-root)]
+    (when [o-existing :is-not-null]
+      (pg/assert (-/workspace-main-selection-valid i-acceptance-root)
+                 [:ledger/workspace-main-selection-conflict])
+      (return i-acceptance-root))
+    (let [o-insert
+          (pg/t:insert
+           -/WorkspaceMainSelection
+           {:acceptance-root i-acceptance-root
+            :workspace-id-root i-workspace-id-root
+            :authority-root i-authority-root
+            :expected-root i-expected-root
+            :candidate-root i-candidate-root
+            :policy-root i-policy-root
+            :ref-version i-ref-version
+            :network i-network
+            :transaction-root i-transaction-root
+            :receipt-root i-receipt-root
+            :block-root i-block-root
+            :recorded-at i-recorded-at})
+          _ (pg/assert (-/workspace-main-selection-valid i-acceptance-root)
+                       [:ledger/invalid-workspace-main-selection])]
+      (return i-acceptance-root))))
+
+
+(defn.pg ^{:- [:bytea]}
+  workspace-main-acceptance-import
+  {:added "0.16"}
+  [:bytea i-acceptance-root]
+  (let [o-existing (-/workspace-main-acceptance-row i-acceptance-root)]
+    (when [o-existing :is-not-null]
+      (pg/assert (-/workspace-main-acceptance-valid i-acceptance-root)
+                 [:ledger/workspace-main-acceptance-projection-conflict])
+      (return i-acceptance-root))
+    (let [(:text v-error)
+          (-/workspace-main-acceptance-error i-acceptance-root)
+          _ (pg/assert [v-error :is-null]
+                       [:ledger/invalid-workspace-main-acceptance v-error])
+          (:bytea v-extensions-root)
+          (workspace/field i-acceptance-root "record/extensions")
+          (:bytea v-workspace-id-root)
+          (workspace/field v-extensions-root "workspace/id")
+          (:bytea v-expected-root)
+          (workspace/optional-field v-extensions-root "ref/expected-root")
+          (:bytea v-candidate-root)
+          (workspace/field i-acceptance-root "attestation/subject-root")
+          (:bytea v-policy-root)
+          (workspace/field i-acceptance-root "attestation/context-root")
+          (:bytea v-review-roots-root)
+          (workspace/field i-acceptance-root "attestation/evidence-roots")
+          (:bytea v-issuer-root)
+          (workspace/field i-acceptance-root "attestation/issuer-evidence")
+          (:bytea v-authority-root)
+          (workspace/field v-issuer-root "ledger/signer")
+          (:bigint v-recorded-at)
+          (value/integer-bigint
+           (workspace/field v-issuer-root "ledger/timestamp"))
+          o-insert
+          (pg/t:insert
+           -/WorkspaceMainAcceptance
+           {:acceptance-root i-acceptance-root
+            :workspace-id-root v-workspace-id-root
+            :authority-root v-authority-root
+            :expected-root v-expected-root
+            :candidate-root v-candidate-root
+            :policy-root v-policy-root
+            :review-roots-root v-review-roots-root
+            :recorded-at v-recorded-at})]
+      (return i-acceptance-root))))
+
+(defn.pg ^{:- [:bytea]}
+  workspace-main-acceptance-put
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-authority-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bytea i-review-roots-root
+   :bigint i-recorded-at]
+  (let [(:text v-review-vector-error)
+        (-/acceptance-review-vector-error i-review-roots-root)
+        _ (pg/assert [v-review-vector-error :is-null]
+                     [:ledger/invalid-main-acceptance-reviews
+                      v-review-vector-error])
+        _ (pg/assert (>= i-recorded-at 0)
+                     [:ledger/invalid-main-acceptance-recorded-at])
+        (:bytea v-root)
+        (-/workspace-main-acceptance-value
+         i-workspace-id-root i-authority-root i-expected-root
+         i-candidate-root i-policy-root i-review-roots-root
+         i-recorded-at)]
+    (return (-/workspace-main-acceptance-import v-root))))
+
+(defn.pg ^{:- [:boolean]}
+  main-policy-selected
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-policy-root
+   :bytea i-authority-root]
+  (let [o-row
+        (scoped-ref/scoped-ref-row
+         (-/main-scope i-workspace-id-root)
+         (workspace-acceptance/main-policy-ref-name))]
+    (return
+     (and [o-row :is-not-null]
+          (== (:bytea (:->> o-row "root")) i-policy-root)
+          (== (:bytea (:->> o-row "authorization_root"))
+              i-authority-root)))))
+
+(defn.pg ^{:- [:text]}
+  main-review-evidence-error-at
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-candidate-root
+   :bytea i-reviewer-roots-root
+   :bytea i-review-roots-root
+   :integer i-position
+   :integer i-count]
+  (cond (>= i-position i-count)
+        (return nil)
+
+        :else
+        (let [(:bytea v-reviewer-root)
+              (cell/cell-ref-child
+               i-reviewer-roots-root i-position "element")
+              (:bytea v-review-root)
+              (cell/cell-ref-child
+               i-review-roots-root i-position "element")
+              o-review
+              (workspace-review/workspace-review-row v-review-root)
+              o-current
+              (scoped-ref/scoped-ref-row
+               (-/main-scope i-workspace-id-root)
+               (workspace-review/review-ref-name
+                i-candidate-root v-reviewer-root))]
+          (cond [o-review :is-null]
+                (return "workspace/main-acceptance-review-not-found")
+
+                (not
+                 (workspace-review/workspace-review-valid v-review-root))
+                (return "workspace/invalid-main-acceptance-review")
+
+                (not
+                 (== (:bytea (:->> o-review "workspace_id_root"))
+                     i-workspace-id-root))
+                (return "workspace/main-acceptance-review-workspace-mismatch")
+
+                (not
+                 (== (:bytea (:->> o-review "candidate_root"))
+                     i-candidate-root))
+                (return "workspace/main-acceptance-review-candidate-mismatch")
+
+                (not
+                 (== (:bytea (:->> o-review "reviewer_root"))
+                     v-reviewer-root))
+                (return "workspace/main-acceptance-reviewer-position-mismatch")
+
+                (not
+                 (== (:text (:->> o-review "decision")) "approve"))
+                (return "workspace/main-acceptance-review-not-approved")
+
+                [o-current :is-null]
+                (return "workspace/main-acceptance-review-not-current")
+
+                (not
+                 (== (:bytea (:->> o-current "root")) v-review-root))
+                (return "workspace/main-acceptance-review-not-current")
+
+                (not
+                 (== (:bytea (:->> o-current "authorization_root"))
+                     v-reviewer-root))
+                (return "workspace/main-acceptance-review-authorization-mismatch")
+
+                :else
+                (return
+                 (-/main-review-evidence-error-at
+                  i-workspace-id-root i-candidate-root
+                  i-reviewer-roots-root i-review-roots-root
+                  (+ i-position 1) i-count))))))
+
+(defn.pg ^{:- [:text]}
+  main-review-evidence-error
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-candidate-root
+   :bytea i-reviewer-roots-root
+   :bytea i-review-roots-root]
+  (let [o-reviewers (cell/cell-by-hash i-reviewer-roots-root)
+        o-reviews (cell/cell-by-hash i-review-roots-root)]
+    (cond (or [o-reviewers :is-null]
+              (not
+               (== (:smallint (:->> o-reviewers "type_tag")) 10)))
+          (return "workspace/main-policy-reviewers-not-vector")
+
+          (or [o-reviews :is-null]
+              (not
+               (== (:smallint (:->> o-reviews "type_tag")) 10)))
+          (return "workspace/main-acceptance-reviews-not-vector")
+
+          :else
+          (let [(:integer v-reviewer-count)
+                (cell/cell-ref-count i-reviewer-roots-root "element")
+                (:integer v-review-count)
+                (cell/cell-ref-count i-review-roots-root "element")]
+            (cond (not (== v-reviewer-count v-review-count))
+                  (return "workspace/main-acceptance-review-count-mismatch")
+
+                  :else
+                  (return
+                   (-/main-review-evidence-error-at
+                    i-workspace-id-root i-candidate-root
+                    i-reviewer-roots-root i-review-roots-root
+                    0 v-reviewer-count)))))))
+
+(defn.pg ^{:- [:text]}
+  main-transition-error
+  "Returns the first selected policy, proposal, ancestry or review failure."
+  {:added "0.16"}
+  [:bytea i-workspace-id-root
+   :bytea i-authority-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bytea i-review-roots-root]
+  (let [o-policy
+        (workspace-acceptance/workspace-main-policy-row i-policy-root)
+        o-candidate (workspace/workspace-commit-row i-candidate-root)
+        o-expected
+        (pg/case [i-expected-root :is-null]
+                 nil
+                 :else
+                 (workspace/workspace-commit-row i-expected-root))]
+    (cond [o-policy :is-null]
+          (return "workspace/main-policy-not-found")
+
+          (not
+           (workspace-acceptance/workspace-main-policy-valid i-policy-root))
+          (return "workspace/invalid-main-policy")
+
+          (not
+           (== (:bytea (:->> o-policy "workspace_id_root"))
+               i-workspace-id-root))
+          (return "workspace/main-policy-workspace-mismatch")
+
+          (not
+           (== (:bytea (:->> o-policy "authority_root"))
+               i-authority-root))
+          (return "workspace/main-policy-authority-mismatch")
+
+          (not
+           (-/main-policy-selected
+            i-workspace-id-root i-policy-root i-authority-root))
+          (return "workspace/main-policy-not-published")
+
+          [o-candidate :is-null]
+          (return "workspace/main-candidate-not-found")
+
+          (not (workspace/workspace-commit-valid i-candidate-root))
+          (return "workspace/invalid-main-candidate")
+
+          (not
+           (== (:bytea (:->> o-candidate "workspace_id_root"))
+               i-workspace-id-root))
+          (return "workspace/main-candidate-workspace-mismatch")
+
+          (not
+           (workspace-review/proposal-published
+            i-workspace-id-root i-candidate-root))
+          (return "workspace/main-candidate-not-proposed")
+
+          (and [i-expected-root :is-null]
+               (not
+                (== (:integer (:->> o-candidate "parent_count")) 0)))
+          (return "workspace/main-bootstrap-not-genesis")
+
+          (and [i-expected-root :is-not-null]
+               [o-expected :is-null])
+          (return "workspace/expected-main-not-found")
+
+          (and [i-expected-root :is-not-null]
+               (not (workspace/workspace-commit-valid i-expected-root)))
+          (return "workspace/invalid-expected-main")
+
+          (and [i-expected-root :is-not-null]
+               (not
+                (== (:bytea (:->> o-expected "workspace_id_root"))
+                    i-workspace-id-root)))
+          (return "workspace/expected-main-workspace-mismatch")
+
+          (and [i-expected-root :is-not-null]
+               (== i-expected-root i-candidate-root))
+          (return "workspace/noop-main-acceptance")
+
+          (and [i-expected-root :is-not-null]
+               (not
+                (workspace/workspace-commit-ancestor
+                 i-expected-root i-candidate-root)))
+          (return "workspace/non-fast-forward-main-acceptance")
+
+          :else
+          (return
+           (-/main-review-evidence-error
+            i-workspace-id-root i-candidate-root
+            (:bytea (:->> o-policy "reviewer_roots_root"))
+            i-review-roots-root)))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-main-signing-request
+  "Returns standard transaction bytes for one policy-gated main transition."
+  {:added "0.16"}
+  [:text i-network
+   :bytea i-public-key
+   :bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bytea i-review-roots-root
+   :bigint i-recorded-at
+   :bigint i-cost-limit]
+  (let [o-head (block/head-get i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/network-missing])
+        _ (pg/assert (>= i-cost-limit 1) [:ledger/invalid-cost-limit])
+        (:bytea v-state-root) (:bytea (:->> o-head "state_root"))
+        (:bytea v-address-root)
+        (admission/admission-address-root i-public-key)
+        (:bytea v-account-root)
+        (state/state-account-root v-state-root v-address-root)
+        _ (pg/assert [v-account-root :is-not-null]
+                     [:ledger/missing-account])
+        (:bytea v-controller-root)
+        (account/account-value-controller-root v-account-root)
+        (:bytea v-expected-controller)
+        (admission/admission-controller-root i-public-key)
+        _ (pg/assert (== v-controller-root v-expected-controller)
+                     [:ledger/controller-mismatch])
+        (:bigint v-sequence)
+        (value/integer-bigint
+         (account/account-value-sequence-root v-account-root))
+        (:text v-transition-error)
+        (-/main-transition-error
+         i-workspace-id-root v-address-root i-expected-root
+         i-candidate-root i-policy-root i-review-roots-root)
+        _ (pg/assert [v-transition-error :is-null]
+                     [:ledger/invalid-workspace-main-acceptance
+                      v-transition-error])
+        _ (pg/assert (>= i-recorded-at 0)
+                     [:ledger/invalid-main-acceptance-recorded-at])
+        (:bytea v-acceptance-root)
+        (-/workspace-main-acceptance-put
+         i-workspace-id-root v-address-root i-expected-root
+         i-candidate-root i-policy-root i-review-roots-root
+         i-recorded-at)
+        (:bytea v-op-root) (op/constant v-acceptance-root)
+        (:bytea v-runtime-root) (value/put-integer "1")
+        (:bytea v-payload)
+        (transaction/transaction-signing-payload
+         i-network v-address-root v-sequence
+         v-op-root nil i-cost-limit v-runtime-root)]
+    (return
+     (pg/jsonb-build-object
+      "address" (pg/encode v-address-root "hex")
+      "sequence" v-sequence
+      "workspace_id_root" (pg/encode i-workspace-id-root "hex")
+      "scope" (-/main-scope i-workspace-id-root)
+      "name" (-/main-ref-name)
+      "expected_root" (scoped-ref/root-hex i-expected-root)
+      "candidate_root" (pg/encode i-candidate-root "hex")
+      "policy_root" (pg/encode i-policy-root "hex")
+      "review_roots_root" (pg/encode i-review-roots-root "hex")
+      "recorded_at" i-recorded-at
+      "policy" "main-acceptance-v1"
+      "acceptance_root" (pg/encode v-acceptance-root "hex")
+      "operation_root" (pg/encode v-op-root "hex")
+      "signing_payload" (pg/encode v-payload "hex")))))
+
+(defn.pg ^{:- [:jsonb]}
+  workspace-main-submit
+  "Atomically admits one signed accepted-main transition into the linear chain."
+  {:added "0.16"}
+  [:text i-network
+   :bytea i-public-key
+   :bigint i-sequence
+   :bytea i-workspace-id-root
+   :bytea i-expected-root
+   :bytea i-candidate-root
+   :bytea i-policy-root
+   :bytea i-review-roots-root
+   :bigint i-recorded-at
+   :bigint i-cost-limit
+   :bytea i-signature]
+  (let [o-head (block/head-lock i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/network-missing])
+        _ (pg/assert (>= i-cost-limit 1) [:ledger/invalid-cost-limit])
+        (:bytea v-previous-state)
+        (:bytea (:->> o-head "state_root"))
+        (:bigint v-previous-height)
+        (:bigint (:->> o-head "height"))
+        (:bytea v-address-root)
+        (admission/admission-address-root i-public-key)
+        (:bytea v-account-root)
+        (state/state-account-root v-previous-state v-address-root)
+        _ (pg/assert [v-account-root :is-not-null]
+                     [:ledger/missing-account])
+        (:bytea v-controller-root)
+        (account/account-value-controller-root v-account-root)
+        (:bytea v-expected-controller)
+        (admission/admission-controller-root i-public-key)
+        _ (pg/assert (== v-controller-root v-expected-controller)
+                     [:ledger/controller-mismatch])
+        (:bigint v-current-sequence)
+        (value/integer-bigint
+         (account/account-value-sequence-root v-account-root))
+        _ (pg/assert (== v-current-sequence i-sequence)
+                     [:ledger/sequence-conflict])
+        (:text v-transition-error)
+        (-/main-transition-error
+         i-workspace-id-root v-address-root i-expected-root
+         i-candidate-root i-policy-root i-review-roots-root)
+        _ (pg/assert [v-transition-error :is-null]
+                     [:ledger/invalid-workspace-main-acceptance
+                      v-transition-error])
+        _ (pg/assert (>= i-recorded-at 0)
+                     [:ledger/invalid-main-acceptance-recorded-at])
+        (:bytea v-acceptance-root)
+        (-/workspace-main-acceptance-put
+         i-workspace-id-root v-address-root i-expected-root
+         i-candidate-root i-policy-root i-review-roots-root
+         i-recorded-at)
+        (:bytea v-op-root) (op/constant v-acceptance-root)
+        (:bytea v-runtime-root) (value/put-integer "1")
+        (:bytea v-signing-payload)
+        (transaction/transaction-signing-payload
+         i-network v-address-root i-sequence
+         v-op-root nil i-cost-limit v-runtime-root)
+        _ (pg/assert
+           (crypto/signature-verify
+            i-signature v-signing-payload i-public-key)
+           [:ledger/invalid-workspace-main-acceptance-signature])
+        (:text v-scope) (-/main-scope i-workspace-id-root)
+        (:text v-name) (-/main-ref-name)
+        o-cas
+        (scoped-ref/scoped-ref-compare-and-set
+         v-scope v-name i-expected-root i-candidate-root i-policy-root)
+        (:text v-cas-status) (:text (:->> o-cas "status"))]
+    (when (not (== v-cas-status "ok"))
+      (return
+       (|| o-cas
+           (pg/jsonb-build-object
+            "address" (pg/encode v-address-root "hex")
+            "workspace_id_root" (pg/encode i-workspace-id-root "hex")
+            "candidate_root" (pg/encode i-candidate-root "hex")
+            "policy_root" (pg/encode i-policy-root "hex")
+            "review_roots_root" (pg/encode i-review-roots-root "hex")
+            "recorded_at" i-recorded-at
+            "policy" "main-acceptance-v1"
+            "acceptance_root" (pg/encode v-acceptance-root "hex")
+            "sequence" i-sequence))))
+    (let [(:bytea v-transaction-root)
+          (transaction/transaction-put
+           i-network v-address-root i-sequence
+           v-op-root nil i-cost-limit v-runtime-root i-signature)
+          (:bytea v-receipt-root)
+          (block/block-execute-signed-transaction
+           v-transaction-root i-network v-previous-state
+           (+ v-previous-height 1) i-recorded-at)
+          o-receipt
+          (transaction/transaction-receipt-get v-receipt-root)
+          _ (pg/assert [o-receipt :is-not-null]
+                       [:ledger/missing-receipt])
+          _ (pg/assert
+             (and (== (:text (:->> o-receipt "status")) "ok")
+                  (== (:bytea (:->> o-receipt "result_root"))
+                      v-acceptance-root))
+             [:ledger/workspace-main-acceptance-receipt-mismatch])
+          (:bytea v-state-root)
+          (:bytea (:->> o-receipt "state_root"))
+          (:bytea v-block-root)
+          (block/block-commit
+           i-network v-previous-height v-previous-state
+           (+ v-previous-height 1)
+           (:bytea (:->> o-head "block_root"))
+           v-previous-state v-state-root i-recorded-at
+           (admission/admission-proposer-root) nil
+           (pg/jsonb-build-array
+            (pg/encode v-transaction-root "hex")))
+          o-bound
+          (block/block-transaction-bind
+           v-block-root 0 v-receipt-root)
+          (:bytea v-selection-root)
+          (-/workspace-main-selection-put
+           i-network v-acceptance-root
+           i-workspace-id-root v-address-root i-expected-root
+           i-candidate-root i-policy-root
+           (:bigint (:->> o-cas "version"))
+           v-transaction-root v-receipt-root v-block-root
+           i-recorded-at)]
+      (return
+       (pg/jsonb-build-object
+        "status" "ok"
+        "address" (pg/encode v-address-root "hex")
+        "sequence" i-sequence
+        "workspace_id_root" (pg/encode i-workspace-id-root "hex")
+        "scope" v-scope
+        "name" v-name
+        "expected_root" (scoped-ref/root-hex i-expected-root)
+        "candidate_root" (pg/encode i-candidate-root "hex")
+        "policy_root" (pg/encode i-policy-root "hex")
+        "review_roots_root" (pg/encode i-review-roots-root "hex")
+        "recorded_at" i-recorded-at
+        "policy" "main-acceptance-v1"
+        "acceptance_root" (pg/encode v-acceptance-root "hex")
+        "ref_version" (:bigint (:->> o-cas "version"))
+        "transaction_root" (pg/encode v-transaction-root "hex")
+        "receipt_root" (pg/encode v-receipt-root "hex")
+        "result_root"
+        (pg/encode
+         (:bytea (:->> o-receipt "result_root")) "hex")
+        "state_root" (pg/encode v-state-root "hex")
+        "block_root" (pg/encode v-block-root "hex"))))))

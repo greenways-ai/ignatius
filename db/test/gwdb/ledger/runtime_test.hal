@@ -1,0 +1,76 @@
+(ns gwdb.ledger.runtime-test
+  (:use code.test)
+  (:require [gwdb.ledger.runtime :refer :all]))
+
+^{:refer gwdb.ledger.runtime/ExecutionResult :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/result-ok :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/result-error :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-constant :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-special :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-lookup :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-local :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-let :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-lambda :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-operand :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-integer-add :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-integer-multiply :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-function-invoke-zero :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-function-invoke-one :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-function-invoke :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-invoke :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-def :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-cond-step :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-cond :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-do-step :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute-do :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.runtime/execute :added "0.1"}
+(fact "TODO")
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

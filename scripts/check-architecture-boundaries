@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail=0
+
+if grep -R -n -E '(^|[^[:alnum:]_.])hestia([./]|\.|[^[:alnum:]_])' \
+    db/src hal/src extensions --include='*.clj' --include='*.hal' \
+    --include='*.rs' --include='*.js' --include='*.ts'; then
+  echo 'Ignatius implementation code must not depend on Hestia.' >&2
+  fail=1
+fi
+
+if grep -R -n -E '^\(ns[[:space:]]+gwdb\.ledger\.(ot|document|document-protocol)' \
+    db/src --include='*.clj'; then
+  echo 'Hestia document policy must not enter the Ignatius chain.' >&2
+  fail=1
+fi
+
+if grep -R -n -E '^\(ns[[:space:]]+gw\.ledger\.' \
+    hal/src extensions --include='*.hal'; then
+  echo 'Portable chain code must use Ignatius namespaces.' >&2
+  fail=1
+fi
+
+exit "$fail"

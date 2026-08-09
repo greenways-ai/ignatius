@@ -1,0 +1,308 @@
+(ns gwdb.ledger.block
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.transaction :as transaction]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.transaction :as transaction]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg Block
+  "Rebuildable descriptor for an authoritative canonical block value."
+  {:added "0.2"}
+  [:block-root          {:type :bytea :primary true}
+   :block-version       {:type :smallint :required true}
+   :network             {:type :text :required true}
+   :height              {:type :long :required true}
+   :parent-root         {:type :bytea}
+   :previous-state-root {:type :bytea :required true}
+   :state-root          {:type :bytea :required true}
+   :timestamp           {:type :long :required true}
+   :proposer            {:type :bytea :required true}
+   :signatures-root     {:type :bytea}])
+
+(deftype.pg BlockTransaction
+  "Rebuildable transaction/receipt binding; order is committed by block CellRef."
+  {:added "0.2"}
+  [:block-root       {:type :bytea :primary true}
+   :position         {:type :integer :primary true}
+   :transaction-root {:type :bytea :required true}
+   :receipt-root     {:type :bytea}])
+
+(deftype.pg BlockSignature
+  "Optional signature projection outside the logical transaction sequence."
+  {:added "0.2"}
+  [:block-root {:type :bytea :primary true}
+   :signer     {:type :bytea :primary true}
+   :signature  {:type :bytea :required true}])
+
+(deftype.pg Head
+  "The only mutable ledger projection: a per-network canonical head pointer."
+  {:added "0.2"}
+  [:network    {:type :text :primary true}
+   :height     {:type :long :required true}
+   :block-root {:type :bytea :required true}
+   :state-root {:type :bytea :required true}
+   :updated-at {:type :time :required true :sql {:default (pg/time-us)}}])
+
+(defn.pg ^{:- [:text]} block-root-hex
+  {:added "0.2"}
+  [:bytea i-root]
+  (return (pg/case [i-root :is-null] "-" :else (pg/encode i-root "hex"))))
+
+(defn.pg ^{:- [:bytea]} block-payload
+  "Builds block identity from metadata plus the exact ordered transaction roots."
+  {:added "0.2"}
+  [:text i-network :bigint i-height :bytea i-parent-root
+   :bytea i-previous-state-root :bytea i-state-root :bigint i-timestamp
+   :bytea i-proposer :bytea i-signatures-root :jsonb i-transaction-roots]
+  (let [(:bytea v-transactions) (codec-value/sequence-payload i-transaction-roots)
+        (:text v-prefix)
+        (|| "R:block:1:" i-network ":" i-height ":"
+            (-/block-root-hex i-parent-root)
+            (-/block-root-hex i-previous-state-root)
+            (-/block-root-hex i-state-root) i-timestamp ":"
+            (-/block-root-hex i-proposer)
+            (-/block-root-hex i-signatures-root) ":")]
+    (return (|| (pg/decode v-prefix "escape") v-transactions))))
+
+(defn.pg block-transaction-refs-put
+  {:added "0.2"}
+  [:bytea i-block-root :jsonb i-transaction-roots :integer i-position :integer i-count]
+  (cond (>= i-position i-count) (return nil)
+        :else
+        (let [(:bytea v-transaction-root)
+              (codec-value/child-root-at i-transaction-roots i-position)
+              o-ref (cell/cell-ref-put i-block-root i-position "transaction"
+                                        v-transaction-root)
+              o-row (pg/t:upsert -/BlockTransaction
+                                  {:block-root i-block-root :position i-position
+                                   :transaction-root v-transaction-root
+                                   :receipt-root nil})
+              o-next (-/block-transaction-refs-put
+                      i-block-root i-transaction-roots (+ i-position 1) i-count)]
+          (return o-row))))
+
+(defn.pg ^{:- [:bytea]} block-put
+  "Commits a canonical block and ordered transaction sequence without head mutation."
+  {:added "0.2"}
+  [:text i-network :bigint i-height :bytea i-parent-root
+   :bytea i-previous-state-root :bytea i-state-root :bigint i-timestamp
+   :bytea i-proposer :bytea i-signatures-root :jsonb i-transaction-roots]
+  (let [o-parent (cell/cell-by-hash i-parent-root)
+        o-proposer (cell/cell-by-hash i-proposer)
+        (:integer v-count) (pg/jsonb-array-length i-transaction-roots)
+        _ (pg/assert [(pg/regexp-match i-network "^[a-z0-9._-]+$") :is-not-null]
+                     [:ledger/invalid-network])
+        _ (pg/assert (and (>= i-height 0) (>= i-timestamp 0))
+                     [:ledger/invalid-block-bounds])
+        _ (pg/assert (or [i-parent-root :is-null] [o-parent :is-not-null])
+                     [:ledger/missing-block-parent])
+        _ (pg/assert (state/state-root-valid i-previous-state-root)
+                     [:ledger/invalid-previous-state])
+        _ (pg/assert (state/state-root-valid i-state-root)
+                     [:ledger/invalid-block-state])
+        _ (pg/assert [o-proposer :is-not-null] [:ledger/missing-block-proposer])
+        (:bytea v-payload) (-/block-payload
+                             i-network i-height i-parent-root
+                             i-previous-state-root i-state-root i-timestamp
+                             i-proposer i-signatures-root i-transaction-roots)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 14 v-payload)
+                                        1 14 v-payload)
+        o-previous-ref (cell/cell-ref-put v-root 0 "previous-state" i-previous-state-root)
+        o-state-ref (cell/cell-ref-put v-root 1 "state" i-state-root)
+        o-proposer-ref (cell/cell-ref-put v-root 2 "proposer" i-proposer)
+        o-transactions (-/block-transaction-refs-put
+                        v-root i-transaction-roots 0 v-count)
+        o-upsert (pg/t:upsert -/Block
+                               {:block-root v-root :block-version 1
+                                :network i-network :height i-height
+                                :parent-root i-parent-root
+                                :previous-state-root i-previous-state-root
+                                :state-root i-state-root :timestamp i-timestamp
+                                :proposer i-proposer :signatures-root i-signatures-root})]
+    (return v-root)))
+
+(defn.pg block-get
+  {:added "0.2"}
+  [:bytea i-block-root]
+  (let [o-row (pg/t:get -/Block {:where {:block-root i-block-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:jsonb]} block-transaction-roots
+  {:added "0.2"}
+  [:bytea i-block-root :integer i-position :integer i-count :jsonb i-out]
+  (cond (>= i-position i-count) (return i-out)
+        :else
+        (let [(:bytea v-root) (cell/cell-ref-child
+                                i-block-root i-position "transaction")
+              (:jsonb v-next) (|| i-out
+                                  (pg/jsonb-build-array (pg/encode v-root "hex")))]
+          (return (-/block-transaction-roots
+                   i-block-root (+ i-position 1) i-count v-next)))))
+
+(defn.pg ^{:- [:boolean]} block-valid
+  {:added "0.2"}
+  [:bytea i-block-root]
+  (let [o-cell (cell/cell-by-hash i-block-root)
+        o-block (-/block-get i-block-root)
+        _ (when (or [o-cell :is-null] [o-block :is-null]) (return false))
+        (:integer v-count) (cell/cell-ref-count i-block-root "transaction")
+        (:jsonb v-transactions) (-/block-transaction-roots
+                                  i-block-root 0 v-count
+                                  (pg/jsonb-build-array))
+        (:bytea v-payload)
+        (-/block-payload
+         (:text (:->> o-block "network")) (:bigint (:->> o-block "height"))
+         (:bytea (:->> o-block "parent_root"))
+         (:bytea (:->> o-block "previous_state_root"))
+         (:bytea (:->> o-block "state_root")) (:bigint (:->> o-block "timestamp"))
+         (:bytea (:->> o-block "proposer"))
+         (:bytea (:->> o-block "signatures_root")) v-transactions)]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 14)
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-block-root 14 v-payload)
+                 (== (cell/cell-ref-count i-block-root "previous-state") 1)
+                 (== (cell/cell-ref-count i-block-root "state") 1)
+                 (== (cell/cell-ref-count i-block-root "proposer") 1)))))
+
+(defn.pg head-get
+  {:added "0.2"}
+  [:text i-network]
+  (let [o-row (pg/t:get -/Head {:where {:network i-network}})]
+    (return o-row)))
+
+(defn.pg head-lock
+  {:added "0.2"}
+  [:text i-network]
+  (let [o-row (pg/t:get -/Head {:where {:network i-network} :lock [:update]})]
+    (return o-row)))
+
+(defn.pg head-put
+  {:added "0.2"}
+  [:text i-network :bigint i-height :bytea i-block-root :bytea i-state-root]
+  (let [o-row (pg/t:upsert -/Head
+                            {:network i-network :height i-height
+                             :block-root i-block-root :state-root i-state-root})]
+    (return o-row)))
+
+(defn.pg head-commit
+  "Atomically advances the mutable head only from its explicit predecessor."
+  {:added "0.2"}
+  [:text i-network :bigint i-expected-height :bytea i-expected-state-root
+   :bigint i-height :bytea i-block-root :bytea i-state-root]
+  (let [o-head (-/head-lock i-network)]
+    (cond [o-head :is-null]
+          (do (pg/assert (== i-expected-height -1) [:ledger/head-missing])
+              (return (-/head-put i-network i-height i-block-root i-state-root)))
+          :else
+          (do (pg/assert (== (:bigint (:->> o-head "height")) i-expected-height)
+                         [:ledger/head-height-conflict])
+              (pg/assert (== (:bytea (:->> o-head "state_root"))
+                             i-expected-state-root)
+                         [:ledger/head-state-conflict])
+              (return (-/head-put i-network i-height i-block-root i-state-root))))))
+
+(defn.pg ^{:- [:bytea]} block-commit
+  "Commits a verified canonical block and advances its network head atomically."
+  {:added "0.2"}
+  [:text i-network :bigint i-expected-height :bytea i-expected-state-root
+   :bigint i-height :bytea i-parent-root :bytea i-previous-state-root
+   :bytea i-state-root :bigint i-timestamp :bytea i-proposer
+   :bytea i-signatures-root :jsonb i-transaction-roots]
+  (let [(:bytea v-block-root) (-/block-put
+                               i-network i-height i-parent-root i-previous-state-root
+                               i-state-root i-timestamp i-proposer i-signatures-root
+                               i-transaction-roots)
+        _ (pg/assert (-/block-valid v-block-root) [:ledger/invalid-block])
+        o-head (-/head-commit i-network i-expected-height i-expected-state-root
+                              i-height v-block-root i-state-root)]
+    (return v-block-root)))
+
+(defn.pg block-transaction-bind
+  "Binds a receipt projection to a transaction position already committed by a block."
+  {:added "0.2"}
+  [:bytea i-block-root :integer i-position :bytea i-receipt-root]
+  (let [(:bytea v-transaction-root)
+        (cell/cell-ref-child i-block-root i-position "transaction")
+        o-row (pg/t:upsert -/BlockTransaction
+                            {:block-root i-block-root :position i-position
+                             :transaction-root v-transaction-root
+                             :receipt-root i-receipt-root})]
+    (return o-row)))
+
+(defn.pg ^{:- [:bytea]} block-execute-transaction
+  "Builds a deterministic block context and executes one accepted transaction."
+  {:added "0.2"}
+  [:bytea i-transaction-root :text i-network :bytea i-previous-state-root
+   :bigint i-height :bigint i-timestamp]
+  (let [o-transaction (transaction/transaction-get i-transaction-root)
+        _ (pg/assert [o-transaction :is-not-null] [:ledger/missing-transaction])
+        (:bytea v-context-root)
+        (context/context-create
+         i-previous-state-root
+         (:bytea (:->> o-transaction "origin"))
+         (:bytea (:->> o-transaction "origin"))
+         nil i-transaction-root i-height i-timestamp
+         (value/put-vector (pg/jsonb-build-array))
+         0 (:bigint (:->> o-transaction "cost_limit")) 0)]
+    (return (transaction/transaction-execute
+             i-transaction-root i-network v-context-root i-previous-state-root))))
+
+(defn.pg ^{:- [:bytea]} block-execute-signed-transaction
+  "Builds the usual deterministic block context, but admits only a controller-
+   signed transaction."
+  {:added "0.4"}
+  [:bytea i-transaction-root :text i-network :bytea i-previous-state-root
+   :bigint i-height :bigint i-timestamp]
+  (let [o-transaction (transaction/transaction-get i-transaction-root)
+        _ (pg/assert [o-transaction :is-not-null] [:ledger/missing-transaction])
+        (:bytea v-context-root)
+        (context/context-create
+         i-previous-state-root
+         (:bytea (:->> o-transaction "origin"))
+         (:bytea (:->> o-transaction "origin"))
+         nil i-transaction-root i-height i-timestamp
+         (value/put-vector (pg/jsonb-build-array))
+         0 (:bigint (:->> o-transaction "cost_limit")) 0)]
+    (return (transaction/transaction-execute-signed
+             i-transaction-root i-network v-context-root i-previous-state-root))))
+
+(defn.pg ^{:- [:bytea]} block-commit-one
+  "Executes one transaction, verifies receipt state, then atomically commits."
+  {:added "0.2"}
+  [:text i-network :bigint i-expected-height :bytea i-expected-state-root
+   :bigint i-height :bytea i-parent-root :bytea i-previous-state-root
+   :bytea i-state-root :bigint i-timestamp :bytea i-proposer
+   :bytea i-signatures-root :bytea i-transaction-root]
+  (let [(:bytea v-receipt-root)
+        (-/block-execute-transaction
+         i-transaction-root i-network i-previous-state-root i-height i-timestamp)
+        o-receipt (transaction/transaction-receipt-get v-receipt-root)
+        _ (pg/assert [o-receipt :is-not-null] [:ledger/missing-receipt])
+        _ (pg/assert (== (:bytea (:->> o-receipt "state_root")) i-state-root)
+                     [:ledger/block-state-root-mismatch])
+        (:bytea v-block-root)
+        (-/block-commit
+         i-network i-expected-height i-expected-state-root i-height
+         i-parent-root i-previous-state-root i-state-root i-timestamp i-proposer
+         i-signatures-root
+         (pg/jsonb-build-array (pg/encode i-transaction-root "hex")))
+        o-bound (-/block-transaction-bind v-block-root 0 v-receipt-root)]
+    (return v-block-root)))

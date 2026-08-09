@@ -1,0 +1,197 @@
+(ns gwdb.ledger.module
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg Module
+  "Rebuildable descriptor for a canonical immutable published module value."
+  {:added "0.2"}
+  [:module-root       {:type :bytea :primary true}
+   :module-name       {:type :text :required true :sql {:unique ["module-version"]}}
+   :module-version    {:type :text :required true :sql {:unique ["module-version"]}}
+   :environment-root  {:type :bytea :required true}
+   :exports-root      {:type :bytea :required true}
+   :dependencies-root {:type :bytea :required true}
+   :source-root       {:type :bytea}
+   :compiled-root     {:type :bytea}
+   :metadata-root     {:type :bytea :required true}
+   :publisher         {:type :bytea :required true}
+   :signature         {:type :bytea}])
+
+(deftype.pg ModuleAlias
+  "Mutable interactive alias; published programs retain only immutable roots."
+  {:added "0.2"}
+  [:module-name {:type :text :primary true}
+   :alias       {:type :text :primary true}
+   :module-root {:type :bytea :required true}])
+
+(deftype.pg ModuleExport
+  "Rebuildable index of exports already committed by environment/export roots."
+  {:added "0.2"}
+  [:module-root {:type :bytea :primary true}
+   :symbol-root {:type :bytea :primary true}
+   :value-root  {:type :bytea :required true}])
+
+(defn.pg ^{:- [:text]} module-root-hex
+  {:added "0.2"}
+  [:bytea i-root]
+  (return (pg/case [i-root :is-null] "-" :else (pg/encode i-root "hex"))))
+
+(defn.pg ^{:- [:bytea]} module-payload
+  {:added "0.2"}
+  [:text i-module-name :text i-module-version
+   :bytea i-environment-root :bytea i-exports-root :bytea i-dependencies-root
+   :bytea i-source-root :bytea i-compiled-root :bytea i-metadata-root
+   :bytea i-publisher :bytea i-signature]
+  (return
+   (pg/decode
+    (|| "R:module:1:11:" i-module-name ":" i-module-version ":"
+        (-/module-root-hex i-environment-root)
+        (-/module-root-hex i-exports-root)
+        (-/module-root-hex i-dependencies-root)
+        (-/module-root-hex i-source-root)
+        (-/module-root-hex i-compiled-root)
+        (-/module-root-hex i-metadata-root)
+        (-/module-root-hex i-publisher)
+        (-/module-root-hex i-signature))
+    "escape")))
+
+(defn.pg ^{:- [:bytea]} module-publish
+  "Publishes a fully canonical module; projections do not define its exports."
+  {:added "0.2"}
+  [:text i-module-name :text i-module-version
+   :bytea i-environment-root :bytea i-exports-root :bytea i-dependencies-root
+   :bytea i-source-root :bytea i-compiled-root :bytea i-metadata-root
+   :bytea i-publisher :bytea i-signature]
+  (let [o-environment (cell/cell-by-hash i-environment-root)
+        o-exports (cell/cell-by-hash i-exports-root)
+        o-dependencies (cell/cell-by-hash i-dependencies-root)
+        o-metadata (cell/cell-by-hash i-metadata-root)
+        o-publisher (cell/cell-by-hash i-publisher)
+        _ (pg/assert [(pg/regexp-match i-module-name "^[a-z][a-z0-9.]*$") :is-not-null]
+                     [:ledger/invalid-module-name])
+        _ (pg/assert [(pg/regexp-match i-module-version "^[0-9]+[.][0-9]+[.][0-9]+$") :is-not-null]
+                     [:ledger/invalid-module-version])
+        _ (pg/assert (and [o-environment :is-not-null]
+                          (== (:smallint (:->> o-environment "type_tag")) 11))
+                     [:ledger/module-environment-not-map])
+        _ (pg/assert (and [o-exports :is-not-null]
+                          (== (:smallint (:->> o-exports "type_tag")) 12))
+                     [:ledger/module-exports-not-set])
+        _ (pg/assert (and [o-dependencies :is-not-null]
+                          (== (:smallint (:->> o-dependencies "type_tag")) 11))
+                     [:ledger/module-dependencies-not-map])
+        _ (pg/assert (and [o-metadata :is-not-null]
+                          (== (:smallint (:->> o-metadata "type_tag")) 11))
+                     [:ledger/module-metadata-not-map])
+        _ (pg/assert [o-publisher :is-not-null] [:ledger/missing-module-publisher])
+        (:bytea v-payload) (-/module-payload
+                             i-module-name i-module-version i-environment-root
+                             i-exports-root i-dependencies-root i-source-root
+                             i-compiled-root i-metadata-root i-publisher i-signature)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 14 v-payload)
+                                        1 14 v-payload)
+        o-environment-ref (cell/cell-ref-put v-root 0 "environment" i-environment-root)
+        o-exports-ref (cell/cell-ref-put v-root 1 "exports" i-exports-root)
+        o-dependencies-ref (cell/cell-ref-put v-root 2 "dependencies" i-dependencies-root)
+        o-metadata-ref (cell/cell-ref-put v-root 3 "metadata" i-metadata-root)
+        o-publisher-ref (cell/cell-ref-put v-root 4 "publisher" i-publisher)
+        o-upsert (pg/t:upsert -/Module
+                               {:module-root v-root :module-name i-module-name
+                                :module-version i-module-version
+                                :environment-root i-environment-root
+                                :exports-root i-exports-root
+                                :dependencies-root i-dependencies-root
+                                :source-root i-source-root :compiled-root i-compiled-root
+                                :metadata-root i-metadata-root :publisher i-publisher
+                                :signature i-signature})]
+    (return v-root)))
+
+(defn.pg module-get
+  {:added "0.2"}
+  [:bytea i-module-root]
+  (let [o-row (pg/t:get -/Module {:where {:module-root i-module-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]} module-valid
+  {:added "0.2"}
+  [:bytea i-module-root]
+  (let [o-cell (cell/cell-by-hash i-module-root)
+        o-module (-/module-get i-module-root)
+        _ (when (or [o-cell :is-null] [o-module :is-null]) (return false))
+        (:bytea v-payload)
+        (-/module-payload
+         (:text (:->> o-module "module_name"))
+         (:text (:->> o-module "module_version"))
+         (:bytea (:->> o-module "environment_root"))
+         (:bytea (:->> o-module "exports_root"))
+         (:bytea (:->> o-module "dependencies_root"))
+         (:bytea (:->> o-module "source_root"))
+         (:bytea (:->> o-module "compiled_root"))
+         (:bytea (:->> o-module "metadata_root"))
+         (:bytea (:->> o-module "publisher"))
+         (:bytea (:->> o-module "signature")))]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 14)
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-module-root 14 v-payload)))))
+
+(defn.pg module-set-alias
+  {:added "0.2"}
+  [:text i-module-name :text i-alias :bytea i-module-root]
+  (let [_ (pg/assert (-/module-valid i-module-root) [:ledger/invalid-module])
+        o-row (pg/t:upsert -/ModuleAlias
+                            {:module-name i-module-name :alias i-alias
+                             :module-root i-module-root})]
+    (return o-row)))
+
+(defn.pg ^{:- [:bytea]} module-resolve-alias
+  {:added "0.2"}
+  [:text i-module-name :text i-alias]
+  (let [o-row (pg/t:get -/ModuleAlias
+                        {:where {:module-name i-module-name :alias i-alias}})]
+    (return (:bytea (:->> o-row "module_root")))))
+
+(defn.pg ^{:- [:bytea]} module-export
+  "Resolves an export directly from canonical roots, never ModuleExport."
+  {:added "0.2"}
+  [:bytea i-module-root :bytea i-symbol-root]
+  (let [o-module (-/module-get i-module-root)
+        _ (pg/assert [o-module :is-not-null] [:ledger/missing-module])
+        _ (pg/assert (value/set-contains
+                      (:bytea (:->> o-module "exports_root")) i-symbol-root)
+                     [:ledger/non-exported-symbol])]
+    (return (value/map-get (:bytea (:->> o-module "environment_root"))
+                           i-symbol-root))))
+
+(defn.pg module-export-put
+  "Rebuilds an export index row after checking the canonical module roots."
+  {:added "0.2"}
+  [:bytea i-module-root :bytea i-symbol-root :bytea i-value-root]
+  (let [(:bytea v-authoritative) (-/module-export i-module-root i-symbol-root)
+        _ (pg/assert (== v-authoritative i-value-root)
+                     [:ledger/module-export-projection-mismatch])
+        o-row (pg/t:upsert -/ModuleExport
+                            {:module-root i-module-root :symbol-root i-symbol-root
+                             :value-root i-value-root})]
+    (return o-row)))
+
+(defn.pg module-export-projection-get
+  "Reads a disposable export projection; canonical resolution uses module-export."
+  {:added "0.2"}
+  [:bytea i-module-root :bytea i-symbol-root]
+  (let [o-row (pg/t:get -/ModuleExport
+                         {:where {:module-root i-module-root
+                                  :symbol-root i-symbol-root}})]
+    (return o-row)))

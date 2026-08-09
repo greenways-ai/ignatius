@@ -1,0 +1,278 @@
+(ns gwdb.ledger.state
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.value :as value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.value :as value]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(def +state-version+ 1)
+
+(deftype.pg StateHead
+  "Rebuildable projection of one canonical immutable state record."
+  {:added "0.1"}
+  [:state-root {:type :bytea :primary true}
+   :state-version {:type :smallint :required true}
+   :block-height {:type :long :required true}
+   :created-at {:type :time :required true
+                :sql {:default (pg/time-us)}}])
+
+(defn.pg ^{:- [:bytea]} state-payload
+  "Builds HCV1's fixed state-record payload from its six committed roots."
+  {:added "0.1"}
+  [:bytea i-version-root
+   :bytea i-accounts-root
+   :bytea i-modules-root
+   :bytea i-module-aliases-root
+   :bytea i-validators-root
+   :bytea i-settings-root]
+  (return
+   (pg/decode
+    (|| "R:state:1:6:"
+        (pg/encode i-version-root "hex")
+        (pg/encode i-accounts-root "hex")
+        (pg/encode i-modules-root "hex")
+        (pg/encode i-module-aliases-root "hex")
+        (pg/encode i-validators-root "hex")
+        (pg/encode i-settings-root "hex"))
+    "escape")))
+
+(defn.pg ^{:- [:bytea]} state-put
+  "Commits a canonical state record and derives only its disposable head row."
+  {:added "0.1"}
+  [:bytea i-version-root
+   :bytea i-accounts-root
+   :bytea i-modules-root
+   :bytea i-module-aliases-root
+   :bytea i-validators-root
+   :bytea i-settings-root
+   :bigint i-block-height]
+  (let [o-version (cell/cell-by-hash i-version-root)
+        o-accounts (cell/cell-by-hash i-accounts-root)
+        o-modules (cell/cell-by-hash i-modules-root)
+        o-aliases (cell/cell-by-hash i-module-aliases-root)
+        o-validators (cell/cell-by-hash i-validators-root)
+        o-settings (cell/cell-by-hash i-settings-root)
+        _ (pg/assert [o-version :is-not-null] [:ledger/missing-state-version])
+        _ (pg/assert (== (:smallint (:->> o-version "type_tag")) 2)
+                     [:ledger/state-version-not-integer])
+        _ (pg/assert [o-accounts :is-not-null] [:ledger/missing-state-accounts])
+        _ (pg/assert [o-modules :is-not-null] [:ledger/missing-state-modules])
+        _ (pg/assert [o-aliases :is-not-null] [:ledger/missing-state-module-aliases])
+        _ (pg/assert [o-validators :is-not-null] [:ledger/missing-state-validators])
+        _ (pg/assert [o-settings :is-not-null] [:ledger/missing-state-settings])
+        _ (pg/assert (== (:smallint (:->> o-accounts "type_tag")) 11)
+                     [:ledger/state-accounts-not-map])
+        _ (pg/assert (== (:smallint (:->> o-modules "type_tag")) 11)
+                     [:ledger/state-modules-not-map])
+        _ (pg/assert (== (:smallint (:->> o-aliases "type_tag")) 11)
+                     [:ledger/state-module-aliases-not-map])
+        _ (pg/assert (== (:smallint (:->> o-validators "type_tag")) 11)
+                     [:ledger/state-validators-not-map])
+        _ (pg/assert (== (:smallint (:->> o-settings "type_tag")) 11)
+                     [:ledger/state-settings-not-map])
+        (:bytea v-payload) (-/state-payload
+                            i-version-root i-accounts-root i-modules-root
+                            i-module-aliases-root i-validators-root i-settings-root)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 14 v-payload)
+                                       1 14 v-payload)
+        o-version-ref (cell/cell-ref-put v-root 0 "state/version" i-version-root)
+        o-accounts-ref (cell/cell-ref-put v-root 1 "accounts" i-accounts-root)
+        o-modules-ref (cell/cell-ref-put v-root 2 "modules" i-modules-root)
+        o-aliases-ref (cell/cell-ref-put v-root 3 "module-aliases" i-module-aliases-root)
+        o-validators-ref (cell/cell-ref-put v-root 4 "validators" i-validators-root)
+        o-settings-ref (cell/cell-ref-put v-root 5 "settings" i-settings-root)
+        o-head (pg/t:upsert -/StateHead
+                            {:state-root v-root
+                             :state-version 1
+                             :block-height i-block-height})]
+    (return v-root)))
+
+(defn.pg ^{:- [:boolean]} state-root-valid
+  "Checks that a root is a committed HCV1 state record with all six references."
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (let [o-cell (cell/cell-by-hash i-state-root)
+        _ (when [o-cell :is-null] (return false))
+        (:bytea v-version) (cell/cell-ref-child i-state-root 0 "state/version")
+        (:bytea v-accounts) (cell/cell-ref-child i-state-root 1 "accounts")
+        (:bytea v-modules) (cell/cell-ref-child i-state-root 2 "modules")
+        (:bytea v-aliases) (cell/cell-ref-child i-state-root 3 "module-aliases")
+        (:bytea v-validators) (cell/cell-ref-child i-state-root 4 "validators")
+        (:bytea v-settings) (cell/cell-ref-child i-state-root 5 "settings")]
+    (return (and (== (:smallint (:->> o-cell "type_tag")) 14)
+                 (codec/verify i-state-root 14 (:bytea (:->> o-cell "payload")))
+                 (== (:bytea (:->> o-cell "payload"))
+                     (-/state-payload v-version v-accounts v-modules
+                                      v-aliases v-validators v-settings))
+                 (== (cell/cell-ref-count i-state-root "state/version") 1)
+                 (== (cell/cell-ref-count i-state-root "accounts") 1)
+                 (== (cell/cell-ref-count i-state-root "modules") 1)
+                 (== (cell/cell-ref-count i-state-root "module-aliases") 1)
+                 (== (cell/cell-ref-count i-state-root "validators") 1)
+                 (== (cell/cell-ref-count i-state-root "settings") 1)))))
+
+(defn.pg state-get
+  "Returns the optional rebuildable state-head projection."
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (let [o-row (pg/t:get -/StateHead {:where {:state-root i-state-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:bytea]} state-version-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 0 "state/version")))
+
+(defn.pg ^{:- [:bytea]} state-accounts-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 1 "accounts")))
+
+(defn.pg ^{:- [:bytea]} state-modules-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 2 "modules")))
+
+(defn.pg ^{:- [:bytea]} state-module-aliases-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 3 "module-aliases")))
+
+(defn.pg ^{:- [:bytea]} state-validators-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 4 "validators")))
+
+(defn.pg ^{:- [:bytea]} state-settings-root
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (return (cell/cell-ref-child i-state-root 5 "settings")))
+
+(defn.pg state-rebuild-head
+  "Rebuilds the disposable state-head row from a canonical state root."
+  {:added "0.2"}
+  [:bytea i-state-root :bigint i-block-height]
+  (let [_ (pg/assert (-/state-root-valid i-state-root)
+                     [:ledger/invalid-state-root])
+        (:bytea v-rebuilt)
+        (-/state-put
+         (-/state-version-root i-state-root)
+         (-/state-accounts-root i-state-root)
+         (-/state-modules-root i-state-root)
+         (-/state-module-aliases-root i-state-root)
+         (-/state-validators-root i-state-root)
+         (-/state-settings-root i-state-root)
+         i-block-height)
+        _ (pg/assert (== v-rebuilt i-state-root)
+                     [:ledger/state-rebuild-mismatch])
+        o-row (-/state-get i-state-root)]
+    (return o-row)))
+
+(defn.pg ^{:- [:bytea]} state-genesis
+  "Creates the fixed v1 genesis record with empty persistent maps."
+  {:added "0.1"}
+  []
+  (let [(:bytea v-version) (value/put-integer "1")
+        (:bytea v-accounts) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-modules) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-aliases) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-validators) (value/put-map (pg/jsonb-build-array))
+        (:bytea v-settings) (value/put-map (pg/jsonb-build-array))]
+    (return (-/state-put v-version v-accounts v-modules v-aliases
+                         v-validators v-settings 0))))
+
+(defn.pg ^{:- [:bytea]} state-with-accounts
+  "Produces a new state root with only the accounts child replaced."
+  {:added "0.1"}
+  [:bytea i-state-root :bytea i-accounts-root :bigint i-block-height]
+  (return (-/state-put (-/state-version-root i-state-root)
+                        i-accounts-root
+                        (-/state-modules-root i-state-root)
+                        (-/state-module-aliases-root i-state-root)
+                        (-/state-validators-root i-state-root)
+                        (-/state-settings-root i-state-root)
+                        i-block-height)))
+
+(defn.pg ^{:- [:bytea]} state-assoc-account
+  "Returns a new state root with one address -> account value association."
+  {:added "0.1"}
+  [:bytea i-state-root
+   :bytea i-address-root
+   :bytea i-account-root
+   :bigint i-block-height]
+  (let [(:bytea v-accounts) (value/map-assoc
+                              (-/state-accounts-root i-state-root)
+                              i-address-root
+                              i-account-root)]
+    (return (-/state-with-accounts i-state-root v-accounts i-block-height))))
+
+(defn.pg ^{:- [:bytea]} state-account-root
+  "Reads an account value directly from the authoritative accounts map."
+  {:added "0.2"}
+  [:bytea i-state-root :bytea i-address-root]
+  (return (value/map-get (-/state-accounts-root i-state-root) i-address-root)))
+
+(defn.pg ^{:- [:bytea]} state-advance-account-sequence
+  "Advances one account sequence through a new canonical state root."
+  {:added "0.2"}
+  [:bytea i-state-root :bytea i-address-root :bigint i-block-height]
+  (let [(:bytea v-account-root) (-/state-account-root i-state-root i-address-root)
+        _ (pg/assert [v-account-root :is-not-null] [:ledger/missing-account])
+        (:bytea v-next-account) (account/account-value-advance-sequence v-account-root)]
+    (return (-/state-assoc-account
+             i-state-root i-address-root v-next-account i-block-height))))
+
+(defn.pg ^{:- [:jsonb]} state-export
+  "Exports a readable logical-state descriptor; hashes remain HCV cell hashes."
+  {:added "0.1"}
+  [:bytea i-state-root]
+  (let [_ (pg/assert (-/state-root-valid i-state-root)
+                     [:ledger/invalid-state-root])]
+    (return
+     (pg/jsonb-build-object
+      "state/version" 1
+      "state/root" (pg/encode i-state-root "hex")
+      "accounts/root" (pg/encode (-/state-accounts-root i-state-root) "hex")
+      "modules/root" (pg/encode (-/state-modules-root i-state-root) "hex")
+      "module-aliases/root" (pg/encode (-/state-module-aliases-root i-state-root) "hex")
+      "validators/root" (pg/encode (-/state-validators-root i-state-root) "hex")
+      "settings/root" (pg/encode (-/state-settings-root i-state-root) "hex")))))
+
+(defn.pg ^{:- [:bytea]} state-import
+  "Verifies a logical-state export after its referenced cells are available.
+
+   Cell-pack transport is handled separately; this function never trusts a
+   readable export as a replacement for verified canonical cells."
+  {:added "0.1"}
+  [:jsonb i-export :bigint i-block-height]
+  (let [(:bytea v-root) (pg/decode (:text (:->> i-export "state/root")) "hex")
+        (:bytea v-accounts) (pg/decode (:text (:->> i-export "accounts/root")) "hex")
+        (:bytea v-modules) (pg/decode (:text (:->> i-export "modules/root")) "hex")
+        (:bytea v-aliases) (pg/decode (:text (:->> i-export "module-aliases/root")) "hex")
+        (:bytea v-validators) (pg/decode (:text (:->> i-export "validators/root")) "hex")
+        (:bytea v-settings) (pg/decode (:text (:->> i-export "settings/root")) "hex")
+        _ (pg/assert (== (:integer (:->> i-export "state/version")) 1)
+                     [:ledger/unsupported-state-export])
+        _ (pg/assert (-/state-root-valid v-root)
+                     [:ledger/missing-exported-state])
+        (:bytea v-imported)
+        (-/state-put (-/state-version-root v-root)
+                     v-accounts v-modules v-aliases v-validators v-settings
+                     i-block-height)
+        _ (pg/assert (== v-imported v-root)
+                     [:ledger/state-export-mismatch])]
+    (return v-imported)))

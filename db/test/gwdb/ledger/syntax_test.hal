@@ -1,0 +1,97 @@
+(ns gwdb.ledger.syntax-test
+  (:use code.test)
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.syntax :as syntax]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.syntax :as syntax]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:stop)
+          (l/rt:restart)]
+  :teardown [(l/rt:stop)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.syntax/semantic-root :added "0.1"}
+(fact "syntax retains a semantic value root and a first-class metadata map"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (syntax/semantic-root
+      (syntax/put-syntax
+       (value/put-list (pg/jsonb-build-array))
+       (value/put-map
+        (pg/jsonb-build-array
+         (pg/encode (value/put-keyword "author") "hex")
+         (pg/encode (value/put-string "alice") "hex"))))))]
+   [:select
+    (cell/cell-type-tag
+     (syntax/syntax-metadata-root
+      (syntax/put-syntax
+       (value/put-list (pg/jsonb-build-array))
+       (value/put-map
+        (pg/jsonb-build-array
+         (pg/encode (value/put-keyword "author") "hex")
+         (pg/encode (value/put-string "alice") "hex"))))))])
+  => '(9 11))
+
+^{:refer gwdb.ledger.codec-value/compare :added "0.1"}
+(fact "metadata changes syntax identity while semantic identity remains explicit"
+  (!.pg
+   [:select
+    (codec-value/compare
+     (syntax/put-syntax
+      (value/put-list (pg/jsonb-build-array))
+      (value/put-map
+       (pg/jsonb-build-array
+        (pg/encode (value/put-keyword "author") "hex")
+        (pg/encode (value/put-string "alice") "hex"))))
+     (syntax/put-syntax
+      (value/put-list (pg/jsonb-build-array))
+      (value/put-map
+       (pg/jsonb-build-array
+        (pg/encode (value/put-keyword "author") "hex")
+        (pg/encode (value/put-string "bob") "hex")))))] )
+  => (complement zero?))
+
+
+^{:refer gwdb.ledger.syntax/Syntax :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.syntax/put-syntax :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.syntax/syntax-value-root :added "0.1"}
+(fact "TODO")
+
+^{:refer gwdb.ledger.syntax/syntax-metadata-root :added "0.1"}
+(fact "TODO")
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

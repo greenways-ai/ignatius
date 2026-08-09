@@ -1,0 +1,220 @@
+(ns gwdb.ledger.actor-runtime-test
+  (:use code.test)
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.actor :as actor]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.protocol-runtime :as protocol-runtime]
+            [gwdb.ledger.runtime-profile :as runtime-profile]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.actor :as actor]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.protocol-runtime :as protocol-runtime]
+             [gwdb.ledger.runtime-profile :as runtime-profile]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:stop)
+          (l/rt:restart)]
+  :teardown [(l/rt:stop)
+             (l/rt:stop)]})
+
+(defn.pg ^{:- [:bytea]}
+  increment-function
+  {:added "0.8"}
+  [:bytea i-counter-symbol]
+  (let [(:bytea v-add) (primitive/primitive-put "integer/add" 2)
+        (:bytea v-next-value)
+        (op/invoke
+         v-add
+         (pg/jsonb-build-array
+          (pg/encode (op/lookup i-counter-symbol) "hex")
+          (pg/encode
+           (op/constant (value/put-integer "1")) "hex")))
+        (:bytea v-body)
+        (op/do-op
+         (pg/jsonb-build-array
+          (pg/encode
+           (op/def-op i-counter-symbol v-next-value) "hex")
+          (pg/encode (op/lookup i-counter-symbol) "hex")))]
+    (return
+     (op/lambda-op
+      (value/put-vector (pg/jsonb-build-array))
+      v-body))))
+
+(defn.pg ^{:- [:bytea]}
+  current-function
+  {:added "0.8"}
+  [:bytea i-counter-symbol]
+  (return
+   (op/lambda-op
+    (value/put-vector (pg/jsonb-build-array))
+    (op/lookup i-counter-symbol))))
+
+(defn.pg ^{:- [:bytea]}
+  counter-initializer
+  {:added "0.8"}
+  []
+  (let [(:bytea v-counter-symbol) (value/put-symbol "n")
+        (:bytea v-increment-symbol) (value/put-symbol "increment!")
+        (:bytea v-current-symbol) (value/put-symbol "current")]
+    (return
+     (op/do-op
+      (pg/jsonb-build-array
+       (pg/encode
+        (op/def-op
+         v-counter-symbol
+         (op/constant (value/put-integer "0"))) "hex")
+       (pg/encode
+        (op/def-op
+         v-increment-symbol
+         (-/increment-function v-counter-symbol)) "hex")
+       (pg/encode
+        (op/def-op
+         v-current-symbol
+         (-/current-function v-counter-symbol)) "hex"))))))
+
+(defn.pg ^{:- [:bytea]}
+  counter-deploy-op
+  {:added "0.8"}
+  []
+  (return
+   (actor/deploy-op
+    (-/counter-initializer)
+    (value/put-vector
+     (pg/jsonb-build-array
+      (pg/encode (value/put-symbol "increment!") "hex")
+      (pg/encode (value/put-symbol "current") "hex"))))))
+
+(defn.pg ^{:- [:bytea]}
+  counter-call-op
+  {:added "0.8"}
+  [:bytea i-address-root :text i-method :boolean i-query]
+  (return
+   (pg/case i-query
+            (actor/actor-query-op
+             (op/constant i-address-root)
+             (value/put-symbol i-method)
+             (pg/jsonb-build-array))
+            :else
+            (actor/actor-call-op
+             (op/constant i-address-root)
+             (value/put-symbol i-method)
+             (pg/jsonb-build-array)))))
+
+(defn.pg ^{:- [:jsonb]}
+  run-counter-demo
+  {:added "0.8"}
+  []
+  (let [(:bytea v-caller) (value/put-symbol "demo-owner")
+        (:bytea v-state)
+        (state/state-assoc-account
+         (state/state-genesis) v-caller
+         (account/account-value-create (value/put-nil)) 0)
+        (:bytea v-context)
+        (context/context-create
+         v-state v-caller v-caller nil nil 0 0
+         (value/put-vector (pg/jsonb-build-array)) 0 512 0)
+        o-deployed
+        (protocol-runtime/protocol-execute
+         v-context (-/counter-deploy-op))
+        (:bytea v-actor-address)
+        (:bytea (:->> o-deployed "value_root"))
+        o-first
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-deployed "context_root"))
+         (-/counter-call-op v-actor-address "increment!" false))
+        o-second
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-first "context_root"))
+         (-/counter-call-op v-actor-address "increment!" false))
+        o-query
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-second "context_root"))
+         (-/counter-call-op v-actor-address "current" true))
+        o-result-context
+        (context/context-get (:bytea (:->> o-query "context_root")))
+        (:bytea v-actor-account)
+        (state/state-account-root
+         (:bytea (:->> o-result-context "state_root"))
+         v-actor-address)
+        (:bytea v-counter-value)
+        (account/account-value-lookup
+         v-actor-account (value/put-symbol "n"))
+        (:bytea v-profile) (runtime-profile/convex-profile-put)]
+    (return
+     (pg/jsonb-build-object
+      "deploy_status" (:text (:->> o-deployed "status"))
+      "first" (value/integer-bigint
+               (:bytea (:->> o-first "value_root")))
+      "second" (value/integer-bigint
+                (:bytea (:->> o-second "value_root")))
+      "query" (value/integer-bigint
+               (:bytea (:->> o-query "value_root")))
+      "account_version" (account/account-value-version v-actor-account)
+      "keyless" (== (cell/cell-type-tag
+                     (account/account-value-key-root v-actor-account)) 0)
+      "controller" (==
+                    (account/account-value-authority-root v-actor-account)
+                    v-caller)
+      "stored_counter" (value/integer-bigint v-counter-value)
+      "profile_valid" (runtime-profile/profile-valid v-profile)
+      "plus_bound"
+      (==
+       (runtime-profile/profile-lookup
+        v-profile (value/put-symbol "+"))
+       (primitive/primitive-put "integer/add" 2))
+      "cost_used" (:bigint (:->> o-query "cost_used"))))))
+
+^{:refer gwdb.ledger.actor/deploy-op :added "0.8"}
+(fact "a keyless account persists state across Convex-shaped call and query"
+  (!.pg
+   [:select (:->> (-/run-counter-demo) "deploy_status")]
+   [:select (:->> (-/run-counter-demo) "first")]
+   [:select (:->> (-/run-counter-demo) "second")]
+   [:select (:->> (-/run-counter-demo) "query")]
+   [:select (:->> (-/run-counter-demo) "account_version")]
+   [:select (:->> (-/run-counter-demo) "keyless")]
+   [:select (:->> (-/run-counter-demo) "controller")]
+   [:select (:->> (-/run-counter-demo) "stored_counter")]
+   [:select (:->> (-/run-counter-demo) "profile_valid")]
+   [:select (:->> (-/run-counter-demo) "plus_bound")]
+   [:select (< (:bigint (:->> (-/run-counter-demo) "cost_used")) 512)])
+  => '("ok" 1 2 2 2 true true 2 true true true))
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

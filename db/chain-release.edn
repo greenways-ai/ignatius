@@ -1,0 +1,20 @@
+{:ignatius.chain/release-version "0.1.0"
+ :ignatius.chain/schema-version 1
+ :ignatius.chain/protocol-version 1
+ :ignatius.chain/schema "gw_ledger"
+ :ignatius.chain/fresh-install "sql/full.sql"
+ :ignatius.chain/fresh-install/destructive true
+ :ignatius.chain/migrations "migrations"
+ :ignatius.chain/public-capability "postgres.core"
+ :ignatius.chain/public-operations
+ [:ignatius/network-bootstrap
+  :ignatius/head
+  :ignatius/account-register
+  :ignatius/account-sequence
+  :ignatius/pack-import
+  :ignatius/projection-verify
+  :ignatius/submit
+  :ignatius/transaction-receipt
+  :ignatius/block-receipt
+  :ignatius/state-sync
+  :ignatius/integrity-check]}

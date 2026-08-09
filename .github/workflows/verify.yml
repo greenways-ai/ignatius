@@ -74,21 +74,13 @@ jobs:
           grep -q ':reference/kind :resource/version' <<< "$created"
 
       - name: Reject Hestia application modules
-        run: |
-          set -euo pipefail
-          if grep -R -n -E 'gwdb\.ledger\.(ot|document|document-protocol)' \
-              db/src db/sql db/contracts; then
-            echo "Hestia application modules must not enter Ignatius" >&2
-            exit 1
-          fi
-          if grep -R -n -E '^\(ns gw\.ledger\.' hal extensions; then
-            echo "Portable HAL must use Ignatius namespaces" >&2
-            exit 1
-          fi
-          if grep -R -n -E 'gw/ledger|greenways-ledger' hal extensions; then
-            echo "Portable packages must publish Ignatius identities" >&2
-            exit 1
-          fi
+        run: make boundary-check
+
+      - name: Verify additive chain migrations
+        run: make migration-test
+
+      - name: Verify deterministic chain release package
+        run: make chain-release-test
 
       - name: Install Leiningen
         run: |

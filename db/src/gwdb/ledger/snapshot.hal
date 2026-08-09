@@ -1,0 +1,353 @@
+(ns gwdb.ledger.snapshot
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.state :as state]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.state :as state]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(deftype.pg Snapshot
+  "Rebuildable descriptor for a canonical state-root snapshot pack."
+  {:added "0.2"}
+  [:snapshot-root  {:type :bytea :primary true}
+   :state-root     {:type :bytea :required true}
+   :block-height   {:type :long :required true}
+   :codec-version  {:type :smallint :required true}
+   :hash-algorithm {:type :text :required true}
+   :cell-count     {:type :long :required true}
+   :pack           {:type :bytea :required true}])
+
+(defn.pg ^{:- [:bytea]}
+  snapshot-payload
+  "Commits every snapshot descriptor field, including the opaque pack bytes."
+  {:added "0.2"}
+  [:bytea i-state-root :bigint i-block-height :bigint i-cell-count :bytea i-pack]
+  (return
+   (pg/decode
+    (|| "R:snapshot:1:4:"
+        (pg/encode i-state-root "hex")
+        i-block-height ":" i-cell-count ":"
+        (pg/encode i-pack "hex"))
+    "escape")))
+
+(defn.pg snapshot-get
+  {:added "0.2"}
+  [:bytea i-snapshot-root]
+  (let [o-row (pg/t:get -/Snapshot {:where {:snapshot-root i-snapshot-root}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:boolean]}
+  snapshot-root-seen-at
+  "Checks a JSONB cell-reference list without relying on unordered SQL rows."
+  {:added "0.2"}
+  [:jsonb i-roots :bytea i-root :integer i-position :integer i-count]
+  (cond (>= i-position i-count) (return false)
+        :else
+        (let [(:bytea v-current)
+              (:bytea (:->> (:-> i-roots i-position) "child_hash"))]
+          (cond (== v-current i-root) (return true)
+                :else (return (-/snapshot-root-seen-at
+                               i-roots i-root (+ i-position 1) i-count))))))
+
+(defn.pg ^{:- [:jsonb]}
+  snapshot-root-tail
+  "Copies a JSONB root-reference suffix without unordered aggregation."
+  {:added "0.2"}
+  [:jsonb i-roots :integer i-position :integer i-count :jsonb i-out]
+  (cond (>= i-position i-count) (return i-out)
+        :else
+        (let [(:jsonb v-root) (:-> i-roots i-position)
+              (:jsonb v-next) (|| i-out (pg/jsonb-build-array v-root))]
+          (return (-/snapshot-root-tail
+                   i-roots (+ i-position 1) i-count v-next)))))
+
+(defn.pg ^{:- [:jsonb]}
+  snapshot-reachable-roots-at
+  "Walks a deterministic pending root list, visiting each immutable cell once."
+  {:added "0.2"}
+  [:jsonb i-pending :jsonb i-seen]
+  (let [(:integer v-pending-count) (pg/jsonb-array-length i-pending)
+        (:jsonb v-first) (:-> i-pending 0)
+        (:bytea v-root) (:bytea (:->> v-first "child_hash"))
+        (:integer v-seen-count) (pg/jsonb-array-length i-seen)
+        (:boolean v-seen) (-/snapshot-root-seen-at
+                            i-seen v-root 0 v-seen-count)
+        (:jsonb v-tail) (-/snapshot-root-tail
+                          i-pending 1 v-pending-count
+                          (pg/jsonb-build-array))
+        (:jsonb v-children) (cell/cell-ref-children v-root)
+        (:jsonb v-next-pending)
+        (pg/case v-seen v-tail :else (|| v-children v-tail))
+        (:jsonb v-next-seen)
+        (pg/case v-seen i-seen :else
+                 (|| i-seen (pg/jsonb-build-array v-first)))]
+    (cond (== v-pending-count 0) (return i-seen)
+          :else (return (-/snapshot-reachable-roots-at
+                         v-next-pending v-next-seen)))))
+
+(defn.pg ^{:- [:jsonb]}
+  snapshot-reachable-roots
+  "Returns every cell reachable from a state root in deterministic traversal order."
+  {:added "0.2"}
+  [:bytea i-state-root]
+  (let [_ (pg/assert (state/state-root-valid i-state-root)
+                     [:ledger/invalid-snapshot-state])
+        (:jsonb v-roots)
+        (pg/jsonb-build-array (pg/jsonb-build-object "child_hash" i-state-root))]
+    (return (-/snapshot-reachable-roots-at
+             v-roots (pg/jsonb-build-array)))))
+
+(defn.pg ^{:- [:bigint]}
+  snapshot-reachable-count
+  "Counts canonical cells reachable from the supplied state root."
+  {:added "0.2"}
+  [:bytea i-state-root]
+  (let [(:jsonb v-roots) (-/snapshot-reachable-roots i-state-root)]
+    (return (pg/jsonb-array-length v-roots))))
+
+(defn.pg ^{:- [:bytea]}
+  snapshot-pack-ref-tail
+  "Appends deterministic reference envelopes for one packed cell."
+  {:added "0.2"}
+  [:jsonb i-refs :integer i-position :integer i-count :bytea i-out]
+  (cond (>= i-position i-count) (return i-out)
+        :else
+        (let [(:jsonb v-ref) (:-> i-refs i-position)
+              (:integer v-ref-position) (:integer (:->> v-ref "position"))
+              (:text v-role) (:text (:->> v-ref "role"))
+              (:bytea v-child-root) (:bytea (:->> v-ref "child_hash"))
+              (:bytea v-entry)
+              (pg/decode
+               (|| "R:" v-ref-position ":"
+                   (pg/encode (convert-to v-role "UTF8") "hex") ":"
+                   (pg/encode v-child-root "hex") ":")
+               "escape")
+              (:bytea v-next) (|| i-out v-entry)]
+          (return (-/snapshot-pack-ref-tail
+                   i-refs (+ i-position 1) i-count v-next)))))
+
+(defn.pg ^{:- [:bytea]}
+  snapshot-pack-cells-at
+  "Appends canonical cell envelopes in deterministic reachability order."
+  {:added "0.2"}
+  [:jsonb i-roots :integer i-position :integer i-count :bytea i-out]
+  (let [(:jsonb v-root-entry) (:-> i-roots i-position)
+        (:bytea v-root) (:bytea (:->> v-root-entry "child_hash"))
+        o-cell (cell/cell-by-hash v-root)
+        (:jsonb v-refs) (cell/cell-ref-entries v-root)
+        (:integer v-ref-count) (pg/jsonb-array-length v-refs)
+        (:bytea v-header)
+        (pg/decode
+         (|| "C:" (pg/encode v-root "hex") ":"
+             (:smallint (:->> o-cell "codec_version")) ":"
+             (:smallint (:->> o-cell "type_tag")) ":"
+             (pg/encode (:bytea (:->> o-cell "payload")) "hex") ":"
+             v-ref-count ":")
+         "escape")
+        (:bytea v-with-cell) (|| i-out v-header)
+        (:bytea v-with-refs)
+        (-/snapshot-pack-ref-tail v-refs 0 v-ref-count v-with-cell)]
+    (cond (>= i-position i-count) (return i-out)
+          :else (return (-/snapshot-pack-cells-at
+                         i-roots (+ i-position 1) i-count v-with-refs)))))
+
+(defn.pg ^{:- [:bytea]}
+  snapshot-pack
+  "Builds HCP1 bytes from all reachable cell and CellRef envelopes."
+  {:added "0.2"}
+  [:bytea i-state-root]
+  (let [(:jsonb v-roots) (-/snapshot-reachable-roots i-state-root)
+        (:integer v-count) (pg/jsonb-array-length v-roots)
+        (:bytea v-prefix) (pg/decode (|| "HCP1:" v-count ":") "escape")]
+    (return (-/snapshot-pack-cells-at v-roots 0 v-count v-prefix))))
+
+(defn.pg ^{:- [:boolean]}
+  snapshot-import-cells-at
+  "Imports HCP1 cell envelopes before any derived child references."
+  {:added "0.2"}
+  [:jsonb i-tokens :integer i-position :integer i-count]
+  (cond (>= i-position i-count) (return true)
+        :else
+        (let [(:text v-marker) (:text (:->> i-tokens i-position))
+              (:bytea v-root)
+              (pg/decode (:text (:->> i-tokens (+ i-position 1))) "hex")
+              (:integer v-codec)
+              (:integer (:->> i-tokens (+ i-position 2)))
+              (:integer v-type-tag)
+              (:integer (:->> i-tokens (+ i-position 3)))
+              (:bytea v-payload)
+              (pg/decode (:text (:->> i-tokens (+ i-position 4))) "hex")
+              (:integer v-ref-count)
+              (:integer (:->> i-tokens (+ i-position 5)))
+              _ (pg/assert (== v-marker "C") [:ledger/invalid-snapshot-cell-marker])
+              (:bytea v-inserted) (cell/cell-put
+                                   v-root v-codec v-type-tag v-payload)
+              _ (pg/assert (== v-inserted v-root)
+                           [:ledger/snapshot-cell-root-mismatch])]
+          (return (-/snapshot-import-cells-at
+                   i-tokens (+ i-position 6 (* 4 v-ref-count)) i-count)))))
+
+(defn.pg ^{:- [:boolean]}
+  snapshot-import-ref-tail
+  "Imports one cell's ordered HCP1 reference envelopes after all cells exist."
+  {:added "0.2"}
+  [:bytea i-parent-root :jsonb i-tokens :integer i-position :integer i-count]
+  (cond (>= i-position i-count) (return true)
+        :else
+        (let [(:text v-marker) (:text (:->> i-tokens i-position))
+              (:integer v-ref-position)
+              (:integer (:->> i-tokens (+ i-position 1)))
+              (:text v-role-hex) (:text (:->> i-tokens (+ i-position 2)))
+              (:text v-role) (convert-from (pg/decode v-role-hex "hex") "UTF8")
+              (:bytea v-child-root)
+              (pg/decode (:text (:->> i-tokens (+ i-position 3))) "hex")
+              _ (pg/assert (== v-marker "R") [:ledger/invalid-snapshot-ref-marker])
+              o-ref (cell/cell-ref-put
+                     i-parent-root v-ref-position v-role v-child-root)]
+          (return (-/snapshot-import-ref-tail
+                   i-parent-root i-tokens (+ i-position 4) i-count)))))
+
+(defn.pg ^{:- [:boolean]}
+  snapshot-import-refs-at
+  "Walks HCP1 cells and restores their references in deterministic order."
+  {:added "0.2"}
+  [:jsonb i-tokens :integer i-position :integer i-count]
+  (cond (>= i-position i-count) (return true)
+        :else
+        (let [(:text v-marker) (:text (:->> i-tokens i-position))
+              (:bytea v-root)
+              (pg/decode (:text (:->> i-tokens (+ i-position 1))) "hex")
+              (:integer v-ref-count)
+              (:integer (:->> i-tokens (+ i-position 5)))
+              _ (pg/assert (== v-marker "C") [:ledger/invalid-snapshot-cell-marker])
+              (:boolean v-refs) (-/snapshot-import-ref-tail
+                                  v-root i-tokens (+ i-position 6)
+                                  (+ i-position 6 (* 4 v-ref-count)))]
+          (return (-/snapshot-import-refs-at
+                   i-tokens (+ i-position 6 (* 4 v-ref-count)) i-count)))))
+
+(defn.pg ^{:- [:boolean]}
+  snapshot-pack-import
+  "Parses and restores every HCP1 cell/reference envelope idempotently."
+  {:added "0.2"}
+  [:bytea i-pack :bigint i-cell-count]
+  (let [(:jsonb v-tokens)
+        (pg/to-jsonb (pg/string-to-array (pg/encode i-pack "escape") ":"))
+        (:integer v-token-length) (pg/jsonb-array-length v-tokens)
+        (:text v-last) (:text (:->> v-tokens (- v-token-length 1)))
+        (:integer v-token-count)
+        (pg/case (== v-last "") (- v-token-length 1) :else v-token-length)
+        (:text v-header) (:text (:->> v-tokens 0))
+        (:bigint v-declared-count) (:bigint (:->> v-tokens 1))
+        _ (pg/assert (and (== v-header "HCP1")
+                          (== v-declared-count i-cell-count))
+                     [:ledger/invalid-snapshot-pack-header])
+        (:boolean v-cells) (-/snapshot-import-cells-at
+                             v-tokens 2 v-token-count)
+        (:boolean v-refs) (-/snapshot-import-refs-at
+                            v-tokens 2 v-token-count)]
+    (return (and v-cells v-refs))))
+
+(defn.pg ^{:- [:bytea]} snapshot-put
+  "Stores a generated pack only after its target logical state is fully verified."
+  {:added "0.2"}
+  [:bytea i-state-root :bigint i-block-height :bigint i-cell-count :bytea i-pack]
+  (let [_ (pg/assert (state/state-root-valid i-state-root)
+                     [:ledger/invalid-snapshot-state])
+        _ (pg/assert (and (>= i-block-height 0) (>= i-cell-count 0))
+                     [:ledger/invalid-snapshot-bounds])
+        _ (pg/assert (== i-cell-count (-/snapshot-reachable-count i-state-root))
+                     [:ledger/snapshot-cell-count-mismatch])
+        _ (pg/assert (== i-pack (-/snapshot-pack i-state-root))
+                     [:ledger/snapshot-pack-mismatch])
+        (:bytea v-payload) (-/snapshot-payload
+                             i-state-root i-block-height i-cell-count i-pack)
+        (:bytea v-root) (cell/cell-put (codec/canonical-hash 14 v-payload)
+                                        1 14 v-payload)
+        o-state-ref (cell/cell-ref-put v-root 0 "state" i-state-root)
+        o-upsert (pg/t:upsert -/Snapshot
+                               {:snapshot-root v-root :state-root i-state-root
+                                :block-height i-block-height :codec-version 1
+                                :hash-algorithm "sha256" :cell-count i-cell-count
+                                :pack i-pack})]
+    (return v-root)))
+
+(defn.pg ^{:- [:bytea]}
+  snapshot-create
+  "Creates a verified HCP1 snapshot from the reachable state graph."
+  {:added "0.2"}
+  [:bytea i-state-root :bigint i-block-height]
+  (let [(:bigint v-count) (-/snapshot-reachable-count i-state-root)
+        (:bytea v-pack) (-/snapshot-pack i-state-root)]
+    (return (-/snapshot-put i-state-root i-block-height v-count v-pack))))
+
+(defn.pg ^{:- [:boolean]} snapshot-valid
+  "Verifies descriptor identity, state integrity and the committed pack bytes."
+  {:added "0.2"}
+  [:bytea i-snapshot-root]
+  (let [o-snapshot (-/snapshot-get i-snapshot-root)
+        o-cell (cell/cell-by-hash i-snapshot-root)
+        _ (when (or [o-snapshot :is-null] [o-cell :is-null]) (return false))
+        (:bytea v-payload)
+        (-/snapshot-payload
+         (:bytea (:->> o-snapshot "state_root"))
+         (:bigint (:->> o-snapshot "block_height"))
+         (:bigint (:->> o-snapshot "cell_count"))
+         (:bytea (:->> o-snapshot "pack")))]
+    (return (and (== (:smallint (:->> o-snapshot "codec_version")) 1)
+                 (== (:text (:->> o-snapshot "hash_algorithm")) "sha256")
+                 (state/state-root-valid (:bytea (:->> o-snapshot "state_root")))
+                 (== (:bigint (:->> o-snapshot "cell_count"))
+                     (-/snapshot-reachable-count
+                      (:bytea (:->> o-snapshot "state_root"))))
+                 (== (:bytea (:->> o-snapshot "pack"))
+                     (-/snapshot-pack
+                      (:bytea (:->> o-snapshot "state_root"))))
+                 (== (:smallint (:->> o-cell "type_tag")) 14)
+                 (== (:bytea (:->> o-cell "payload")) v-payload)
+                 (codec/verify i-snapshot-root 14 v-payload)
+                 (== (cell/cell-ref-count i-snapshot-root "state") 1)))))
+
+(defn.pg ^{:- [:jsonb]} snapshot-export
+  "Produces a readable transport descriptor; pack bytes remain separately hashed."
+  {:added "0.2"}
+  [:bytea i-snapshot-root]
+  (let [o-snapshot (-/snapshot-get i-snapshot-root)
+        _ (pg/assert (-/snapshot-valid i-snapshot-root)
+                     [:ledger/invalid-snapshot])]
+    (return (pg/jsonb-build-object
+             "snapshot/root" (pg/encode i-snapshot-root "hex")
+             "state/root" (pg/encode (:bytea (:->> o-snapshot "state_root")) "hex")
+             "block/height" (:bigint (:->> o-snapshot "block_height"))
+             "codec/version" 1
+             "hash/algorithm" "sha256"
+             "cell/count" (:bigint (:->> o-snapshot "cell_count"))
+             "pack" (pg/encode (:bytea (:->> o-snapshot "pack")) "hex")))))
+
+(defn.pg ^{:- [:bytea]} snapshot-import
+  "Reconstitutes a snapshot descriptor only when referenced canonical state exists."
+  {:added "0.2"}
+  [:jsonb i-export]
+  (let [(:bytea v-root) (pg/decode (:text (:->> i-export "snapshot/root")) "hex")
+        (:bytea v-state-root) (pg/decode (:text (:->> i-export "state/root")) "hex")
+        (:bigint v-height) (:bigint (:->> i-export "block/height"))
+        (:bigint v-count) (:bigint (:->> i-export "cell/count"))
+        (:bytea v-pack) (pg/decode (:text (:->> i-export "pack")) "hex")
+        _ (pg/assert (and (== (:integer (:->> i-export "codec/version")) 1)
+                          (== (:text (:->> i-export "hash/algorithm")) "sha256"))
+                     [:ledger/unsupported-snapshot-export])
+        (:boolean v-restored) (-/snapshot-pack-import v-pack v-count)
+        _ (pg/assert v-restored [:ledger/snapshot-pack-import-failed])
+        o-state (state/state-rebuild-head v-state-root v-height)
+        (:bytea v-imported) (-/snapshot-put v-state-root v-height v-count v-pack)
+        _ (pg/assert (== v-imported v-root) [:ledger/snapshot-import-mismatch])]
+    (return v-imported)))

@@ -1,0 +1,344 @@
+(ns gwdb.ledger.contract-runtime-test
+  (:use code.test)
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.context :as context]
+            [gwdb.ledger.contract :as contract]
+            [gwdb.ledger.function :as function]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.primitive :as primitive]
+            [gwdb.ledger.protocol-runtime :as protocol-runtime]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"
+                                      "POSTGRES_HOST_AUTH_METHOD" "md5"
+                                      "IGNATIUS_PGSODIUM_ROOT_KEY"
+                                      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"}
+                        :cmd ["postgres" "-c" "password_encryption=md5"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.context :as context]
+             [gwdb.ledger.contract :as contract]
+             [gwdb.ledger.function :as function]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.primitive :as primitive]
+             [gwdb.ledger.protocol-runtime :as protocol-runtime]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:stop)
+          (l/rt:restart)]
+  :teardown [(l/rt:stop)
+             (l/rt:stop)]})
+
+(defn.pg ^{:- [:bytea]}
+  init-function
+  {:added "0.9"}
+  []
+  (return
+   (function/function-put
+    (value/put-vector
+     (pg/jsonb-build-array
+      (pg/encode (value/put-symbol "parameters") "hex")))
+    (op/local 0 0)
+    (value/put-vector (pg/jsonb-build-array))
+    (value/put-map (pg/jsonb-build-array)))))
+
+(defn.pg ^{:- [:bytea]}
+  transition-function
+  {:added "0.9"}
+  []
+  (let [(:bytea v-get)
+        (primitive/primitive-put "map/get" 2)
+        (:bytea v-add)
+        (primitive/primitive-put "integer/add" 2)
+        (:bytea v-map)
+        (primitive/primitive-put "map/new" -1)
+        (:bytea v-delta)
+        (op/invoke
+         v-get
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 1) "hex")
+          (pg/encode
+           (op/constant (value/put-keyword "delta"))
+           "hex")))
+        (:bytea v-next)
+        (op/invoke
+         v-add
+         (pg/jsonb-build-array
+          (pg/encode (op/local 0 0) "hex")
+          (pg/encode v-delta "hex")))
+        (:bytea v-result)
+        (op/invoke
+         v-map
+         (pg/jsonb-build-array
+          (pg/encode
+           (op/constant (value/put-keyword "ok"))
+           "hex")
+          (pg/encode v-next "hex")))]
+    (return
+     (function/function-put
+      (value/put-vector
+       (pg/jsonb-build-array
+        (pg/encode (value/put-symbol "state") "hex")
+        (pg/encode (value/put-symbol "event") "hex")))
+      v-result
+      (value/put-vector (pg/jsonb-build-array))
+      (value/put-map (pg/jsonb-build-array))))))
+
+(defn.pg ^{:- [:bytea]}
+  view-function
+  {:added "0.9"}
+  []
+  (return
+   (function/function-put
+    (value/put-vector
+     (pg/jsonb-build-array
+      (pg/encode (value/put-symbol "state") "hex")))
+    (op/local 0 0)
+    (value/put-vector (pg/jsonb-build-array))
+    (value/put-map (pg/jsonb-build-array)))))
+
+(defn.pg ^{:- [:bytea]}
+  demo-template
+  {:added "0.9"}
+  [:bytea i-publisher-root]
+  (let [(:bytea v-views)
+        (value/put-map
+         (pg/jsonb-build-array
+          (pg/encode (value/put-symbol "current") "hex")
+          (pg/encode (-/view-function) "hex")))]
+    (return
+     (contract/template-put
+      (value/put-symbol "demo.counter-contract")
+      (value/put-string "1.0.0")
+      i-publisher-root
+      (-/init-function)
+      (-/transition-function)
+      v-views
+      (value/put-string
+       "(defn apply-event [state event] {:ok (+ state (:delta event))})")
+      (value/put-string "hara-compiler/demo")
+      (value/put-integer "1")
+      (value/put-map (pg/jsonb-build-array))
+      (value/put-map (pg/jsonb-build-array))))))
+
+(defn.pg ^{:- [:bytea]}
+  event-payload
+  {:added "0.9"}
+  [:integer i-delta :bytea i-fake-signer-root]
+  (let [(:bytea v-payload)
+        (value/map-assoc
+         (value/put-map (pg/jsonb-build-array))
+         (value/put-keyword "action")
+         (value/put-keyword "increment"))]
+    (return
+     (value/map-assoc
+      (value/map-assoc
+       v-payload
+       (value/put-keyword "delta")
+       (value/put-integer-number i-delta))
+      (value/put-keyword "signer")
+      i-fake-signer-root))))
+
+(defn.pg ^{:- [:jsonb]}
+  run-contract-demo
+  {:added "0.9"}
+  []
+  (let [(:bytea v-owner) (value/put-symbol "demo-owner")
+        (:bytea v-fake-signer) (value/put-symbol "mallory")
+        (:bytea v-alias) (value/put-symbol "demo/counter")
+        (:bytea v-template) (-/demo-template v-owner)
+        (:bytea v-state)
+        (state/state-assoc-account
+         (state/state-genesis)
+         v-owner
+         (account/account-value-create (value/put-nil))
+         0)
+        (:bytea v-context)
+        (context/context-create
+         v-state v-owner v-owner nil nil 0 100
+         (value/put-vector (pg/jsonb-build-array))
+         0 1024 0)
+        o-published
+        (protocol-runtime/protocol-execute
+         v-context
+         (contract/publish-op
+          (op/constant v-template)
+          (op/constant v-alias)))
+        (:bytea v-published-context)
+        (:bytea (:->> o-published "context_root"))
+        o-published-context
+        (context/context-get v-published-context)
+        (:bytea v-publisher-account)
+        (state/state-account-root
+         (:bytea (:->> o-published-context "state_root"))
+         v-owner)
+        (:bytea v-published-template)
+        (account/account-value-lookup
+         v-publisher-account v-alias)
+        o-opened
+        (protocol-runtime/protocol-execute
+         v-published-context
+         (contract/open-op
+          (op/lookup v-alias)
+          (op/constant (value/put-integer "10"))))
+        (:bytea v-contract-address)
+        (:bytea (:->> o-opened "value_root"))
+        (:bytea v-opened-context)
+        (:bytea (:->> o-opened "context_root"))
+        o-opened-context (context/context-get v-opened-context)
+        (:bytea v-opened-state)
+        (:bytea (:->> o-opened-context "state_root"))
+        (:bytea v-genesis-head)
+        (contract/instance-head
+         v-opened-state v-contract-address)
+        (:bytea v-payload)
+        (-/event-payload 5 v-fake-signer)
+        o-applied
+        (protocol-runtime/protocol-execute
+         v-opened-context
+         (contract/apply-op
+          (op/constant v-contract-address)
+          (op/constant v-genesis-head)
+          (op/constant v-payload)))
+        (:bytea v-applied-context)
+        (:bytea (:->> o-applied "context_root"))
+        o-applied-context (context/context-get v-applied-context)
+        (:bytea v-applied-state)
+        (:bytea (:->> o-applied-context "state_root"))
+        (:bytea v-current-head)
+        (contract/instance-head
+         v-applied-state v-contract-address)
+        (:bytea v-event-root)
+        (contract/field v-current-head "contract/event")
+        (:bytea v-verified-signer)
+        (contract/field v-event-root "signer")
+        o-state-read
+        (protocol-runtime/protocol-execute
+         v-applied-context
+         (contract/state-op
+          (op/constant v-contract-address)))
+        o-history-read
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-state-read "context_root"))
+         (contract/history-op
+          (op/constant v-contract-address)))
+        o-view
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-history-read "context_root"))
+         (contract/view-op
+          (op/constant v-contract-address)
+          (value/put-symbol "current")))
+        o-simulated
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-view "context_root"))
+         (contract/simulate-op
+          (op/constant v-contract-address)
+          (op/constant
+           (-/event-payload 4 v-fake-signer))))
+        (:bytea v-simulation-root)
+        (:bytea (:->> o-simulated "value_root"))
+        o-state-after-simulation
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-simulated "context_root"))
+         (contract/state-op
+          (op/constant v-contract-address)))
+        o-stale
+        (protocol-runtime/protocol-execute
+         (:bytea (:->> o-state-after-simulation "context_root"))
+         (contract/apply-op
+          (op/constant v-contract-address)
+          (op/constant v-genesis-head)
+          (op/constant
+           (-/event-payload 1 v-fake-signer))))
+        (:bytea v-contract-account)
+        (state/state-account-root
+         v-applied-state v-contract-address)]
+    (return
+     (pg/jsonb-build-object
+      "publish_status" (:text (:->> o-published "status"))
+      "publication_valid"
+      (contract/record-kind
+       (:bytea (:->> o-published "value_root"))
+       "contract-publication")
+      "alias_pinned" (== v-published-template v-template)
+      "open_status" (:text (:->> o-opened "status"))
+      "template_pinned"
+      (== (contract/instance-template
+           v-opened-state v-contract-address)
+          v-template)
+      "keyless"
+      (== (cell/cell-type-tag
+           (account/account-value-key-root
+            v-contract-account))
+          0)
+      "applied_status" (:text (:->> o-applied "status"))
+      "state" (value/integer-bigint
+               (:bytea (:->> o-state-read "value_root")))
+      "view" (value/integer-bigint
+              (:bytea (:->> o-view "value_root")))
+      "history_count"
+      (cell/cell-ref-count
+       (:bytea (:->> o-history-read "value_root"))
+       "element")
+      "signer_verified" (== v-verified-signer v-owner)
+      "simulated_state"
+      (value/integer-bigint
+       (contract/field
+        v-simulation-root "contract/state"))
+      "simulation_committed"
+      (== (contract/field
+           v-simulation-root "contract/committed")
+          (value/put-boolean true))
+      "state_after_simulation"
+      (value/integer-bigint
+       (:bytea (:->> o-state-after-simulation "value_root")))
+      "stale_status" (:text (:->> o-stale "status"))))))
+
+^{:refer gwdb.ledger.contract/template-put :added "0.9"}
+(fact "published reducer contracts accept verified events and retain immutable history"
+  (!.pg
+   [:select (:->> (-/run-contract-demo) "publish_status")]
+   [:select (:->> (-/run-contract-demo) "publication_valid")]
+   [:select (:->> (-/run-contract-demo) "alias_pinned")]
+   [:select (:->> (-/run-contract-demo) "open_status")]
+   [:select (:->> (-/run-contract-demo) "template_pinned")]
+   [:select (:->> (-/run-contract-demo) "keyless")]
+   [:select (:->> (-/run-contract-demo) "applied_status")]
+   [:select (:->> (-/run-contract-demo) "state")]
+   [:select (:->> (-/run-contract-demo) "view")]
+   [:select (:->> (-/run-contract-demo) "history_count")]
+   [:select (:->> (-/run-contract-demo) "signer_verified")]
+   [:select (:->> (-/run-contract-demo) "simulated_state")]
+   [:select (:->> (-/run-contract-demo) "simulation_committed")]
+   [:select (:->> (-/run-contract-demo) "state_after_simulation")]
+   [:select (:->> (-/run-contract-demo) "stale_status")])
+  => '("ok" true true "ok" true true "ok"
+       15 15 2 true 19 false 15 "error"))
+
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

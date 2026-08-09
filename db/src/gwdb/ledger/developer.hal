@@ -1,0 +1,135 @@
+(ns gwdb.ledger.developer
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.block :as block]
+            [gwdb.ledger.transaction :as transaction]
+            [gwdb.ledger.value :as value]
+            [gwdb.ledger.op :as op]
+            [gwdb.ledger.state :as state]))
+
+;; Development-only admission and execution surface.  It is intentionally
+;; separate from the signed public-admission protocol so production policy can
+;; revoke it as one unit without weakening the ledger value model.
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.block :as block]
+             [gwdb.ledger.transaction :as transaction]
+             [gwdb.ledger.value :as value]
+             [gwdb.ledger.op :as op]
+             [gwdb.ledger.state :as state]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+(defn.pg ^{:- [:bytea]}
+  developer-address-root
+  "Converts a developer-console address into its authoritative Hara value."
+  {:added "0.3"}
+  [:text i-address]
+  (let [_ (pg/assert [(pg/regexp-match i-address "^[a-z][a-z0-9._-]{0,62}$") :is-not-null]
+                     [:ledger/invalid-developer-address])]
+    (return (value/put-string i-address))))
+
+(defn.pg ^{:- [:bytea]}
+  developer-proposer-root
+  {:added "0.3"}
+  []
+  (return (value/put-symbol "gwdb.ledger.developer")))
+
+(defn.pg ^{:- [:bytea]}
+  developer-genesis
+  "Initialises one development network exactly once."
+  {:added "0.3"}
+  [:text i-network :bigint i-timestamp]
+  (let [o-head (block/head-lock i-network)
+        _ (pg/assert [o-head :is-null] [:ledger/developer-network-exists])
+        (:bytea v-state-root) (state/state-genesis)
+        (:bytea v-block-root)
+        (block/block-commit i-network -1 nil 0 nil v-state-root v-state-root
+                            i-timestamp (-/developer-proposer-root) nil
+                            (pg/jsonb-build-array))]
+    (return v-block-root)))
+
+(defn.pg ^{:- [:jsonb]}
+  developer-create-account
+  "Creates an unsigned development account through an empty block transition.
+   The controller is nil only in this explicit development surface."
+  {:added "0.3"}
+  [:text i-network :text i-address :bigint i-timestamp]
+  (let [o-head (block/head-lock i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/developer-network-missing])
+        (:bytea v-previous-state) (:bytea (:->> o-head "state_root"))
+        (:bigint v-previous-height) (:bigint (:->> o-head "height"))
+        (:bytea v-address-root) (-/developer-address-root i-address)
+        (:bytea v-existing) (state/state-account-root v-previous-state v-address-root)
+        _ (pg/assert [v-existing :is-null] [:ledger/developer-account-exists])
+        (:bytea v-account-root) (account/account-value-create (value/put-nil))
+        (:bytea v-state-root)
+        (state/state-assoc-account v-previous-state v-address-root v-account-root
+                                   (+ v-previous-height 1))
+        (:bytea v-block-root)
+        (block/block-commit i-network v-previous-height v-previous-state
+                            (+ v-previous-height 1)
+                            (:bytea (:->> o-head "block_root")) v-previous-state
+                            v-state-root i-timestamp (-/developer-proposer-root) nil
+                            (pg/jsonb-build-array))]
+    (return (pg/jsonb-build-object
+             "address" i-address
+             "address_root" (pg/encode v-address-root "hex")
+             "state_root" (pg/encode v-state-root "hex")
+             "block_root" (pg/encode v-block-root "hex")))))
+
+(defn.pg ^{:- [:jsonb]}
+  developer-submit-integer
+  "Executes and commits an unsigned constant integer transaction for the
+   developer console.  This is never a public production admission function."
+  {:added "0.3"}
+  [:text i-network :text i-address :text i-integer :bigint i-cost-limit
+   :bigint i-timestamp]
+  (let [o-head (block/head-lock i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/developer-network-missing])
+        (:bytea v-previous-state) (:bytea (:->> o-head "state_root"))
+        (:bigint v-previous-height) (:bigint (:->> o-head "height"))
+        (:bytea v-address-root) (-/developer-address-root i-address)
+        (:bytea v-account-root) (state/state-account-root v-previous-state v-address-root)
+        _ (pg/assert [v-account-root :is-not-null] [:ledger/missing-account])
+        (:bigint v-sequence)
+        (value/integer-bigint (account/account-value-sequence-root v-account-root))
+        (:bytea v-transaction-root)
+        (transaction/transaction-put
+         i-network v-address-root v-sequence
+         (op/constant (value/put-integer i-integer)) nil i-cost-limit
+         (value/put-integer "1") nil)
+        (:bytea v-receipt-root)
+        (block/block-execute-transaction v-transaction-root i-network v-previous-state
+                                         (+ v-previous-height 1) i-timestamp)
+        o-receipt (transaction/transaction-receipt-get v-receipt-root)
+        (:bytea v-state-root) (:bytea (:->> o-receipt "state_root"))
+        (:bytea v-block-root)
+        (block/block-commit i-network v-previous-height v-previous-state
+                            (+ v-previous-height 1)
+                            (:bytea (:->> o-head "block_root")) v-previous-state
+                            v-state-root i-timestamp (-/developer-proposer-root) nil
+                            (pg/jsonb-build-array (pg/encode v-transaction-root "hex")))
+        o-bound (block/block-transaction-bind v-block-root 0 v-receipt-root)]
+    (return (pg/jsonb-build-object
+             "transaction_root" (pg/encode v-transaction-root "hex")
+             "receipt_root" (pg/encode v-receipt-root "hex")
+             "state_root" (pg/encode v-state-root "hex")
+             "block_root" (pg/encode v-block-root "hex")
+             "status" (:text (:->> o-receipt "status"))))))
+
+(defn.pg ^{:- [:jsonb]}
+  developer-head
+  {:added "0.3"}
+  [:text i-network]
+  (let [o-head (block/head-get i-network)
+        _ (pg/assert [o-head :is-not-null] [:ledger/developer-network-missing])]
+    (return (pg/jsonb-build-object
+             "network" i-network
+             "height" (:bigint (:->> o-head "height"))
+             "block_root" (pg/encode (:bytea (:->> o-head "block_root")) "hex")
+             "state_root" (pg/encode (:bytea (:->> o-head "state_root")) "hex")))))

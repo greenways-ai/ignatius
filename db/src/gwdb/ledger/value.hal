@@ -1,0 +1,491 @@
+(ns gwdb.ledger.value
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.type :as type]
+            [gwdb.ledger.codec :as codec]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec-value :as codec-value]))
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.type :as type]
+             [gwdb.ledger.codec :as codec]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec-value :as codec-value]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+;; The payload argument is already Hara Canonical Value Encoding v1 bytes.
+;; Keeping this boundary explicit prevents accidental hashing of jsonb::text.
+(defn.pg ^{:- [:bytea]} put-value
+  "Stores an arbitrary validated Hara value payload."
+  {:added "0.1"}
+  [:smallint i-type-tag :bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash i-type-tag i-payload)
+                         1
+                         i-type-tag
+                         i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-nil
+  "Stores the canonical nil value."
+  {:added "0.1"}
+  []
+  (return (cell/cell-put (codec/canonical-hash 0 (pg/decode "" "hex"))
+                         1 0 (pg/decode "" "hex"))))
+
+(defn.pg ^{:- [:bytea]} put-boolean-payload
+  "Low-level boolean insertion for an already canonical one-byte payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 1 i-payload)
+                         1 1 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-boolean
+  "Stores a semantic boolean using HCV1's 00/01 representation."
+  {:added "0.1"}
+  [:boolean i-value]
+  (let [(:bytea v-payload) (pg/case i-value
+                              (pg/decode "01" "hex")
+                              :else (pg/decode "00" "hex"))]
+    (return (-/put-boolean-payload v-payload))))
+
+(defn.pg ^{:- [:bytea]} put-integer-payload
+  "Low-level integer insertion for an already canonical decimal payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 2 i-payload)
+                         1 2 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-integer
+  "Stores a canonical signed decimal integer without a host-size limit."
+  {:added "0.1"}
+  [:text i-value]
+  (let [_ (pg/assert [(pg/regexp-match i-value "^-?(0|[1-9][0-9]*)$") :is-not-null]
+                     [:ledger/invalid-integer-encoding])
+        (:bytea v-payload) (pg/decode i-value "escape")]
+    (return (-/put-integer-payload v-payload))))
+
+(defn.pg ^{:- [:bytea]} put-integer-number
+  "Convenience constructor for host bigint values."
+  {:added "0.1"}
+  [:bigint i-value]
+  (return (-/put-integer (:text i-value))))
+
+(defn.pg ^{:- [:bigint]} integer-bigint
+  "Reads a bounded HCV1 integer for protocol counters and cost fields."
+  {:added "0.2"}
+  [:bytea i-root]
+  (let [o-cell (cell/cell-by-hash i-root)
+        _ (pg/assert (and [o-cell :is-not-null]
+                          (== (:smallint (:->> o-cell "type_tag")) 2))
+                     [:ledger/not-integer])]
+    (return (:bigint (pg/encode (:bytea (:->> o-cell "payload")) "escape")))))
+
+(defn.pg ^{:- [:bytea]} put-double
+  "Stores an IEEE-754 double from its canonical payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 3 i-payload)
+                         1 3 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-character
+  "Stores a character from its canonical UTF-8 payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 4 i-payload)
+                         1 4 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-string-payload
+  "Low-level string insertion for already canonical UTF-8 bytes."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 5 i-payload)
+                         1 5 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-string
+  "Stores text using PostgreSQL's explicit UTF-8 byte conversion."
+  {:added "0.1"}
+  [:text i-value]
+  (let [(:bytea v-payload) (convert-to i-value "UTF8")]
+    (return (-/put-string-payload v-payload))))
+
+(defn.pg ^{:- [:bytea]} put-blob
+  "Stores an opaque blob payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 6 i-payload)
+                         1 6 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-symbol-payload
+  "Low-level symbol insertion for already canonical UTF-8 bytes."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 7 i-payload)
+                         1 7 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-symbol
+  "Stores a symbol using PostgreSQL's explicit UTF-8 byte conversion."
+  {:added "0.1"}
+  [:text i-value]
+  (let [(:bytea v-payload) (convert-to i-value "UTF8")]
+    (return (-/put-symbol-payload v-payload))))
+
+(defn.pg ^{:- [:bytea]} put-keyword-payload
+  "Low-level keyword insertion for already canonical UTF-8 bytes."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 8 i-payload)
+                         1 8 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-keyword
+  "Stores a keyword using PostgreSQL's explicit UTF-8 byte conversion."
+  {:added "0.1"}
+  [:text i-value]
+  (let [(:bytea v-payload) (convert-to i-value "UTF8")]
+    (return (-/put-keyword-payload v-payload))))
+
+(defn.pg ^{:- [:bytea]} put-list-payload
+  "Low-level list insertion for an already validated canonical payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 9 i-payload)
+                         1 9 i-payload)))
+
+(defn.pg sequence-refs-put
+  "Builds the derived reference index for one canonical ordered compound root."
+  {:added "0.1"}
+  [:bytea i-parent-root :jsonb i-child-roots :integer i-position :integer i-count]
+  (let [(:integer v-position) i-position
+        (:text v-child-hex) nil
+        (:bytea v-child-root) nil
+        o-ref nil
+        o-result nil]
+    (while (< v-position i-count)
+      (:= v-child-hex
+          (:->> i-child-roots v-position))
+      (:= v-child-root
+          (pg/decode v-child-hex "hex"))
+      (:= o-ref
+          (cell/cell-ref-put
+           i-parent-root v-position "element" v-child-root))
+      (cond (== v-position i-position)
+            (:= o-result o-ref))
+      (:= v-position
+          (+ v-position 1)))
+    (return o-result)))
+
+(defn.pg ^{:- [:bytea]} put-list
+  "Stores a list from ordered child roots through the HCV1 compound codec."
+  {:added "0.1"}
+  [:jsonb i-child-roots]
+  (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)
+        (:bytea v-payload) (codec-value/sequence-payload i-child-roots)
+        (:bytea v-root) (-/put-list-payload v-payload)
+        o-refs (-/sequence-refs-put v-root i-child-roots 0 v-count)]
+    (return v-root)))
+
+(defn.pg ^{:- [:bytea]} put-vector-payload
+  "Low-level vector insertion for an already validated canonical payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 10 i-payload)
+                         1 10 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-vector
+  "Stores a vector from ordered child roots through the HCV1 compound codec."
+  {:added "0.1"}
+  [:jsonb i-child-roots]
+  (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)
+        (:bytea v-payload) (codec-value/sequence-payload i-child-roots)
+        (:bytea v-root) (-/put-vector-payload v-payload)
+        o-refs (-/sequence-refs-put v-root i-child-roots 0 v-count)]
+    (return v-root)))
+
+(deftype.pg VectorElement
+  "Rebuildable ordered element index for a vector cell."
+  {:added "0.1"}
+  [:vector-root {:type :bytea :primary true}
+   :position    {:type :integer :primary true}
+   :value-root  {:type :bytea :required true}])
+
+(defn.pg vector-element-put
+  "Records one vector child after the canonical vector cell is committed."
+  {:added "0.1"}
+  [:bytea i-vector-root :integer i-position :bytea i-value-root]
+  (let [o-vector (cell/cell-by-hash i-vector-root)
+        o-value (cell/cell-by-hash i-value-root)
+        _ (pg/assert [o-vector :is-not-null]
+                     [:ledger/missing-vector-cell])
+        _ (pg/assert (== (:smallint (:->> o-vector "type_tag")) 10)
+                     [:ledger/wrong-vector-type])
+        _ (pg/assert (>= i-position 0)
+                     [:ledger/invalid-vector-position])
+        _ (pg/assert [o-value :is-not-null]
+                     [:ledger/missing-vector-value])
+        o-ref (cell/cell-ref-put i-vector-root i-position "element" i-value-root)
+        o-row (pg/t:upsert -/VectorElement
+                           {:vector-root i-vector-root
+                            :position i-position
+                            :value-root i-value-root})]
+    (return o-row)))
+
+(defn.pg vector-element-get
+  "Reads one ordered vector child from the rebuildable index."
+  {:added "0.1"}
+  [:bytea i-vector-root :integer i-position]
+  (let [o-row (pg/t:get -/VectorElement
+                        {:where {:vector-root i-vector-root
+                                 :position i-position}})]
+    (return o-row)))
+
+(defn.pg ^{:- [:bytea]} vector-get
+  "Reads a vector child from authoritative CellRef, not its optional index."
+  {:added "0.2"}
+  [:bytea i-vector-root :integer i-position]
+  (let [o-vector (cell/cell-by-hash i-vector-root)
+        _ (pg/assert (and [o-vector :is-not-null]
+                          (== (:smallint (:->> o-vector "type_tag")) 10))
+                     [:ledger/not-vector])
+        (:integer v-count) (cell/cell-ref-count i-vector-root "element")]
+    (cond (or (< i-position 0) (>= i-position v-count))
+          (return nil)
+          :else
+          (return (cell/cell-ref-child i-vector-root i-position "element")))))
+
+(defn.pg ^{:- [:bytea]} put-map-payload
+  "Low-level map insertion for an already validated canonical payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 11 i-payload)
+                         1 11 i-payload)))
+
+(defn.pg map-refs-put
+  "Builds role-specific references for canonical map key/value pairs."
+  {:added "0.1"}
+  [:bytea i-parent-root :jsonb i-child-roots :integer i-position :integer i-count]
+  (let [(:integer v-position) i-position
+        (:text v-key-hex) nil
+        (:text v-value-hex) nil
+        (:bytea v-key-root) nil
+        (:bytea v-value-root) nil
+        o-key-ref nil
+        o-value-ref nil
+        o-result nil]
+    (while (< v-position i-count)
+      (:= v-key-hex
+          (:->> i-child-roots v-position))
+      (:= v-value-hex
+          (:->> i-child-roots (+ v-position 1)))
+      (:= v-key-root
+          (pg/decode v-key-hex "hex"))
+      (:= v-value-root
+          (pg/decode v-value-hex "hex"))
+      (:= o-key-ref
+          (cell/cell-ref-put
+           i-parent-root (/ v-position 2) "key" v-key-root))
+      (:= o-value-ref
+          (cell/cell-ref-put
+           i-parent-root (/ v-position 2) "value" v-value-root))
+      (cond (== v-position i-position)
+            (:= o-result o-value-ref))
+      (:= v-position
+          (+ v-position 2)))
+    (return o-result)))
+
+(defn.pg ^{:- [:bytea]} put-map
+  "Stores canonical-order key/value root pairs as an immutable map value."
+  {:added "0.1"}
+  [:jsonb i-child-roots]
+  (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)
+        (:bytea v-payload) (codec-value/map-payload i-child-roots)
+        (:bytea v-root) (-/put-map-payload v-payload)
+        o-refs (-/map-refs-put v-root i-child-roots 0 v-count)]
+    (return v-root)))
+
+(defn.pg ^{:- [:jsonb]} map-copy-tail
+  "Appends the authoritative ordered map references from position onward."
+  {:added "0.1"}
+  [:bytea i-map-root :integer i-position :integer i-count :jsonb i-out]
+  (let [(:integer v-position) i-position
+        (:jsonb v-out) i-out
+        (:bytea v-key) nil
+        (:bytea v-value) nil]
+    (while (< v-position i-count)
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-value
+          (cell/cell-ref-child i-map-root v-position "value"))
+      (:= v-out
+          (|| v-out
+              (pg/jsonb-build-array
+               (pg/encode v-key "hex")
+               (pg/encode v-value "hex"))))
+      (:= v-position
+          (+ v-position 1)))
+    (return v-out)))
+
+(defn.pg ^{:- [:jsonb]} map-assoc-roots
+  "Builds canonical map pairs by replacing or inserting one ordered key."
+  {:added "0.1"}
+  [:bytea i-map-root
+   :bytea i-key-root
+   :bytea i-value-root
+   :integer i-position
+   :integer i-count
+   :jsonb i-out]
+  (let [(:integer v-position) i-position
+        (:jsonb v-out) i-out
+        (:jsonb v-inserted)
+        (pg/jsonb-build-array
+         (pg/encode i-key-root "hex")
+         (pg/encode i-value-root "hex"))
+        (:boolean v-done) false
+        (:bytea v-key) nil
+        (:bytea v-value) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-value
+          (cell/cell-ref-child i-map-root v-position "value"))
+      (:= v-order
+          (codec-value/compare i-key-root v-key))
+      (cond (== v-order 0)
+            (do (:= v-out (|| v-out v-inserted))
+                (:= v-position (+ v-position 1))
+                (:= v-done true))
+            (< v-order 0)
+            (do (:= v-out (|| v-out v-inserted))
+                (:= v-done true))
+            :else
+            (do (:= v-out
+                    (|| v-out
+                        (pg/jsonb-build-array
+                         (pg/encode v-key "hex")
+                         (pg/encode v-value "hex"))))
+                (:= v-position (+ v-position 1)))))
+    (cond v-done
+          (return (-/map-copy-tail
+                   i-map-root v-position i-count v-out))
+          :else
+          (return (|| v-out v-inserted)))))
+
+(defn.pg ^{:- [:bytea]} map-assoc
+  "Returns the immutable canonical map formed by associating one root pair."
+  {:added "0.1"}
+  [:bytea i-map-root :bytea i-key-root :bytea i-value-root]
+  (let [o-map (cell/cell-by-hash i-map-root)
+        _ (pg/assert (and [o-map :is-not-null]
+                          (== (:smallint (:->> o-map "type_tag")) 11))
+                     [:ledger/not-map])
+        (:integer v-count) (cell/cell-ref-count i-map-root "key")
+        (:jsonb v-roots) (-/map-assoc-roots
+                            i-map-root i-key-root i-value-root
+                            0 v-count (pg/jsonb-build-array))]
+    (return (-/put-map v-roots))))
+
+(defn.pg ^{:- [:bytea]} map-get-at
+  "Looks up one root key using the map's committed canonical key order."
+  {:added "0.2"}
+  [:bytea i-map-root :bytea i-key-root :integer i-position :integer i-count]
+  (let [(:integer v-position) i-position
+        (:boolean v-done) false
+        (:bytea v-result) nil
+        (:bytea v-key) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-key
+          (cell/cell-ref-child i-map-root v-position "key"))
+      (:= v-order
+          (codec-value/compare i-key-root v-key))
+      (cond (== v-order 0)
+            (do (:= v-result
+                    (cell/cell-ref-child
+                     i-map-root v-position "value"))
+                (:= v-done true))
+            (< v-order 0)
+            (:= v-done true)
+            :else
+            (:= v-position (+ v-position 1))))
+    (return v-result)))
+
+(defn.pg ^{:- [:bytea]} map-get
+  "Returns a map value root, or NULL when the canonical key is absent."
+  {:added "0.2"}
+  [:bytea i-map-root :bytea i-key-root]
+  (let [o-map (cell/cell-by-hash i-map-root)
+        _ (pg/assert (and [o-map :is-not-null]
+                          (== (:smallint (:->> o-map "type_tag")) 11))
+                     [:ledger/not-map])
+        (:integer v-count) (cell/cell-ref-count i-map-root "key")]
+    (return (-/map-get-at i-map-root i-key-root 0 v-count))))
+
+(defn.pg ^{:- [:boolean]} set-contains-at
+  "Checks an ordered canonical set by full HCV byte comparison."
+  {:added "0.2"}
+  [:bytea i-set-root :bytea i-value-root :integer i-position :integer i-count]
+  (let [(:integer v-position) i-position
+        (:boolean v-found) false
+        (:boolean v-done) false
+        (:bytea v-current) nil
+        (:integer v-order) nil]
+    (while (and (< v-position i-count)
+                (not v-done))
+      (:= v-current
+          (cell/cell-ref-child i-set-root v-position "element"))
+      (:= v-order
+          (codec-value/compare i-value-root v-current))
+      (cond (== v-order 0)
+            (do (:= v-found true)
+                (:= v-done true))
+            (< v-order 0)
+            (:= v-done true)
+            :else
+            (:= v-position (+ v-position 1))))
+    (return v-found)))
+
+(defn.pg ^{:- [:boolean]} set-contains
+  "Returns whether a canonical set contains a semantic root."
+  {:added "0.2"}
+  [:bytea i-set-root :bytea i-value-root]
+  (let [o-set (cell/cell-by-hash i-set-root)
+        _ (pg/assert (and [o-set :is-not-null]
+                          (== (:smallint (:->> o-set "type_tag")) 12))
+                     [:ledger/not-set])
+        (:integer v-count) (cell/cell-ref-count i-set-root "element")]
+    (return (-/set-contains-at i-set-root i-value-root 0 v-count))))
+
+(defn.pg ^{:- [:bytea]} put-set-payload
+  "Low-level set insertion for an already validated canonical payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 12 i-payload)
+                         1 12 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-set
+  "Stores canonical-order child roots as an immutable set value."
+  {:added "0.1"}
+  [:jsonb i-child-roots]
+  (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)
+        (:bytea v-payload) (codec-value/set-payload i-child-roots)
+        (:bytea v-root) (-/put-set-payload v-payload)
+        o-refs (-/sequence-refs-put v-root i-child-roots 0 v-count)]
+    (return v-root)))
+
+(defn.pg ^{:- [:bytea]} put-record
+  "Stores a record from its canonical field-ordered payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 14 i-payload)
+                         1 14 i-payload)))
+
+(defn.pg ^{:- [:bytea]} put-reference
+  "Stores a reference from its canonical target payload."
+  {:added "0.1"}
+  [:bytea i-payload]
+  (return (cell/cell-put (codec/canonical-hash 15 i-payload)
+                         1 15 i-payload)))

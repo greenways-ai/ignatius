@@ -1,43 +1,41 @@
 # Ignatius
 
-Ignatius is the **immutable persistence and signed-evidence substrate** for
-Greenways. It stores content-addressed blocks, selects roots through scoped
-compare-and-set refs, and verifies generic signed evidence and provenance.
+Ignatius is the **authoritative PostgreSQL blockchain** for Greenways. It
+stores canonical HCV1/HCP1 state, orders and executes signed transactions,
+commits linear blocks, and returns receipts that bind the transaction, result,
+state and block roots.
 
-It works with Git, Tahto and object storage rather than replacing them:
+Applications use the chain through the portable Ignatius client:
 
 ```text
-Git
-  source, text documents, branches, commits, diffs and file-level merges
-
-Tahto
-  semantic objects, versions, sync, backup and recovery
-
-R2 / S3 / local storage
-  model outputs, logs, media, binaries and large checkpoint bundles
-
-Hestia + std.work
-  intent, approvals, work dependencies, execution, reviews and releases
-
-Ignatius
-  immutable blocks, scoped refs, signed evidence, provenance and receipts
+Hestia and other applications
+  -> Ignatius HAL client
+  -> postgres.core host capability
+  -> gw_ledger transaction execution and block commit
+  -> canonical receipt returned to the application
 ```
 
-Ignatius does not require a token, public activity feed or public consensus
-network. PostgreSQL is the durable multi-writer adapter; Hara modules define the
-portable canonical values, reducers and client semantics.
+Ignatius does not require an HTTP node, token, public activity feed or public
+consensus network. The reference node is PostgreSQL itself. Database handles
+and credentials stay inside the `postgres.core` capability; portable HAL code
+receives explicit request and result values.
 
-## Boundary correction
+## Chain, client and application boundary
 
-Legacy workflow, workspace, Git and GitHub orchestration still exists in this
-repository. It is being migrated to Hestia (`intent`, approval and workflow
-policy) and `std.work` (execution and recovery). No new orchestration behaviour
-should be added to Ignatius during that migration. Compatible record decoders
-may remain while stored histories are upgraded.
+- `db/` is the Ignatius chain implementation. Its current internal namespaces
+  remain `gwdb.ledger.*` to preserve SQL names, canonical encodings and roots.
+- `hal/` is the portable Ignatius client, local evaluator and generic workflow
+  manager. Local evaluation is a conformance oracle and preparation step; it is
+  not an alternative authority.
+- Hestia and other consumers own their profiles, rooms, documents, mandates,
+  approvals, reducers, projections and UI policy. They submit generic signed
+  operation packs and verify the returned chain receipt.
+- `std.work` owns scheduling and recovery. A work completion becomes
+  authoritative only after its signed transaction is committed by Ignatius.
 
-The generic storage and evidence contracts remain authoritative. An ordinary
-semantic edit may use Ignatius blocks and refs without becoming a workflow or a
-global acceptance event.
+Provider integrations supply bounded inputs and capability evidence before
+signing. They do not redefine canonical state. Retained application tables are
+rebuildable projections rather than a second source of truth.
 
 ## Current status
 
@@ -55,10 +53,12 @@ The signed foundation and first workflow slice are implemented:
 - policy-gated accepted `main` and immutable releases; and
 - a Git adapter that emits exact resource and workflow event payloads.
 
-The active delivery track is [Agent Workflow #41](https://github.com/greenways-ai/ignatius/issues/41).
-The current implementation phase is [operational projections and scheduler API
-#43](https://github.com/greenways-ai/ignatius/issues/43). The end-to-end release
-definition is [Agent Workflow v0.1 #48](https://github.com/greenways-ai/ignatius/issues/48).
+The authoritative roadmap is [#9](https://github.com/greenways-ai/ignatius/issues/9),
+the boundary correction is [#51](https://github.com/greenways-ai/ignatius/issues/51),
+and the stable chain API and release contract are tracked by
+[#76](https://github.com/greenways-ai/ignatius/issues/76). Hestia's
+data-preserving integration is tracked by
+[greenways-ai/hestia#28](https://github.com/greenways-ai/hestia/issues/28).
 
 ## Product model
 

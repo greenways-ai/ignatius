@@ -1,0 +1,63 @@
+(ns gwdb.ledger.crypto
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec :as codec]))
+
+;; Register the pgsodium extension function as a normal PostgreSQL DSL call.
+;; This is the same builtin-template mechanism postgres.core uses for pgcrypto.
+(l/script :postgres {:macro-only true})
+(def$.pg crypto-sign-verify-detached pgsodium.crypto-sign-verify-detached)
+
+(l/script :postgres
+  {:require [[postgres.core :as pg]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec :as codec]]
+   :config {:dbname "gw-ledger-test"}
+   :import [["pgcrypto"] ["pgsodium"]]
+   :static {:application ["gw"]
+            :all {:schema ["gw_ledger"]}}})
+
+;; Ed25519 protocol constants.  The database only ever receives public keys
+;; and detached signatures; private keys remain in the browser wallet.
+(def +public-key-size+ 32)
+(def +signature-size+ 64)
+
+(defn.pg ^{:- [:boolean] :%% :sql :props [:immutable :parallel-safe]}
+  public-key-valid
+  {:added "0.3"}
+  [:bytea i-public-key]
+  (== (pg/length i-public-key) 32))
+
+(defn.pg ^{:- [:boolean] :%% :sql :props [:immutable :parallel-safe]}
+  signature-valid
+  {:added "0.3"}
+  [:bytea i-signature]
+  (== (pg/length i-signature) 64))
+
+(defn.pg ^{:- [:boolean]}
+  public-key-root-valid
+  "A controller key is represented as an ordinary Hara blob value."
+  {:added "0.3"}
+  [:bytea i-public-key-root]
+  (let [o-cell (cell/cell-by-hash i-public-key-root)]
+    (return (and [o-cell :is-not-null]
+                 (== (:smallint (:->> o-cell "type_tag")) 6)
+                 (-/public-key-valid (:bytea (:->> o-cell "payload")))))))
+
+(defn.pg ^{:- [:bytea] :%% :sql :props [:immutable :parallel-safe]}
+  account-address-payload
+  "Domain-separated deterministic account-address bytes for an Ed25519 key."
+  {:added "0.3"}
+  [:bytea i-public-key]
+  (codec/sha256 (|| (pg/decode "gwdb-ledger:account:ed25519:v1:" "escape")
+                     i-public-key)))
+
+(defn.pg ^{:- [:boolean]}
+  signature-verify
+  "Verifies one detached Ed25519 signature through pgsodium."
+  {:added "0.3"}
+  [:bytea i-signature :bytea i-message :bytea i-public-key]
+  (return (and (-/signature-valid i-signature)
+               (-/public-key-valid i-public-key)
+               (pg/crypto-sign-verify-detached i-signature i-message i-public-key))))

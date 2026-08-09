@@ -1,0 +1,105 @@
+(ns gwdb.ledger.state-graph-test
+  (:use code.test)
+  (:require [lang.core :as l]
+            [postgres.core :as pg]
+            [gwdb.ledger.base :as base]
+            [gwdb.ledger.account :as account]
+            [gwdb.ledger.cell :as cell]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.codec-value :as codec-value]
+            [gwdb.ledger.state :as state]
+            [gwdb.ledger.value :as value]))
+
+(l/script- :postgres
+  {:runtime :jdbc.client
+   :config {:dbname "gw-ledger-test"
+            :temp :create
+            :container {:group "gw-ledger"
+                        :image "gw-ledger-postgres:15-pgsodium"
+                        :ports [5432]
+                        :environment {"POSTGRES_PASSWORD" "postgres"
+                                      "POSTGRES_USER" "postgres"}
+                        :cmd ["postgres"]}}
+   :require [[postgres.core :as pg]
+             [gwdb.ledger.base :as base :primary true]
+             [gwdb.ledger.account :as account]
+             [gwdb.ledger.cell :as cell]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.codec-value :as codec-value]
+             [gwdb.ledger.state :as state]
+             [gwdb.ledger.value :as value]]
+   :static {:application ["gw"]
+            :seed ["gw_ledger"]
+            :all {:schema ["gw_ledger"]}}})
+
+(fact:global
+ {:setup [(l/rt:stop)
+          (l/rt:restart)]
+  :teardown [(l/rt:stop)
+             (l/rt:stop)]})
+
+^{:refer gwdb.ledger.state/state-genesis :added "0.1"}
+(fact "genesis is a valid canonical state record with a semantic version child"
+  (!.pg
+   [:select (state/state-root-valid (state/state-genesis))]
+   [:select (pg/encode
+             (codec-value/encode (state/state-version-root (state/state-genesis)))
+             "escape")]
+   [:select (cell/cell-type-tag (state/state-accounts-root (state/state-genesis)))])
+  => '(true "HCV1:2:1:31" 11))
+
+^{:refer gwdb.ledger.state/state-with-accounts :added "0.1"}
+(fact "replacing one logical child produces a distinct immutable state root"
+  (let [previous (!.pg [:select (state/state-genesis)])
+        next (!.pg
+              [:select
+               (state/state-with-accounts
+                (state/state-genesis)
+                (value/put-map
+                 (pg/jsonb-build-array
+                  (pg/encode (value/put-string "address") "hex")
+                  (pg/encode (value/put-map (pg/jsonb-build-array)) "hex")))
+                1)])]
+    (not= previous next))
+  => true)
+
+^{:refer gwdb.ledger.state/state-assoc-account :added "0.1"}
+(fact "an account is committed through the state accounts map, not its projection"
+  (!.pg
+   [:select
+    (cell/cell-type-tag
+     (cell/cell-ref-child
+      (state/state-accounts-root
+       (state/state-assoc-account
+        (state/state-genesis)
+        (value/put-string "alice")
+        (account/account-value-create (value/put-nil))
+        1))
+      0 "value"))])
+  => 14)
+
+^{:refer gwdb.ledger.state/state-rebuild-head :added "0.2"}
+(fact "state-head rebuild derives its row from canonical state references"
+  (!.pg
+   [:select
+    (:->>
+     (state/state-rebuild-head (state/state-genesis) 9)
+     "block_height")])
+  => 9)
+
+^{:refer gwdb.ledger.state/state-import :added "0.1"}
+(fact "logical state export imports only when it reconstructs the same root"
+  (!.pg
+   [:select
+    (codec-value/compare
+     (state/state-genesis)
+     (state/state-import (state/state-export (state/state-genesis)) 0))])
+  => 0)
+
+
+(def legacy-results (code.test/run {}))
+
+(std.lib.test/print-results
+ [(std.lib.test/check "ported Foundation facts pass"
+                      (:status legacy-results)
+                      :passed)])

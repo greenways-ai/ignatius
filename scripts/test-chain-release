@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+first="$(mktemp -d)"
+second="$(mktemp -d)"
+cleanup() {
+  rm -rf "$first" "$second"
+}
+trap cleanup EXIT
+
+"$repo_dir/scripts/build-chain-release" "$first" >/dev/null
+"$repo_dir/scripts/build-chain-release" "$second" >/dev/null
+
+first_zip="$first/ignatius-postgres-chain-v0.1.0.zip"
+second_zip="$second/ignatius-postgres-chain-v0.1.0.zip"
+cmp "$first_zip" "$second_zip"
+
+expected="$(cut -d ' ' -f 1 "$first_zip.sha256")"
+actual="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$first_zip")"
+[[ "$expected" == "$actual" ]]
+
+python3 - "$first_zip" <<'PY'
+import sys
+import zipfile
+
+expected = {
+    "db/README.md",
+    "db/chain-release.edn",
+    "db/contracts/ledger-client/generated.ts",
+    "db/migrations/0001-chain-version-registry.sql",
+    "db/sql/full.sql",
+}
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    names = set(archive.namelist())
+    assert names == expected, (names, expected)
+    assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
+PY
+
+python3 - "$first/ignatius-postgres-chain-v0.1.0.json" <<'PY'
+import json
+import sys
+
+metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+assert metadata["releaseVersion"] == "0.1.0"
+assert metadata["schemaVersion"] == 1
+assert metadata["protocolVersion"] == 1
+assert metadata["freshInstallDestructive"] is True
+assert metadata["migrationCount"] == 1
+PY

@@ -1,0 +1,42 @@
+(ns ignatius.client.postgres-test
+  (:require [std.lib.test :as test]
+            [ignatius.client.postgres :as postgres]))
+
+(def receipt
+  {:transaction-root "tx"
+   :result-root "result"
+   :state-root "state"
+   :block-root "block"
+   :receipt-root "receipt"})
+
+(test/print-results
+ [(test/check
+   "constructs direct postgres.core submission without a runtime handle"
+   (postgres/submission-call {:network "local" :sequence 7})
+   {:service "postgres.core"
+    :operation "ignatius/submit"
+    :arguments [{:network "local" :sequence 7}]})
+
+  (test/check
+   "requires compatible chain schema and protocol versions"
+   [(postgres/compatible-version?
+     {:schema-version 1 :protocol-version 1}
+     {:schema-version 1 :protocol-version 1})
+    (postgres/compatible-version?
+     {:schema-version 1 :protocol-version 1}
+     {:schema-version 2 :protocol-version 1})]
+   [true false])
+
+  (test/check
+   "accepts evidence only when every canonical root matches"
+   [(postgres/receipt-matches? receipt receipt)
+    (postgres/receipt-matches?
+     receipt
+     (assoc receipt :block-root "other"))]
+   [true false])
+
+  (test/check
+   "keeps generated descriptors generic"
+   [(count postgres/submission-fields)
+    (count postgres/result-fields)]
+   [14 11])])
