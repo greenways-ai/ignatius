@@ -1,0 +1,160 @@
+(ns ignatius.github.delivery
+  (:require [std.work.runtime.store :as store]))
+
+(def protocol-version "ignatius.github.delivery/1")
+
+(defn run-id
+  [delivery-id]
+  (str "github/delivery/" delivery-id))
+
+(defn delivery-run
+  [delivery-id plan-root events]
+  {:run/id (run-id delivery-id)
+   :run/work-root plan-root
+   :run/work-version 1
+   :run/runtime-version protocol-version
+   :run/schema-version 1
+   :run/status :created
+   :run/input
+   {:provider :github
+    :provider/delivery-id delivery-id
+    :plan/root plan-root
+    :plan/events events}
+   :run/attributes
+   {:provider :github
+    :provider/delivery-id delivery-id
+    :plan/root plan-root
+    :plan/event-count (count events)}})
+
+(defn outbox-key
+  [delivery-id position]
+  [protocol-version delivery-id position])
+
+(defn outbox-entry
+  [delivery-id plan-root position event]
+  {:outbox/key (outbox-key delivery-id position)
+   :outbox/topic :ignatius/transaction
+   :outbox/kind :ignatius/submit
+   :outbox/delivery-id delivery-id
+   :outbox/position position
+   :outbox/plan-root plan-root
+   :outbox/payload event})
+
+(defn plan-outbox
+  [delivery-id plan-root events]
+  (loop [position 0
+         output []]
+    (if (= position (count events))
+      output
+      (recur
+       (inc position)
+       (conj output
+             (outbox-entry delivery-id
+                           plan-root
+                           position
+                           (nth events position)))))))
+
+(defn queued-event
+  [delivery-id plan-root events]
+  {:event :github/delivery-queued
+   :provider :github
+   :provider/delivery-id delivery-id
+   :plan/root plan-root
+   :plan/event-count (count events)})
+
+(defn transition
+  [run delivery-id plan-root events]
+  (store/transition-request
+   (:run/id run)
+   (or (:run/revision run) 0)
+   {:transition/run-updates
+    {:run/status :queued
+     :run/attributes
+     {:provider :github
+      :provider/delivery-id delivery-id
+      :plan/root plan-root
+      :plan/event-count (count events)}}
+    :transition/events
+    [(queued-event delivery-id plan-root events)]
+    :transition/outbox
+    (plan-outbox delivery-id plan-root events)}))
+
+(defn validate-input!
+  [delivery-id plan-root events]
+  (if (or (not (string? delivery-id))
+          (= 0 (count delivery-id)))
+    (throw
+     (ex-info "GitHub delivery requires a non-empty identity" {})))
+  (if (or (not (string? plan-root))
+          (= 0 (count plan-root)))
+    (throw
+     (ex-info "GitHub delivery requires an exact plan root"
+              {:provider/delivery-id delivery-id})))
+  (if (or (nil? events)
+          (= 0 (count events)))
+    (throw
+     (ex-info "GitHub delivery requires at least one planned event"
+              {:provider/delivery-id delivery-id})))
+  true)
+
+(defn enqueue-plan!
+  "Atomically records one provider delivery transition and its ordered
+   Ignatius submission intents through a std.work store provider. Replaying the
+   same delivery and event vector returns the existing run and outbox; changing
+   either the plan root or event vector is an identity conflict."
+  [provider delivery-id plan-root events]
+  (validate-input! delivery-id plan-root events)
+  (let [provider (store/normalise-provider provider)
+        proposed (delivery-run delivery-id plan-root events)
+        run (store/call provider :create-run proposed)]
+    (if (= :created (:run/status run))
+      (store/call provider
+                  :transact
+                  (transition run delivery-id plan-root events))
+      {:transition/run run
+       :transition/revision (:run/revision run)
+       :transition/events []
+       :transition/outbox
+       (store/call provider
+                   :list-outbox
+                   {:run/id (:run/id run)})
+       :transition/replayed true})))
+
+(defn list-submissions
+  [provider delivery-id]
+  (store/call
+   (store/normalise-provider provider)
+   :list-outbox
+   {:run/id (run-id delivery-id)}))
+
+(defn pending-submissions
+  [provider delivery-id]
+  (store/call
+   (store/normalise-provider provider)
+   :list-outbox
+   {:run/id (run-id delivery-id)
+    :status :pending}))
+
+(defn claim-submissions!
+  [provider delivery-id claim-id limit]
+  (store/call
+   (store/normalise-provider provider)
+   :claim-outbox
+   {:run/id (run-id delivery-id)
+    :claim/id claim-id
+    :claim/data
+    {:provider :github
+     :provider/delivery-id delivery-id
+     :outbox/topic :ignatius/transaction}
+    :limit limit}))
+
+(defn acknowledge-submission!
+  [provider outbox-id claim-id receipt]
+  (store/call
+   (store/normalise-provider provider)
+   :ack-outbox
+   outbox-id
+   {:claim/id claim-id
+    :ack/data
+    {:submission/status :accepted
+     :submission/receipt receipt}}))

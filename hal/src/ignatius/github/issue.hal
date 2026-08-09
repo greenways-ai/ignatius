@@ -19,12 +19,12 @@
 
 (defn expected-state
   [action]
-  (case action
-    :opened "open"
-    :reopened "open"
-    :closed "closed"
-    :edited nil
-    nil))
+  (cond
+    (= :opened action) "open"
+    (= :reopened action) "open"
+    (= :closed action) "closed"
+    (= :edited action) nil
+    :else nil))
 
 (defn state-valid?
   [action state]

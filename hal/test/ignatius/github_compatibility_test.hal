@@ -1,0 +1,25 @@
+(ns ignatius.github-compatibility-test
+  (:require [std.lib.test :as test]
+            [ignatius.github-workflow :as workflow]
+            [ignatius.github.compatibility-vectors :as vectors]))
+
+(defn check-vector
+  [vector]
+  (test/check
+   (str "Hara planner matches "
+        (get vector :compatibility/id))
+   (workflow/event-plan (get vector :facts))
+   (get vector :expected)))
+
+(def results
+  (conj
+   (reduce
+    (fn [out vector]
+      (conj out (check-vector vector)))
+    []
+    vectors/vectors)
+   (test/check "compatibility suite covers issue and push boundaries"
+               (count vectors/vectors)
+               2)))
+
+(test/print-results results)

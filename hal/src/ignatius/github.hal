@@ -1,5 +1,6 @@
 (ns ignatius.github
-  (:require [ignatius.github.issue :as issue]))
+  (:require [ignatius.github.issue :as issue]
+            [ignatius.github.push :as push]))
 
 (def github-format-version 1)
 
@@ -13,23 +14,8 @@
    (assoc facts :provider/event-action :opened)))
 
 (defn plan-push
-  "Compatibility entry point until the exact push mapper lands in the next
-   migration slice. The host already supplies exact commit facts."
   [facts]
-  (let [snapshot (get facts :snapshot)]
-    [{:action :resource/register
-      :workspace/id (get facts :workspace/id)
-      :resource/id
-      (str "github/"
-           (get snapshot :repository/full-name)
-           "/refs/heads/"
-           (get snapshot :branch))
-      :resource/kind :git/commit
-      :resource/provider :github
-      :resource/version (get snapshot :after)
-      :resource/metadata
-      {:provider/event-id (get facts :provider/delivery-id)
-       :provider/event-kind :github/push}}]))
+  (push/plan facts))
 
 (defn plan-check-complete
   "Compatibility entry point until check-run snapshot validation is ported.
