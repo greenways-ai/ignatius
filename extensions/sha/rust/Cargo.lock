@@ -504,7 +504,7 @@ version = "0.1.0"
 
 [[package]]
 name = "hara-wasm"
-version = "0.1.2"
+version = "0.1.5"
 dependencies = [
  "console_error_panic_hook",
  "ed25519-dalek",
