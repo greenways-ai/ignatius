@@ -1,0 +1,97 @@
+(ns ignatius.evidence)
+
+(def evidence-interface
+  {:interface/name :ignatius/evidence
+   :interface/version 1
+   :interface/methods
+   {:append
+    {:arguments [:state :request :root-of :verify-signature]
+     :returns :applied-replayed-or-error}}})
+
+(defn signing-payload
+  [domain root signer key-id sequence]
+  (str "IGE1:" domain ":" root ":" signer ":" key-id ":" sequence))
+
+(defn initial-state
+  []
+  {:evidence/by-idempotency {}
+   :evidence/by-root {}
+   :evidence/sequences {}})
+
+(defn envelope?
+  [value]
+  (and
+   (map? value)
+   (not (nil? (get value :evidence/domain)))
+   (not (nil? (get value :evidence/root)))
+   (map? (get value :evidence/body))
+   (not (nil? (get value :evidence/signer)))
+   (not (nil? (get value :evidence/key-id)))
+   (number? (get value :evidence/sequence))
+   (> (get value :evidence/sequence) 0)
+   (not (nil? (get value :evidence/signature)))))
+
+(defn result
+  [root status]
+  {:evidence/root root
+   :evidence/status status})
+
+(defn fail
+  [state error]
+  {:ok false :state state :error error})
+
+(defn append-evidence
+  [state request root-of verify-signature]
+  (let [key (get request :idempotency-key)
+        envelope (get request :envelope)
+        root (get envelope :evidence/root)
+        existing (get (get state :evidence/by-idempotency) key)
+        stored (get (get state :evidence/by-root) root)
+        signer (get envelope :evidence/signer)
+        key-id (get envelope :evidence/key-id)
+        sequence (get envelope :evidence/sequence)
+        previous (get (get state :evidence/sequences) signer)
+        expected (if (nil? previous) 1 (+ previous 1))
+        payload
+        (signing-payload
+         (get envelope :evidence/domain)
+         root signer key-id sequence)]
+    (cond
+      (nil? key)
+      (fail state :ignatius/idempotency-key-missing)
+
+      (not (envelope? envelope))
+      (fail state :ignatius/evidence-envelope-invalid)
+
+      (not (= root (root-of (get envelope :evidence/body))))
+      (fail state :ignatius/evidence-root-mismatch)
+
+      (not
+       (verify-signature
+        signer key-id payload (get envelope :evidence/signature)))
+      (fail state :ignatius/evidence-signature-invalid)
+
+      (and
+       (not (nil? existing))
+       (= existing root)
+       (= stored envelope))
+      {:ok true :state state :value (result root :replayed)}
+
+      (not (nil? existing))
+      (fail state :ignatius/idempotency-key-collision)
+
+      (not (= expected sequence))
+      (fail state :ignatius/evidence-sequence-conflict)
+
+      :else
+      {:ok true
+       :state
+       (assoc
+        state
+        :evidence/by-idempotency
+        (assoc (get state :evidence/by-idempotency) key root)
+        :evidence/by-root
+        (assoc (get state :evidence/by-root) root envelope)
+        :evidence/sequences
+        (assoc (get state :evidence/sequences) signer sequence))
+       :value (result root :applied)})))

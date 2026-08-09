@@ -1,0 +1,91 @@
+(ns ignatius.evidence-test
+  (:require [std.lib.test :as test]
+            [ignatius.evidence :as evidence]))
+
+(def body {:result/root "sha256:result"})
+
+(def envelope
+  {:evidence/domain "hestia.control-evidence/1"
+   :evidence/root "sha256:evidence"
+   :evidence/body body
+   :evidence/signer "worker/environment"
+   :evidence/key-id "key/environment"
+   :evidence/sequence 1
+   :evidence/signature "signature"})
+
+(defn root-of
+  [value]
+  (if (= value body) "sha256:evidence" "sha256:other"))
+
+(defn verify-signature
+  [signer key-id payload signature]
+  (and
+   (= signer "worker/environment")
+   (= key-id "key/environment")
+   (= payload
+      (evidence/signing-payload
+       "hestia.control-evidence/1"
+       "sha256:evidence"
+       signer key-id 1))
+   (= signature "signature")))
+
+(def applied
+  (evidence/append-evidence
+   (evidence/initial-state)
+   {:idempotency-key "receipt/one" :envelope envelope}
+   root-of verify-signature))
+
+(def replayed
+  (evidence/append-evidence
+   (get applied :state)
+   {:idempotency-key "receipt/one" :envelope envelope}
+   root-of verify-signature))
+
+(test/print-results
+ [(test/check
+   "generic evidence verifies and advances one signer sequence"
+   [(get applied :ok)
+    (get (get applied :value) :evidence/status)
+    (get (get (get applied :state) :evidence/sequences)
+         "worker/environment")]
+   [true :applied 1])
+
+  (test/check
+   "the same idempotency key and root replays without another append"
+   [(get replayed :ok)
+    (get (get replayed :value) :evidence/status)
+    (= (get applied :state) (get replayed :state))]
+   [true :replayed true])
+
+  (test/check
+   "sequence and signature failures do not mutate evidence state"
+   [(get
+     (evidence/append-evidence
+      (get applied :state)
+      {:idempotency-key "receipt/two"
+       :envelope (assoc envelope
+                        :evidence/root "sha256:evidence-2"
+                        :evidence/sequence 3)}
+      (fn [value] "sha256:evidence-2")
+      (fn [signer key-id payload signature] true))
+     :error)
+    (get
+     (evidence/append-evidence
+      (evidence/initial-state)
+      {:idempotency-key "receipt/one" :envelope envelope}
+      root-of
+      (fn [signer key-id payload signature] false))
+     :error)]
+   [:ignatius/evidence-sequence-conflict
+    :ignatius/evidence-signature-invalid])
+
+  (test/check
+   "replay re-verifies the exact stored envelope and signature"
+   (get
+    (evidence/append-evidence
+     (get applied :state)
+     {:idempotency-key "receipt/one"
+      :envelope (assoc envelope :evidence/signature "changed")}
+     root-of verify-signature)
+    :error)
+   :ignatius/evidence-signature-invalid)])

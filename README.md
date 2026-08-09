@@ -1,7 +1,8 @@
 # Ignatius
 
-Ignatius is a **signed workflow, provenance and acceptance ledger for
-collaborative human and AI agents**.
+Ignatius is the **immutable persistence and signed-evidence substrate** for
+Greenways. It stores content-addressed blocks, selects roots through scoped
+compare-and-set refs, and verifies generic signed evidence and provenance.
 
 It works with Git, Tahto and object storage rather than replacing them:
 
@@ -15,14 +16,28 @@ Tahto
 R2 / S3 / local storage
   model outputs, logs, media, binaries and large checkpoint bundles
 
+Hestia + std.work
+  intent, approvals, work dependencies, execution, reviews and releases
+
 Ignatius
-  exact resource pins, work dependencies, signed claims, execution state,
-  checkpoints, reviews, accepted heads, releases and receipts
+  immutable blocks, scoped refs, signed evidence, provenance and receipts
 ```
 
 Ignatius does not require a token, public activity feed or public consensus
 network. PostgreSQL is the durable multi-writer adapter; Hara modules define the
 portable canonical values, reducers and client semantics.
+
+## Boundary correction
+
+Legacy workflow, workspace, Git and GitHub orchestration still exists in this
+repository. It is being migrated to Hestia (`intent`, approval and workflow
+policy) and `std.work` (execution and recovery). No new orchestration behaviour
+should be added to Ignatius during that migration. Compatible record decoders
+may remain while stored histories are upgraded.
+
+The generic storage and evidence contracts remain authoritative. An ordinary
+semantic edit may use Ignatius blocks and refs without becoming a workflow or a
+global acceptance event.
 
 ## Current status
 
