@@ -9,7 +9,7 @@
             [gwdb.ledger.value :as value]))
 
 (l/script- :postgres
-  {:runtime :jdbc.client
+  {:runtime :db.client
    :config {:dbname "gw-ledger-test"
             :temp :create
             :container {:group "gw-ledger"
@@ -57,11 +57,11 @@
          (pg/encode (value/put-string "alice") "hex"))))))])
   => '(9 11))
 
-^{:refer gwdb.ledger.codec-value/compare :added "0.1"}
+^{:refer gwdb.ledger.codec-value/canonical-value-compare :added "0.1"}
 (fact "metadata changes syntax identity while semantic identity remains explicit"
   (!.pg
    [:select
-    (codec-value/compare
+    (codec-value/canonical-value-compare
      (syntax/put-syntax
       (value/put-list (pg/jsonb-build-array))
       (value/put-map

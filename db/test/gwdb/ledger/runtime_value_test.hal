@@ -13,7 +13,7 @@
             [gwdb.ledger.value :as value]))
 
 (l/script- :postgres
-  {:runtime :jdbc.client
+  {:runtime :db.client
    :config {:dbname "gw-ledger-test"
             :temp :create
             :container {:group "gw-ledger"

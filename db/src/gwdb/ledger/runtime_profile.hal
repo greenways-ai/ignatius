@@ -15,7 +15,7 @@
             :all {:schema ["gw_ledger"]}}})
 
 (defn.pg ^{:- [:bytea]}
-  field
+  runtime-profile-field
   {:added "0.8"}
   [:bytea i-profile-root :text i-name]
   (return
@@ -53,11 +53,11 @@
         _ (when (or [o-profile :is-null]
                     (not (== (:smallint (:->> o-profile "type_tag")) 11)))
             (return false))
-        (:bytea v-type-root) (-/field i-profile-root "record/type")
-        (:bytea v-name-root) (-/field i-profile-root "profile/name")
-        (:bytea v-version-root) (-/field i-profile-root "profile/version")
-        (:bytea v-bindings-root) (-/field i-profile-root "profile/bindings")
-        (:bytea v-operations-root) (-/field i-profile-root "profile/operations")]
+        (:bytea v-type-root) (-/runtime-profile-field i-profile-root "record/type")
+        (:bytea v-name-root) (-/runtime-profile-field i-profile-root "profile/name")
+        (:bytea v-version-root) (-/runtime-profile-field i-profile-root "profile/version")
+        (:bytea v-bindings-root) (-/runtime-profile-field i-profile-root "profile/bindings")
+        (:bytea v-operations-root) (-/runtime-profile-field i-profile-root "profile/operations")]
     (return
      (and (== v-type-root (value/put-keyword "runtime-profile"))
           (== (cell/cell-type-tag v-name-root) 7)
@@ -85,7 +85,7 @@
   (let [_ (when (not (-/profile-valid i-profile-root))
             (return nil))
         (:bytea v-bindings-root)
-        (-/field i-profile-root "profile/bindings")]
+        (-/runtime-profile-field i-profile-root "profile/bindings")]
     (return (value/map-get v-bindings-root i-symbol-root))))
 
 (defn.pg ^{:- [:bytea]}

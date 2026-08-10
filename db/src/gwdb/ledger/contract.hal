@@ -26,21 +26,27 @@
    :static {:application ["gw"]
             :all {:schema ["gw_ledger"]}}})
 
+(def$.pg keyword-root contract-keyword-root)
+
 (defn.pg ^{:- [:bytea]}
-  keyword-root
+  contract-keyword-root
   {:added "0.9"}
   [:text i-name]
   (return (value/put-keyword i-name)))
 
+(def$.pg field contract-field)
+
 (defn.pg ^{:- [:bytea]}
-  field
+  contract-field
   {:added "0.9"}
   [:bytea i-record-root :text i-name]
   (return
    (value/map-get i-record-root (-/keyword-root i-name))))
 
+(def$.pg record-start contract-record-start)
+
 (defn.pg ^{:- [:bytea]}
-  record-start
+  contract-record-start
   {:added "0.9"}
   [:text i-kind]
   (return
@@ -49,16 +55,20 @@
     (-/keyword-root "record/type")
     (-/keyword-root i-kind))))
 
+(def$.pg record-assoc contract-record-assoc)
+
 (defn.pg ^{:- [:bytea]}
-  record-assoc
+  contract-record-assoc
   {:added "0.9"}
   [:bytea i-record-root :text i-name :bytea i-value-root]
   (return
    (value/map-assoc
     i-record-root (-/keyword-root i-name) i-value-root)))
 
+(def$.pg record-kind contract-record-kind)
+
 (defn.pg ^{:- [:boolean]}
-  record-kind
+  contract-record-kind
   {:added "0.9"}
   [:bytea i-record-root :text i-kind]
   (let [o-cell (cell/cell-by-hash i-record-root)]
@@ -68,8 +78,10 @@
           (== (-/field i-record-root "record/type")
               (-/keyword-root i-kind))))))
 
+(def$.pg optional-root contract-optional-root)
+
 (defn.pg ^{:- [:bytea]}
-  optional-root
+  contract-optional-root
   {:added "0.9"}
   [:bytea i-root]
   (return
@@ -485,8 +497,10 @@
           [(cell/cell-by-hash v-head-root) :is-not-null]
           (== (:smallint (:->> o-history "type_tag")) 10)))))
 
+(def$.pg root-hex contract-root-hex)
+
 (defn.pg ^{:- [:text]}
-  root-hex
+  contract-root-hex
   {:added "0.9"}
   [:bytea i-root]
   (return
@@ -518,8 +532,10 @@
     (codec/canonical-hash
      14 (-/address-payload i-context-root i-op-root)))))
 
+(def$.pg special-name contract-special-name)
+
 (defn.pg ^{:- [:text]}
-  special-name
+  contract-special-name
   {:added "0.9"}
   [:bytea i-op-root]
   (let [o-op (op/op-get i-op-root)

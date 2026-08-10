@@ -123,8 +123,10 @@
    :ledger-timestamp   {:type :bigint :required true}
    :source-state-root  {:type :bytea :required true}])
 
+(def$.pg optional-root workflow-optional-root)
+
 (defn.pg ^{:- [:bytea]}
-  optional-root
+  workflow-optional-root
   {:added "0.12"}
   [:bytea i-root]
   (cond [i-root :is-null]

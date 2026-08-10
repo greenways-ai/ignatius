@@ -20,8 +20,10 @@
    :static {:application ["gw"]
             :all {:schema ["gw_ledger"]}}})
 
+(def$.pg result-ok protocol-result-ok)
+
 (defn.pg ^{:- [:jsonb]}
-  result-ok
+  protocol-result-ok
   {:added "0.5"}
   [:bytea i-context-root :bytea i-value-root]
   (let [o-context (context/context-get i-context-root)]
@@ -30,8 +32,10 @@
              :value-root i-value-root
              :cost-used (:bigint (:->> o-context "cost_used"))})))
 
+(def$.pg result-error protocol-result-error)
+
 (defn.pg ^{:- [:jsonb]}
-  result-error
+  protocol-result-error
   {:added "0.5"}
   [:bytea i-context-root :text i-error-code]
   (let [o-context (context/context-get i-context-root)
@@ -43,8 +47,10 @@
              :error {:code i-error-code}
              :cost-used v-cost-used})))
 
+(def$.pg keyword-root protocol-keyword-root)
+
 (defn.pg ^{:- [:bytea]}
-  keyword-root
+  protocol-keyword-root
   {:added "0.5"}
   [:text i-name]
   (return (value/put-keyword i-name)))
@@ -55,8 +61,10 @@
   [:bytea i-record-root :text i-field]
   (return (value/map-get i-record-root (-/keyword-root i-field))))
 
+(def$.pg record-start protocol-record-start)
+
 (defn.pg ^{:- [:bytea]}
-  record-start
+  protocol-record-start
   {:added "0.5"}
   [:text i-kind]
   (return
@@ -65,15 +73,19 @@
     (-/keyword-root "record/type")
     (-/keyword-root i-kind))))
 
+(def$.pg record-assoc protocol-record-assoc)
+
 (defn.pg ^{:- [:bytea]}
-  record-assoc
+  protocol-record-assoc
   {:added "0.5"}
   [:bytea i-record-root :text i-field :bytea i-value-root]
   (return
    (value/map-assoc i-record-root (-/keyword-root i-field) i-value-root)))
 
+(def$.pg record-kind protocol-record-kind)
+
 (defn.pg ^{:- [:boolean]}
-  record-kind
+  protocol-record-kind
   {:added "0.5"}
   [:bytea i-record-root :text i-kind]
   (let [o-cell (cell/cell-by-hash i-record-root)

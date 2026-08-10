@@ -24,16 +24,20 @@
    :static {:application ["gw"]
             :all {:schema ["gw_ledger"]}}})
 
+(def$.pg root-hex actor-root-hex)
+
 (defn.pg ^{:- [:text]}
-  root-hex
+  actor-root-hex
   {:added "0.8"}
   [:bytea i-root]
   (return
    (pg/case [i-root :is-null] "-"
             :else (pg/encode i-root "hex"))))
 
+(def$.pg special-name actor-special-name)
+
 (defn.pg ^{:- [:text]}
-  special-name
+  actor-special-name
   "Reads the symbolic actor instruction encoded by a special operation."
   {:added "0.8"}
   [:bytea i-op-root]

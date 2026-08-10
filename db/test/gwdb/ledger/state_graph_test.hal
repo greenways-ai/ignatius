@@ -11,7 +11,7 @@
             [gwdb.ledger.value :as value]))
 
 (l/script- :postgres
-  {:runtime :jdbc.client
+  {:runtime :db.client
    :config {:dbname "gw-ledger-test"
             :temp :create
             :container {:group "gw-ledger"
@@ -91,7 +91,7 @@
 (fact "logical state export imports only when it reconstructs the same root"
   (!.pg
    [:select
-    (codec-value/compare
+    (codec-value/canonical-value-compare
      (state/state-genesis)
      (state/state-import (state/state-export (state/state-genesis)) 0))])
   => 0)

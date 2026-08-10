@@ -34,10 +34,10 @@ hal-test:
 	$(HARA_BIN) --project hal test
 
 db-hal-check:
-	$(HARA_BIN) --project db check
+	$(HARA_BIN) --project $(CURDIR)/db check
 
 db-hal-test:
-	$(HARA_BIN) --allow-process --project db test
+	$(HARA_BIN) --allow-postgres --allow-process --project $(CURDIR)/db test
 
 extension-sha-test:
 	cargo test --locked --manifest-path extensions/sha/rust/Cargo.toml

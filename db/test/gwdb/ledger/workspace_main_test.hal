@@ -14,10 +14,9 @@
             [gwdb.ledger.workspace-main :as workspace-main]))
 
 (l/script- :postgres
-  {:runtime :jdbc.client
+  {:runtime :db.client
    :config {:dbname "gw-ledger-test"
             :temp :create
-            :vendor :impossibl
             :container {:group "gw-ledger"
                         :image "gw-ledger-postgres:15-pgsodium"
                         :ports [5432]

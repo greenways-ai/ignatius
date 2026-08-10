@@ -40,8 +40,10 @@
          (== v-special "actor/call")
          (== v-special "actor/query")))))
 
+(def$.pg evaluated-roots actor-evaluated-roots)
+
 (defn.pg ^{:- [:jsonb]}
-  evaluated-roots
+  actor-evaluated-roots
   {:added "0.8"}
   [:bytea i-context-root :jsonb i-roots]
   (let [o-context (context/context-get i-context-root)]
@@ -50,8 +52,10 @@
              :roots i-roots
              :cost-used (:bigint (:->> o-context "cost_used"))})))
 
+(def$.pg evaluate-children-at actor-evaluate-children-at)
+
 (defn.pg ^{:- [:jsonb]}
-  evaluate-children-at
+  actor-evaluate-children-at
   "Evaluates one actor operation child range left-to-right."
   {:added "0.8"}
   [:bytea i-context-root :bytea i-op-root
@@ -284,8 +288,10 @@
      (runtime/result-ok
       v-restored (:bytea (:->> o-called "value_root"))))))
 
+(def$.pg execute actor-execute)
+
 (defn.pg ^{:- [:jsonb]}
-  execute
+  actor-execute
   "Executes a top-level actor deploy, stateful call or read-only query."
   {:added "0.8"}
   [:bytea i-context-root :bytea i-op-root]

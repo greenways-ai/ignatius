@@ -5,5 +5,5 @@
  :project/source-paths ["src"]
  :project/test-paths ["test"]
  :project/extension-paths []
- :project/capabilities #{}
+ :project/capabilities #{:db/postgres :process}
  :project/main gwdb.ledger.base}

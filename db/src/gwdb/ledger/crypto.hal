@@ -6,7 +6,7 @@
 
 ;; Register the pgsodium extension function as a normal PostgreSQL DSL call.
 ;; This is the same builtin-template mechanism postgres.core uses for pgcrypto.
-(l/script :postgres {:macro-only true})
+(l/script :postgres postgres.core {:macro-only true})
 (def$.pg crypto-sign-verify-detached pgsodium.crypto-sign-verify-detached)
 
 (l/script :postgres

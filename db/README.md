@@ -84,13 +84,14 @@ runtime lifecycle names and the `code.test` result bridge). During the shadow
 period, change the `.clj` form through the Foundation REPL-first workflow and
 make the corresponding evaluated `.hal` change in the same commit.
 
-`db-hal-test` grants process access because the PostgreSQL test runtime manages
-its disposable database fixture. The Hara runtime used for this command must
-register the `[:postgres :jdbc.client]` provider. Source loading and complete
-PostgreSQL emission do not require that provider; executing `!.pg` integration
-facts does. The `.clj` copies may be removed only after HAL emission matches the
-committed SQL and that provider-backed integration suite passes from the HAL
-entry point.
+`db-hal-test` grants PostgreSQL and process access because the test runtime uses
+`std.db.postgres` for its connection and `lib.docker` to manage the disposable
+database fixture. Hara registers that provider as `[:postgres :db.client]`;
+there is no JDBC runtime or vendor selector in the HAL path. Source loading and
+complete PostgreSQL emission do not require the provider, while executing
+`!.pg` integration facts does. The `.clj` copies may be removed only after HAL
+emission matches the committed SQL and that provider-backed integration suite
+passes from the HAL entry point.
 
 ## Focused tests
 

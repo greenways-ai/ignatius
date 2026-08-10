@@ -179,8 +179,10 @@
         (-/replace-current-account i-context-root v-next-account 2)]
     (return (runtime/result-ok v-next-context v-metadata-root))))
 
+(def$.pg apply-primitive account-apply-primitive)
+
 (defn.pg ^{:- [:jsonb]}
-  apply-primitive
+  account-apply-primitive
   "Applies account and controller primitives to evaluated canonical roots."
   {:added "0.8"}
   [:bytea i-context-root :text i-primitive-id :jsonb i-roots]

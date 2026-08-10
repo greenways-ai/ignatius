@@ -70,6 +70,10 @@ for source_file in "$TEST_DIR"/*_test.clj; do
 
   normalized_file="$TEMP_DIR/$filename.hal"
   perl -pe 's/\[tahto\.core :as l\]/[lang.core :as l]/g;
+            s/:runtime :jdbc\.client/:runtime :db.client/g;
+            s/^\s*:vendor :impossibl\n//g;
+            s/^\s*;; The standard temporary-container runtime retries the\n//g;
+            s/^\s*;; impossibl JDBC startup exception while PostgreSQL initializes\.\n//g;
             s/\(l\/rt:teardown :postgres\)/(l\/rt:stop)/g;
             s/\(l\/rt:setup :postgres\)/(l\/rt:restart)/g;
             END {

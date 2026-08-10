@@ -352,7 +352,7 @@
       (:= v-value
           (cell/cell-ref-child i-map-root v-position "value"))
       (:= v-order
-          (codec-value/compare i-key-root v-key))
+          (codec-value/canonical-value-compare i-key-root v-key))
       (cond (== v-order 0)
             (do (:= v-out (|| v-out v-inserted))
                 (:= v-position (+ v-position 1))
@@ -401,7 +401,7 @@
       (:= v-key
           (cell/cell-ref-child i-map-root v-position "key"))
       (:= v-order
-          (codec-value/compare i-key-root v-key))
+          (codec-value/canonical-value-compare i-key-root v-key))
       (cond (== v-order 0)
             (do (:= v-result
                     (cell/cell-ref-child
@@ -438,7 +438,7 @@
       (:= v-current
           (cell/cell-ref-child i-set-root v-position "element"))
       (:= v-order
-          (codec-value/compare i-value-root v-current))
+          (codec-value/canonical-value-compare i-value-root v-current))
       (cond (== v-order 0)
             (do (:= v-found true)
                 (:= v-done true))

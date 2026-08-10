@@ -58,7 +58,7 @@
   {:added "0.10"}
   [:text i-scope :text i-name]
   (return
-   (hash-text-extended
+   (-/hash-text-extended
     (|| (:text (pg/length i-scope)) ":" i-scope ":" i-name)
     0)))
 

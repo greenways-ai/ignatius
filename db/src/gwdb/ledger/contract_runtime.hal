@@ -44,8 +44,10 @@
          (== v-special "contract/history")
          (== v-special "contract/view")))))
 
+(def$.pg evaluated-roots contract-evaluated-roots)
+
 (defn.pg ^{:- [:jsonb]}
-  evaluated-roots
+  contract-evaluated-roots
   {:added "0.9"}
   [:bytea i-context-root :jsonb i-roots]
   (let [o-context (context/context-get i-context-root)]
@@ -54,8 +56,10 @@
              :roots i-roots
              :cost-used (:bigint (:->> o-context "cost_used"))})))
 
+(def$.pg evaluate-children-at contract-evaluate-children-at)
+
 (defn.pg ^{:- [:jsonb]}
-  evaluate-children-at
+  contract-evaluate-children-at
   {:added "0.9"}
   [:bytea i-context-root :bytea i-op-root
    :integer i-position :integer i-count :jsonb i-roots]
@@ -89,8 +93,10 @@
     (cell/cell-ref-count i-op-root "op-child")
     (pg/jsonb-build-array))))
 
+(def$.pg root-at contract-root-at)
+
 (defn.pg ^{:- [:bytea]}
-  root-at
+  contract-root-at
   {:added "0.9"}
   [:jsonb i-roots :integer i-position]
   (return
@@ -699,8 +705,10 @@
       v-pure-context
       (:bytea (:->> o-view "value_root"))))))
 
+(def$.pg execute contract-execute)
+
 (defn.pg ^{:- [:jsonb]}
-  execute
+  contract-execute
   "Executes reducer contract publication, creation, events, reads and simulation."
   {:added "0.9"}
   [:bytea i-context-root :bytea i-op-root]

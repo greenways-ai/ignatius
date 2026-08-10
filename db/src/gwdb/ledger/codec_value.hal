@@ -27,7 +27,7 @@
              (:integer (:->> o-cell "type_tag"))
              (:bytea (:->> o-cell "payload"))))))
 
-(defn.pg ^{:- [:integer]} compare
+(defn.pg ^{:- [:integer]} canonical-value-compare
   "Compares roots by complete canonical bytes, never by digest alone."
   {:added "0.1"}
   [:bytea i-left-root :bytea i-right-root]
@@ -109,7 +109,7 @@
       (:= v-right
           (-/child-root-at i-child-roots (+ v-position 1)))
       (:= v-ordered
-          (< (-/compare v-left v-right) 0))
+          (< (-/canonical-value-compare v-left v-right) 0))
       (:= v-position
           (+ v-position 1)))
     (return v-ordered)))
@@ -129,7 +129,7 @@
       (:= v-right
           (-/child-root-at i-child-roots (+ v-position 2)))
       (:= v-ordered
-          (< (-/compare v-left v-right) 0))
+          (< (-/canonical-value-compare v-left v-right) 0))
       (:= v-position
           (+ v-position 2)))
     (return v-ordered)))

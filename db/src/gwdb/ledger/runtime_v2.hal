@@ -312,8 +312,10 @@
             :else
             (return (runtime/result-error i-context-root "unsupported-op"))))))
 
+(def$.pg execute runtime-v2-execute)
+
 (defn.pg ^{:- [:jsonb]}
-  execute
+  runtime-v2-execute
   "Public recursive deterministic evaluator used by signed transactions."
   {:added "0.7"}
   [:bytea i-context-root :bytea i-op-root]
