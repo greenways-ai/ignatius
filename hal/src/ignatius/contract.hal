@@ -8,7 +8,7 @@
    :value-root value-root})
 
 (defn template-descriptor
-  "Canonical compiler output before HCV1 encoding and publication."
+  "Canonical compiler output before HCV0 encoding and publication."
   [name version publisher init-root transition-root views-root
    source-root compiler-root runtime-root event-schema-root state-schema-root]
   {:record/type :contract/template

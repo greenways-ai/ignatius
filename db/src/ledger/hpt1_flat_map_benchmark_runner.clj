@@ -263,20 +263,20 @@
     (let [path
           (or output-path
               (benchmark/environment-value
-               "HPT1_BENCHMARK_OUT"
+               "HPT0_BENCHMARK_OUT"
                "../benchmarks/hpt1-flat-map/evidence.edn"))
           entry-counts
           (benchmark/parse-entry-counts
-           (System/getenv "HPT1_BENCHMARK_COUNTS"))
+           (System/getenv "HPT0_BENCHMARK_COUNTS"))
           warmup-count
           (Long/parseLong
            (benchmark/environment-value
-            "HPT1_BENCHMARK_WARMUPS"
+            "HPT0_BENCHMARK_WARMUPS"
             (str benchmark/default-warmup-count)))
           sample-count
           (Long/parseLong
            (benchmark/environment-value
-            "HPT1_BENCHMARK_SAMPLES"
+            "HPT0_BENCHMARK_SAMPLES"
             (str benchmark/default-sample-count)))
           runtime
           (l/rt benchmark-namespace :postgres)
@@ -317,7 +317,7 @@
           0
           (catch Throwable error
             (binding [*out* *err*]
-              (println "HPT1 flat-map benchmark failed:"
+              (println "HPT0 flat-map benchmark failed:"
                        (.getMessage error))
               (.printStackTrace error))
             1))]

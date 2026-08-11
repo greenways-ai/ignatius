@@ -74,7 +74,7 @@ Ignatius validates that:
 - the runtime root names a supported immutable runtime profile; and
 - the template publisher matches the verified account publishing it.
 
-The descriptor is an ordinary canonical HCV1 map, so its content root is the
+The descriptor is an ordinary canonical HCV0 map, so its content root is the
 template identity.
 
 ## How a contract is compiled
@@ -87,8 +87,8 @@ Compilation occurs before ledger admission:
 3. Analyse names, locals, arities, and deterministic effects.
 4. Lower `init`, `apply-event`, and views to Ignatius operation graphs.
 5. Commit persistent function roots for those graphs.
-6. Encode source, schemas, functions, and descriptor as HCV1 cells.
-7. Pack the complete reachable graph into an HCP1 bundle.
+6. Encode source, schemas, functions, and descriptor as HCV0 cells.
+7. Pack the complete reachable graph into an HCP0 bundle.
 8. Produce the template root and publication operation.
 ```
 
@@ -132,7 +132,7 @@ The publication path is:
 
 ```text
 publisher client
-    ├── HCP1 template pack
+    ├── HCP0 template pack
     ├── exact template root
     ├── publisher-local alias
     └── signed Ignatius transaction

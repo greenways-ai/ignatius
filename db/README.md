@@ -8,13 +8,13 @@ Hestia agents, rooms, documents, recovery ceremonies, or product projections.
 
 The chain provides:
 
-- HCV1 canonical cells and child references;
+- HCV0 canonical cells and child references;
 - accounts, controller keys, state roots, operations, functions, modules and
   iterators;
 - deterministic operation execution and cost accounting;
 - signed transaction admission and atomic block commitment;
 - transaction and block receipts;
-- HCP1 snapshot export/import and integrity verification; and
+- HCP0 snapshot export/import and integrity verification; and
 - generated SQL and a generated TypeScript client contract.
 
 PostgreSQL is the authoritative Ignatius chain. Portable transaction framing,

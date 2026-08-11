@@ -20,11 +20,11 @@
   (test/check
    "requires compatible chain schema and protocol versions"
    [(postgres/compatible-version?
-     {:schema-version 1 :protocol-version 1}
-     {:schema-version 1 :protocol-version 1})
+     {:schema-version 1 :protocol-version "0.0.0-alpha"}
+     {:schema-version 1 :protocol-version "0.0.0-alpha"})
     (postgres/compatible-version?
-     {:schema-version 1 :protocol-version 1}
-     {:schema-version 2 :protocol-version 1})]
+     {:schema-version 1 :protocol-version "0.0.0-alpha"}
+     {:schema-version 2 :protocol-version "0.0.0-alpha"})]
    [true false])
 
   (test/check

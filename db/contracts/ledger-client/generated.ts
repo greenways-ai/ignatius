@@ -103,7 +103,7 @@ export type DocumentOperation =
   | { kind: "mark.add" | "mark.remove"; target: string; from: number; to: number; markRoot: LedgerRoot };
 
 export interface DocumentChangeBatch {
-  protocol: "greenways.document/1";
+  protocol: "greenways.document/0-alpha";
   id: string;
   logId: string;
   sequence: string;

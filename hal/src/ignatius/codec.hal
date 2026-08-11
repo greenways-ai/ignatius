@@ -7,11 +7,11 @@
   "Returns Hara Canonical Value Encoding v1 bytes as portable text. The host
    hashes the UTF-8 encoding with SHA-256."
   [type-tag payload-byte-count payload-hex]
-  (str "HCV1:" type-tag ":" payload-byte-count ":" payload-hex))
+  (str "HCV0:" type-tag ":" payload-byte-count ":" payload-hex))
 
 (defn canonical-cell
   "Constructs one canonical cell through an injected SHA-256 capability.
-   The capability accepts the UTF-8 HCV1 envelope and returns lowercase hex."
+   The capability accepts the UTF-8 HCV0 envelope and returns lowercase hex."
   [sha256 type-tag payload-byte-count payload-hex refs]
   {:root (sha256 (canonical-envelope type-tag payload-byte-count payload-hex))
    :codec-version codec-version
@@ -70,7 +70,7 @@
          (reduce (fn [out ref] (str out (pack-ref ref))) "" refs))))
 
 (defn hcp1-pack
-  "Builds deterministic HCP1 transport text from already verified cells."
+  "Builds deterministic HCP0 transport text from already verified cells."
   [cells]
-  (str "HCP1:" (count cells) ":"
+  (str "HCP0:" (count cells) ":"
        (reduce (fn [out cell] (str out (pack-cell cell))) "" cells)))

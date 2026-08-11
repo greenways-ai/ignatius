@@ -1,6 +1,6 @@
 # Convex-style accounts and actors
 
-Ignatius implements Convex-shaped account execution directly over HCV1 state.
+Ignatius implements Convex-shaped account execution directly over HCV0 state.
 It does not embed the Java CVM or introduce a second value codec.
 
 ## Account v2

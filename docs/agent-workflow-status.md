@@ -42,7 +42,7 @@ inspection. Production calls normally omit it.
 ## Output contract
 
 The command emits one compact canonical JSON object using protocol
-`ignatius.agent-workflow-status/1`:
+`ignatius.agent-workflow-status/0-alpha`:
 
 ```json
 {
@@ -76,7 +76,7 @@ The command emits one compact canonical JSON object using protocol
   ],
   "generated_at": "2026-08-08T12:00:00Z",
   "health": "attention",
-  "protocol": "ignatius.agent-workflow-status/1",
+  "protocol": "ignatius.agent-workflow-status/0-alpha",
   "summary": {}
 }
 ```

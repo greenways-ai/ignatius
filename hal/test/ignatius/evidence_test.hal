@@ -5,7 +5,7 @@
 (def body {:result/root "sha256:result"})
 
 (def envelope
-  {:evidence/domain "hestia.control-evidence/1"
+  {:evidence/domain "hestia.control-evidence/0-alpha"
    :evidence/root "sha256:evidence"
    :evidence/body body
    :evidence/signer "worker/environment"
@@ -24,7 +24,7 @@
    (= key-id "key/environment")
    (= payload
       (evidence/signing-payload
-       "hestia.control-evidence/1"
+       "hestia.control-evidence/0-alpha"
        "sha256:evidence"
        signer key-id 1))
    (= signature "signature")))

@@ -56,7 +56,7 @@
    [:select (codec/verify
              (codec/canonical-hash 5 (pg/decode "hello" "escape"))
              5 (pg/decode "hello" "escape"))])
-  => '("HCV1:5:5:68656c6c6f"
+  => '("HCV0:5:5:68656c6c6f"
       "7fa243b5c27ab4e7661a6207f8ad5ca4ce68d4ad6c224b09d050db4ce09d6d3b"
       true))
 

@@ -114,7 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected=0,
         )
         healthy_report = parse(healthy_result)
-        assert healthy_report["protocol"] == "ignatius.agent-workflow-status/1"
+        assert healthy_report["protocol"] == "ignatius.agent-workflow-status/0-alpha"
         assert healthy_report["health"] == "healthy"
         assert healthy_report["summary"]["successful"] == 1
         assert healthy_report["summary"]["pending"] == 0

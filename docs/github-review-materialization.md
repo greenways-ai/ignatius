@@ -51,7 +51,7 @@ presented as evidence for another.
 The command emits one compact canonical JSON object using protocol:
 
 ```text
-ignatius.github-review-materialization/1
+ignatius.github-review-materialization/0-alpha
 ```
 
 Its major sections are:

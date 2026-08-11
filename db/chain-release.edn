@@ -1,6 +1,6 @@
 {:ignatius.chain/release-version "0.1.0"
  :ignatius.chain/schema-version 1
- :ignatius.chain/protocol-version 1
+ :ignatius.chain/protocol-version "0.0.0-alpha"
  :ignatius.chain/schema "gw_ledger"
  :ignatius.chain/fresh-install "sql/full.sql"
  :ignatius.chain/fresh-install/destructive true

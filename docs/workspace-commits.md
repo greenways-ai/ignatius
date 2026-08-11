@@ -4,7 +4,7 @@
 immutable Hara values and mutable scoped refs.
 
 ```text
-verified HCV1 workspace values
+verified HCV0 workspace values
         ↓
 immutable workspace commit candidates
         ↓
@@ -120,7 +120,7 @@ Insertion requires an explicit verifier:
   decoded-commit)
 ```
 
-`verify-root` must recompute or otherwise prove the canonical HCV1 root. A
+`verify-root` must recompute or otherwise prove the canonical HCV0 root. A
 portable VM might load and verify the block through `ignatius.storage`, decode it,
 and then pass a verifier tied to the verified bytes.
 
@@ -362,7 +362,7 @@ agreements, approvals and workflows that do not need branches.
 ## Deliberate limits of the portable slice
 
 - Commit values are decoded only after an injected root verifier succeeds.
-- The module does not encode arbitrary Hara maps into HCV1 bytes.
+- The module does not encode arbitrary Hara maps into HCV0 bytes.
 - The memory backend declares single-writer consistency.
 - Merge policies are pinned roots but are not executed by this module.
 - There is no automatic merge-base discovery; the supplied base is validated.

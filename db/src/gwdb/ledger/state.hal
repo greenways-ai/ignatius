@@ -31,7 +31,7 @@
                 :sql {:default (pg/time-us)}}])
 
 (defn.pg ^{:- [:bytea]} state-payload
-  "Builds HCV1's fixed state-record payload from its six committed roots."
+  "Builds HCV0's fixed state-record payload from its six committed roots."
   {:added "0.1"}
   [:bytea i-version-root
    :bytea i-accounts-root
@@ -102,7 +102,7 @@
     (return v-root)))
 
 (defn.pg ^{:- [:boolean]} state-root-valid
-  "Checks that a root is a committed HCV1 state record with all six references."
+  "Checks that a root is a committed HCV0 state record with all six references."
   {:added "0.1"}
   [:bytea i-state-root]
   (let [o-cell (cell/cell-by-hash i-state-root)

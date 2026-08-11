@@ -1,7 +1,7 @@
 # Process graph and collaborative timeline roadmap
 
 Ignatius already has the hard part that a graph-oriented build ledger needs:
-immutable HCV1 values, labelled `CellRef` edges, HCP1 graph packs, signed
+immutable HCV0 values, labelled `CellRef` edges, HCP0 graph packs, signed
 transactions, deterministic execution, account sequencing, receipts, snapshots,
 and reducer contracts with optimistic expected-head checks.
 
@@ -34,7 +34,7 @@ database representation.
 
 | Proposal | Decision | Reason |
 | --- | --- | --- |
-| Immutable block store plus conditional refs | Adopt as an interface boundary | `Cell`, `CellRef` and HCP1 already provide the immutable verified-block semantics. Extract adapters rather than create a second SQL model. |
+| Immutable block store plus conditional refs | Adopt as an interface boundary | `Cell`, `CellRef` and HCP0 already provide the immutable verified-block semantics. Extract adapters rather than create a second SQL model. |
 | Stable IDs alongside content roots | Adopt | A stable scene node, document, artifact or process identity must survive while its exact immutable root changes. |
 | Multi-parent commit DAG | Adopt for workspaces | Branches and merges belong above the global ledger. The global chain remains linear and records accepted head advancement. |
 | Content-addressed definitions and namespace commits | Adopt incrementally | Definition-level identity and binding-level merges suit collaborative Hara programs. Existing module/account bindings remain compatible during migration. |
@@ -42,7 +42,7 @@ database representation.
 | Required versus granted effects | Adopt | Pure execution should emit an effect plan. File, network, secret, clock, randomness and GPU authority must never be ambient. |
 | Prolly-tree-style indexes | Prototype later | A new canonical format requires fixed chunking, cross-runtime test vectors, structural diff and merge, plus measured workloads that justify it. |
 | Datoms as the canonical world model | Reject | Datoms may be useful as rebuildable query projections, but would flatten ordered syntax, typed records, component locality and executable Hara values. |
-| Replace HCV1 with DAG-CBOR | Reject for existing values | Re-encoding would change every historical root. New collection codecs may be versioned without invalidating HCV1. |
+| Replace HCV0 with DAG-CBOR | Reject for existing values | Re-encoding would change every historical root. New collection codecs may be versioned without invalidating HCV0. |
 | Replace PostgreSQL execution immediately | Reject | The existing runtime remains the authoritative implementation and conformance oracle until a portable VM dual-runs the same roots. |
 
 ## Ownership boundary
@@ -102,7 +102,7 @@ records which head became accepted.
 ### 5. Large persistent indexes
 
 Issue [#14](https://github.com/greenways-ai/ignatius/issues/14) benchmarks and
-specifies HPT1 only after real entity, DOM and namespace workloads demonstrate
+specifies HPT0 only after real entity, DOM and namespace workloads demonstrate
 the need. Structural diff and three-way merge are requirements, not assumptions.
 
 ### 6. Collaborative Hara code graph
@@ -141,7 +141,7 @@ AI and build execution.
 
 Every phase must preserve these properties:
 
-1. Existing HCV1 and HCP1 roots remain valid and unchanged.
+1. Existing HCV0 and HCP0 roots remain valid and unchanged.
 2. Existing account, transaction, admission, receipt, block and snapshot
    semantics remain supported.
 3. PostgreSQL remains an authoritative backend, not an implementation detail to

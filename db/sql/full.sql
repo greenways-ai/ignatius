@@ -44,7 +44,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".canonical_encode(
 ) RETURNS BYTEA AS $$
 
   SELECT decode(
-    'HCV1:' || type_tag || ':' || length(payload) || ':' || encode(payload,'hex'),
+    'HCV0:' || type_tag || ':' || length(payload) || ':' || encode(payload,'hex'),
     'escape'
   );
 
@@ -21431,7 +21431,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".snapshot_pack(
   BEGIN
     v_roots := "gw_ledger".snapshot_reachable_roots(i_state_root);
     v_count := jsonb_array_length(v_roots);
-    v_prefix := decode('HCP1:' || v_count || ':','escape');
+    v_prefix := decode('HCP0:' || v_count || ':','escape');
     RETURN "gw_ledger".snapshot_pack_cells_at(v_roots,0,v_count,v_prefix);
   END;
 
@@ -21607,7 +21607,7 @@ CREATE OR REPLACE FUNCTION "gw_ledger".snapshot_pack_import(
     END;
     v_header := (v_tokens ->> 0)::TEXT;
     v_declared_count := (v_tokens ->> 1)::BIGINT;
-    IF NOT ((v_header = 'HCP1') AND (v_declared_count = i_cell_count)) THEN
+    IF NOT ((v_header = 'HCP0') AND (v_declared_count = i_cell_count)) THEN
       RAISE EXCEPTION USING
         DETAIL = (jsonb_build_object(
           'status',

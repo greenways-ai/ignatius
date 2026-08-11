@@ -5,8 +5,8 @@
 (defn fake-sha
   [text]
   (cond
-    (= text "HCV1:5:3:616263") "root-A"
-    (= text "HCV1:5:3:646566") "root-B"
+    (= text "HCV0:5:3:616263") "root-A"
+    (= text "HCV0:5:3:646566") "root-B"
     :else "root-other"))
 
 (defn collision-sha
@@ -150,10 +150,10 @@
                        [:interface/methods :compare-and-set-ref
                         :returns])
                :updated-backend-or-conflict)
-   (test/check "HCV1 construction pins the injected hash result"
+   (test/check "HCV0 construction pins the injected hash result"
                (get block-a :block/root)
                "root-A")
-   (test/check "HCV1 block references remain ordered envelopes"
+   (test/check "HCV0 block references remain ordered envelopes"
                (get block-a :block/references)
                [{:position 0
                  :role "child"

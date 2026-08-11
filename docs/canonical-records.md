@@ -4,7 +4,7 @@
 complete build: workspaces, process definitions and runs, steps, checkpoints,
 artifacts, reviews, attestations, execution provenance and commit candidates.
 
-These records are ordinary HCV1 maps and vectors. This specification introduces
+These records are ordinary HCV0 maps and vectors. This specification introduces
 no replacement codec, no DAG-CBOR migration and no change to historical roots.
 The root of the canonical Hara value remains the exact identity of one record.
 
@@ -64,7 +64,7 @@ The naming rules are:
 | Field suffix | Meaning |
 | --- | --- |
 | `/id` | Stable logical identity within an explicit scope |
-| `/root` | One exact immutable HCV1, code, schema, receipt or artifact root |
+| `/root` | One exact immutable HCV0, code, schema, receipt or artifact root |
 | `/roots` | Ordered vector of exact roots |
 | `/reference` | A `:reference/logical` record containing a stable ID and optional exact root |
 
@@ -118,7 +118,7 @@ nil ; optional scalar, stable ID or exact root
 ```
 
 Omission and `nil` are not treated as interchangeable writer outputs. This makes
-independent implementations more likely to produce the same HCV1 root.
+independent implementations more likely to produce the same HCV0 root.
 
 For example, a newly started run contains:
 
@@ -228,8 +228,8 @@ The executable catalog is `ignatius.record/schema-catalog`.
  :workspace/artifacts {stable-artifact-id artifact-version-value}}
 ```
 
-The current v1 indexes are ordinary HCV1 maps. They are suitable for the first
-useful product slice. HPT1 remains a separate measured optimisation.
+The current v1 indexes are ordinary HCV0 maps. They are suitable for the first
+useful product slice. HPT0 remains a separate measured optimisation.
 
 ### Process definitions and runs
 
@@ -410,7 +410,7 @@ at the boundary where those claims become authoritative.
 
 ## Versioning
 
-V1 records remain valid indefinitely under HCV1. A future incompatible field
+V1 records remain valid indefinitely under HCV0. A future incompatible field
 contract uses `:record/version 2` or a new `:record/type`; it does not reinterpret
 old roots.
 

@@ -20,9 +20,9 @@
      (test/check "builds edit signing payload"
             (offline/edit-signing-payload "doc" "revision" "operation" "owner")
             "R:document-edit:1:doc:revision:operation:owner")
-     (test/check "frames HCV1 without host-dependent formatting"
+     (test/check "frames HCV0 without host-dependent formatting"
             (codec/canonical-envelope 5 3 "616263")
-            "HCV1:5:3:616263")
+            "HCV0:5:3:616263")
      (test/check "frames ordered syntax roots"
             (codec/sequence-payload ["aa" "bb"])
             "S:2:aabb")
@@ -34,13 +34,13 @@
               (fn [envelope] (str "sha(" envelope ")"))
               "value" "meta")
              :root)
-            "sha(HCV1:13:13:533a323a76616c75656d657461)")
-     (test/check "frames HCP1 cells and refs"
+            "sha(HCV0:13:13:533a323a76616c75656d657461)")
+     (test/check "frames HCP0 cells and refs"
             (codec/hcp1-pack
              [{:root "aa" :type-tag 5 :payload-hex "78" :refs []}
               {:root "bb" :type-tag 13 :payload-hex "79"
                :refs [{:position 0 :role-hex "76616c7565" :child-root "aa"}]}])
-            "HCP1:2:C:aa:1:5:78:0:C:bb:1:13:79:1:R:0:76616c7565:aa:")
+            "HCP0:2:C:aa:1:5:78:0:C:bb:1:13:79:1:R:0:76616c7565:aa:")
      (test/check "pending status is immutable"
             [(get (first outbox) :status)
              (get accepted :status)
@@ -61,7 +61,7 @@
               (fn [envelope] (str "sha(" envelope ")"))
               "constant" "value" nil nil nil nil nil nil [])
              :root)
-            "sha(HCV1:17:48:payload)")
+            "sha(HCV0:17:48:payload)")
      (test/check "executes a portable integer operation"
             (get
              (runtime/execute

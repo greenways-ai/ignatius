@@ -46,7 +46,7 @@
              (codec-value/encode (state/state-version-root (state/state-genesis)))
              "escape")]
    [:select (cell/cell-type-tag (state/state-accounts-root (state/state-genesis)))])
-  => '(true "HCV1:2:1:31" 11))
+  => '(true "HCV0:2:1:31" 11))
 
 ^{:refer gwdb.ledger.state/state-with-accounts :added "0.1"}
 (fact "replacing one logical child produces a distinct immutable state root"

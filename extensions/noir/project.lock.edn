@@ -1,4 +1,4 @@
-{:lock/format 1
+{:lock/format "0.0.0-alpha"
  :packages
  {"official:ignatius/sha"
   {:version "0.1.0"

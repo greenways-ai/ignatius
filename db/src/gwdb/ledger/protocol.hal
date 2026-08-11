@@ -135,7 +135,7 @@
 
 (defn.pg ^{:- [:bytea]}
   protocol-put
-  "Commits a language protocol as an ordinary canonical HCV1 map."
+  "Commits a language protocol as an ordinary canonical HCV0 map."
   {:added "0.5"}
   [:bytea i-name-root :bytea i-methods-root]
   (let [_ (pg/assert (== (cell/cell-type-tag i-name-root) 7)

@@ -1,6 +1,6 @@
-# HCV1 flat-map measurement evidence
+# HCV0 flat-map measurement evidence
 
-This directory contains measured evidence for the existing HCV1 root-map
+This directory contains measured evidence for the existing HCV0 root-map
 implementation. It is the runtime counterpart to the exact structural model in
 `docs/hpt1-workload-corpus.md`.
 
@@ -51,9 +51,9 @@ The target:
 The scale and sample count can be overridden:
 
 ```sh
-HPT1_BENCHMARK_COUNTS=16,64,256 \
-HPT1_BENCHMARK_WARMUPS=3 \
-HPT1_BENCHMARK_SAMPLES=11 \
+HPT0_BENCHMARK_COUNTS=16,64,256 \
+HPT0_BENCHMARK_WARMUPS=3 \
+HPT0_BENCHMARK_SAMPLES=11 \
 make hpt1-flat-map-benchmark
 ```
 
@@ -64,9 +64,9 @@ timeout or resource failure at a larger scale is recorded as an error result rat
 than discarding successful smaller measurements.
 
 This evidence establishes the cost curve of the current flat representation. It
-does not prove a particular HPT1 format is better. A canonical HPT1 proposal must
+does not prove a particular HPT0 format is better. A canonical HPT0 proposal must
 still provide identical portable/PostgreSQL roots, deterministic node boundaries,
-get/assoc/delete/iterate, structural diff, three-way merge and explicit HCV1
+get/assoc/delete/iterate, structural diff, three-way merge and explicit HCV0
 interoperability.
 
 Runner source:

@@ -1,4 +1,4 @@
-name: Record clean HCV1 flat-map benchmark evidence
+name: Record clean HCV0 flat-map benchmark evidence
 
 on:
   push:
@@ -48,10 +48,10 @@ jobs:
       - name: Smoke benchmark lifecycle
         if: steps.existing.outputs.present != 'true'
         env:
-          HPT1_BENCHMARK_COUNTS: 16
-          HPT1_BENCHMARK_WARMUPS: 1
-          HPT1_BENCHMARK_SAMPLES: 1
-          HPT1_BENCHMARK_OUT: /tmp/hpt1-flat-map-smoke.edn
+          HPT0_BENCHMARK_COUNTS: 16
+          HPT0_BENCHMARK_WARMUPS: 1
+          HPT0_BENCHMARK_SAMPLES: 1
+          HPT0_BENCHMARK_OUT: /tmp/hpt1-flat-map-smoke.edn
         run: |
           set -euo pipefail
 
@@ -107,10 +107,10 @@ jobs:
       - name: Record flat-map measurements
         if: steps.existing.outputs.present != 'true'
         env:
-          HPT1_BENCHMARK_COUNTS: 16,64,256,1024,4096
-          HPT1_BENCHMARK_WARMUPS: 2
-          HPT1_BENCHMARK_SAMPLES: 7
-          HPT1_BENCHMARK_OUT: ../benchmarks/hpt1-flat-map/evidence.edn
+          HPT0_BENCHMARK_COUNTS: 16,64,256,1024,4096
+          HPT0_BENCHMARK_WARMUPS: 2
+          HPT0_BENCHMARK_SAMPLES: 7
+          HPT0_BENCHMARK_OUT: ../benchmarks/hpt1-flat-map/evidence.edn
         run: |
           set -euo pipefail
 
@@ -173,7 +173,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add benchmarks/hpt1-flat-map/evidence.edn
-          git commit -m "Record clean HCV1 flat-map benchmark evidence"
+          git commit -m "Record clean HCV0 flat-map benchmark evidence"
           git fetch origin agent/hpt1-flat-map-measurements-pr
           git rebase origin/agent/hpt1-flat-map-measurements-pr
           git push origin HEAD:agent/hpt1-flat-map-measurements-pr

@@ -14,10 +14,10 @@
   (+ 3 (count (str entry-count))))
 
 (defn flat-map-payload-byte-count
-  "Returns the exact HCV1 map payload size for root-only key/value pairs.
+  "Returns the exact HCV0 map payload size for root-only key/value pairs.
 
   Each entry contributes two lowercase SHA-256 roots, transported as sixty-four
-  ASCII hex characters each. The outer HCV1 envelope is deliberately excluded."
+  ASCII hex characters each. The outer HCV0 envelope is deliberately excluded."
   [entry-count]
   (+ (flat-map-prefix-byte-count entry-count)
      (* entry-count 2 root-transport-byte-count)))

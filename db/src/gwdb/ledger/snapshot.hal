@@ -162,17 +162,17 @@
 
 (defn.pg ^{:- [:bytea]}
   snapshot-pack
-  "Builds HCP1 bytes from all reachable cell and CellRef envelopes."
+  "Builds HCP0 bytes from all reachable cell and CellRef envelopes."
   {:added "0.2"}
   [:bytea i-state-root]
   (let [(:jsonb v-roots) (-/snapshot-reachable-roots i-state-root)
         (:integer v-count) (pg/jsonb-array-length v-roots)
-        (:bytea v-prefix) (pg/decode (|| "HCP1:" v-count ":") "escape")]
+        (:bytea v-prefix) (pg/decode (|| "HCP0:" v-count ":") "escape")]
     (return (-/snapshot-pack-cells-at v-roots 0 v-count v-prefix))))
 
 (defn.pg ^{:- [:boolean]}
   snapshot-import-cells-at
-  "Imports HCP1 cell envelopes before any derived child references."
+  "Imports HCP0 cell envelopes before any derived child references."
   {:added "0.2"}
   [:jsonb i-tokens :integer i-position :integer i-count]
   (cond (>= i-position i-count) (return true)
@@ -198,7 +198,7 @@
 
 (defn.pg ^{:- [:boolean]}
   snapshot-import-ref-tail
-  "Imports one cell's ordered HCP1 reference envelopes after all cells exist."
+  "Imports one cell's ordered HCP0 reference envelopes after all cells exist."
   {:added "0.2"}
   [:bytea i-parent-root :jsonb i-tokens :integer i-position :integer i-count]
   (cond (>= i-position i-count) (return true)
@@ -218,7 +218,7 @@
 
 (defn.pg ^{:- [:boolean]}
   snapshot-import-refs-at
-  "Walks HCP1 cells and restores their references in deterministic order."
+  "Walks HCP0 cells and restores their references in deterministic order."
   {:added "0.2"}
   [:jsonb i-tokens :integer i-position :integer i-count]
   (cond (>= i-position i-count) (return true)
@@ -237,7 +237,7 @@
 
 (defn.pg ^{:- [:boolean]}
   snapshot-pack-import
-  "Parses and restores every HCP1 cell/reference envelope idempotently."
+  "Parses and restores every HCP0 cell/reference envelope idempotently."
   {:added "0.2"}
   [:bytea i-pack :bigint i-cell-count]
   (let [(:jsonb v-tokens)
@@ -248,7 +248,7 @@
         (pg/case (== v-last "") (- v-token-length 1) :else v-token-length)
         (:text v-header) (:text (:->> v-tokens 0))
         (:bigint v-declared-count) (:bigint (:->> v-tokens 1))
-        _ (pg/assert (and (== v-header "HCP1")
+        _ (pg/assert (and (== v-header "HCP0")
                           (== v-declared-count i-cell-count))
                      [:ledger/invalid-snapshot-pack-header])
         (:boolean v-cells) (-/snapshot-import-cells-at
@@ -283,7 +283,7 @@
 
 (defn.pg ^{:- [:bytea]}
   snapshot-create
-  "Creates a verified HCP1 snapshot from the reachable state graph."
+  "Creates a verified HCP0 snapshot from the reachable state graph."
   {:added "0.2"}
   [:bytea i-state-root :bigint i-block-height]
   (let [(:bigint v-count) (-/snapshot-reachable-count i-state-root)

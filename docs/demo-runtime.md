@@ -26,7 +26,7 @@ The expected semantic result is:
 
 ## Execution changes
 
-The recursive runtime keeps the original HCV1 operation vocabulary. An `invoke`
+The recursive runtime keeps the original HCV0 operation vocabulary. An `invoke`
 with a non-null `function-root` is a static primitive or persistent-function call.
 An `invoke` with a null `function-root` treats its first child as a callable
 expression and the remaining children as arguments. This permits ordinary Hara
@@ -53,7 +53,7 @@ or mutable database rows outside the explicit execution context.
 ## Boundary
 
 The source shown above is still compiled outside PostgreSQL. The frontend reads,
-macroexpands and lowers it into HCV1 operation cells. Ignatius verifies and runs
+macroexpands and lowers it into HCV0 operation cells. Ignatius verifies and runs
 the resulting graph. The database test constructs that exact graph directly so
 that the execution semantics are covered before the general source compiler
 bridge is added.

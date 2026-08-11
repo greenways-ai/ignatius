@@ -15,7 +15,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "$script_dir/.." && pwd)"
 migration_dir="$repo_dir/db/migrations"
 schema_version=1
-protocol_version=1
+protocol_version=0.0.0-alpha
 
 digest_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -74,7 +74,7 @@ registry_present="$(psql "$database_url" -XAtq -v ON_ERROR_STOP=1 \
 
 if [[ "$registry_present" == t ]]; then
   installed_state="$(psql "$database_url" -XAtq -F ' ' -v ON_ERROR_STOP=1 \
-    -c 'SELECT COALESCE(max("version"), 0), COALESCE(max("schema_version"), 0), COALESCE(max("protocol_version"), 0) FROM "gw_ledger"."ChainMigration";')"
+    -c 'SELECT COALESCE(max("version"), 0), COALESCE(max("schema_version"), 0), COALESCE((SELECT "protocol_version" FROM "gw_ledger"."ChainMigration" ORDER BY "version" DESC LIMIT 1), '\''\'') FROM "gw_ledger"."ChainMigration";')"
   read -r installed_version installed_schema installed_protocol <<< "$installed_state"
   available_version="${#migrations[@]}"
   if [[ "$installed_version" -gt "$available_version" ]]; then
@@ -85,7 +85,7 @@ if [[ "$registry_present" == t ]]; then
     echo "Installed schema version $installed_schema is newer than supported version $schema_version." >&2
     exit 1
   fi
-  if [[ "$installed_protocol" -ne 0 && "$installed_protocol" -ne "$protocol_version" ]]; then
+  if [[ -n "$installed_protocol" && "$installed_protocol" != "$protocol_version" ]]; then
     echo "Installed protocol version $installed_protocol is incompatible with supported version $protocol_version." >&2
     exit 1
   fi
@@ -113,7 +113,7 @@ for file in "${migrations[@]}"; do
   psql "$database_url" -X -v ON_ERROR_STOP=1 --single-transaction \
     -c "SELECT pg_advisory_xact_lock(hashtextextended('ignatius:chain-migration', 0));" \
     -f "$file" \
-    -c 'INSERT INTO "gw_ledger"."ChainMigration" ("version", "name", "digest", "schema_version", "protocol_version") VALUES (current_setting('\''ignatius.migration.version'\'')::BIGINT, current_setting('\''ignatius.migration.name'\''), decode(current_setting('\''ignatius.migration.digest'\''), '\''hex'\''), current_setting('\''ignatius.migration.schema_version'\'')::BIGINT, current_setting('\''ignatius.migration.protocol_version'\'')::BIGINT) ON CONFLICT ("version") DO NOTHING;' \
+    -c 'INSERT INTO "gw_ledger"."ChainMigration" ("version", "name", "digest", "schema_version", "protocol_version") VALUES (current_setting('\''ignatius.migration.version'\'')::BIGINT, current_setting('\''ignatius.migration.name'\''), decode(current_setting('\''ignatius.migration.digest'\''), '\''hex'\''), current_setting('\''ignatius.migration.schema_version'\'')::BIGINT, current_setting('\''ignatius.migration.protocol_version'\'')) ON CONFLICT ("version") DO NOTHING;' \
     -c 'DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM "gw_ledger"."ChainMigration" WHERE "version" = current_setting('\''ignatius.migration.version'\'')::BIGINT AND "name" = current_setting('\''ignatius.migration.name'\'') AND "digest" = decode(current_setting('\''ignatius.migration.digest'\''), '\''hex'\'')) THEN RAISE EXCEPTION '\''Ignatius migration identity mismatch for version %'\'', current_setting('\''ignatius.migration.version'\''); END IF; END $$;'
   registry_present=t
 done

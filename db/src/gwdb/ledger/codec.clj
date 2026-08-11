@@ -49,7 +49,7 @@
   "Encodes the v1 envelope with an explicit version, tag, length, and payload."
   {:added "0.1"}
   [:integer type-tag :bytea payload]
-  (pg/decode (|| "HCV1:" type-tag ":" (pg/length payload) ":"
+  (pg/decode (|| "HCV0:" type-tag ":" (pg/length payload) ":"
                  (pg/encode payload "hex"))
              "escape"))
 

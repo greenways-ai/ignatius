@@ -44,7 +44,7 @@ import sys
 metadata = json.load(open(sys.argv[1], encoding="utf-8"))
 assert metadata["releaseVersion"] == "0.1.0"
 assert metadata["schemaVersion"] == 1
-assert metadata["protocolVersion"] == 1
+assert metadata["protocolVersion"] == "0.0.0-alpha"
 assert metadata["freshInstallDestructive"] is True
 assert metadata["migrationCount"] == 1
 PY

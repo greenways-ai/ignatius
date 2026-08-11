@@ -33,7 +33,7 @@
 
 (defn.pg ^{:- [:text]}
   workspace-id-text
-  "Reads the stable workspace ID from one canonical HCV1 string value."
+  "Reads the stable workspace ID from one canonical HCV0 string value."
   {:added "0.12"}
   [:bytea i-workspace-id-root]
   (let [o-cell (cell/cell-by-hash i-workspace-id-root)

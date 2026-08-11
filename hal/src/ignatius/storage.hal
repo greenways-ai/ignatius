@@ -54,7 +54,7 @@
    :block/references refs})
 
 (defn hcv1-block
-  "Constructs one HCV1 block through an explicit SHA-256 capability."
+  "Constructs one HCV0 block through an explicit SHA-256 capability."
   [sha256 type-tag payload-byte-count payload-hex refs]
   (let [root
         (sha256
@@ -73,7 +73,7 @@
     (get block :block/payload-hex))))
 
 (defn verify-block
-  "Re-hashes a fetched HCV1 block before it may be decoded or returned."
+  "Re-hashes a fetched HCV0 block before it may be decoded or returned."
   [sha256 block]
   (cond
     (= nil block)

@@ -2,11 +2,11 @@
 
 The PostgreSQL workspace module projects verified canonical
 `:workspace/commit-candidate` values into queryable rows without changing their
-HCV1 identity.
+HCV0 identity.
 
 ## Authority
 
-The canonical HCV1 map and its ordered parent vector are authoritative.
+The canonical HCV0 map and its ordered parent vector are authoritative.
 `WorkspaceCommit` and `WorkspaceCommitParent` are rebuildable indexes. A row is
 valid only when every projected field and parent position matches the immutable
 value graph under the supplied commit root.

@@ -1,13 +1,13 @@
-# HPT1 workload corpus and flat-map baseline
+# HPT0 workload corpus and flat-map baseline
 
-HPT1 is a proposed large persistent index format. It is not yet a canonical
+HPT0 is a proposed large persistent index format. It is not yet a canonical
 codec, type tag or migration target. This slice first fixes the workloads and the
-current HCV1 structural baseline so later design choices are supported by
+current HCV0 structural baseline so later design choices are supported by
 repeatable evidence rather than an assumed Prolly-tree benefit.
 
-## Current HCV1 map cost
+## Current HCV0 map cost
 
-An HCV1 map payload is:
+An HCV0 map payload is:
 
 ```text
 M:<entry-count>:<key-root><value-root>...
@@ -20,7 +20,7 @@ For `n` entries, the exact payload size is therefore:
 3 + decimal_digits(n) + 128n bytes
 ```
 
-The outer `HCV1:<type>:<length>:` envelope is excluded because the comparison in
+The outer `HCV0:<type>:<length>:` envelope is excluded because the comparison in
 this corpus concerns the immutable map payload and its child graph. Every map
 entry also derives two `CellRef` rows: one `key` edge and one `value` edge.
 
@@ -51,7 +51,7 @@ The portable workload contract classifies entry counts into provisional bands:
 ```
 
 These are experiment-selection bands. They do not automatically change a codec
-or prove that HPT1 is faster. A flat HCV1 map may remain the right representation
+or prove that HPT0 is faster. A flat HCV0 map may remain the right representation
 for semantic records even above a provisional boundary, while a high-churn index
 may justify chunking earlier.
 
@@ -85,7 +85,7 @@ revise selected bindings.
 
 ## Required operation scenarios
 
-Every candidate HPT1 design must report at least:
+Every candidate HPT0 design must report at least:
 
 - get at the first, middle and last key;
 - missing get before and after the represented key range;
@@ -113,18 +113,18 @@ Runtime measurements must commit enough information to reproduce the result:
 
 The next slice should add a PostgreSQL benchmark runner for the existing flat-map
 implementation and commit the raw evidence. Only after those results should the
-project freeze HPT1 node framing, chunk-boundary rules, hash domain, child roles
+project freeze HPT0 node framing, chunk-boundary rules, hash domain, child roles
 or interoperability rules.
 
 ## Compatibility boundary
 
-HPT1 must be additive:
+HPT0 must be additive:
 
-- existing HCV1 and HCP1 roots remain unchanged;
-- ordinary HCV1 maps remain canonical for small semantic values;
-- a future HPT1 root receives an explicit versioned format and test vectors;
+- existing HCV0 and HCP0 roots remain unchanged;
+- ordinary HCV0 maps remain canonical for small semantic values;
+- a future HPT0 root receives an explicit versioned format and test vectors;
 - PostgreSQL and portable runtimes must construct identical roots;
-- conversion between HCV1 maps and HPT1 indexes is explicit and never rewrites
+- conversion between HCV0 maps and HPT0 indexes is explicit and never rewrites
   historical values in place.
 
 The executable baseline is maintained in

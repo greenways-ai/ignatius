@@ -31,7 +31,7 @@
              (l/rt:stop)]})
 
 ^{:refer gwdb.ledger.snapshot/snapshot-valid :added "0.1"}
-(fact "snapshot creation commits generated state descriptor and HCP1 pack bytes"
+(fact "snapshot creation commits generated state descriptor and HCP0 pack bytes"
   (!.pg
    [:select
     (snapshot/snapshot-valid
@@ -52,7 +52,7 @@
   => 3)
 
 ^{:refer gwdb.ledger.snapshot/snapshot-pack-import :added "0.2"}
-(fact "HCP1 pack parsing restores cells before ordered CellRef envelopes"
+(fact "HCP0 pack parsing restores cells before ordered CellRef envelopes"
   (!.pg
    [:select
     (snapshot/snapshot-pack-import

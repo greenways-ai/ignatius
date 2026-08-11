@@ -40,7 +40,7 @@
 
 (defn.pg ^{:- [:bytea]}
   context-payload
-  "HCV1 fixed context record: all dynamic execution inputs are explicit."
+  "HCV0 fixed context record: all dynamic execution inputs are explicit."
   {:added "0.2"}
   [:bytea i-state-root :bytea i-origin :bytea i-address :bytea i-caller
    :bytea i-transaction-root :bigint i-block-height :bigint i-timestamp

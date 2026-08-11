@@ -140,7 +140,7 @@
 
 (defn.pg ^{:- [:text]}
   scalar-text
-  "Reads an HCV1 string, symbol or keyword as UTF-8 text."
+  "Reads an HCV0 string, symbol or keyword as UTF-8 text."
   {:added "0.12"}
   [:bytea i-root]
   (cond [i-root :is-null]

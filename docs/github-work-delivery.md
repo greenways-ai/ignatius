@@ -36,7 +36,7 @@ It creates one deterministic work run and commits, in one store transition:
 The outbox keys are:
 
 ```clojure
-["ignatius.github.delivery/1" delivery-id position]
+["ignatius.github.delivery/0-alpha" delivery-id position]
 ```
 
 Replaying the same delivery ID, plan root and event vector returns the existing
@@ -94,7 +94,7 @@ d305875e3bfe3d8fc4f8a1462053e4ca901aaa74
 ```
 
 That revision includes the provider-role store contract and
-`hara.work.receipt/1` outbox boundary. The full Ignatius Verify workflow remains
+`hara.work.receipt/0-alpha` outbox boundary. The full Ignatius Verify workflow remains
 the gate for generated SQL, generated contracts and portable HAL behavior.
 
 ## Remaining migration

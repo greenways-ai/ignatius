@@ -2,7 +2,7 @@
 
 `ignatius.storage` extracts the storage semantics already present in the
 Ignatius ledger into a provider-neutral contract. It does not create a second
-canonical database model and it does not change HCV1 roots.
+canonical database model and it does not change HCV0 roots.
 
 Tracking issue: [#12](https://github.com/greenways-ai/ignatius/issues/12).
 
@@ -30,12 +30,12 @@ changing semantic code.
 
 The PostgreSQL ledger already has the authoritative immutable block substrate:
 
-- `Cell` stores one HCV1 payload under its SHA-256 root;
+- `Cell` stores one HCV0 payload under its SHA-256 root;
 - update and delete triggers make cells immutable;
 - `cell-put` verifies the root and makes exact duplicate writes idempotent;
 - `CellRef` stores ordered labelled child links;
 - `cell-ref-entries` reconstructs those links deterministically; and
-- HCP1 snapshots walk, pack and import the reachable cell graph.
+- HCP0 snapshots walk, pack and import the reachable cell graph.
 
 The portable contract names those behaviours so execution code no longer needs
 to know that the implementation is PostgreSQL. It does not rename the tables,
@@ -76,7 +76,7 @@ or direct module calls. The semantic contract is the same.
 
 ## Block envelope
 
-The first supported block codec is the existing HCV1 codec:
+The first supported block codec is the existing HCV0 codec:
 
 ```clojure
 {:block/root root
@@ -95,10 +95,10 @@ The first supported block codec is the existing HCV1 codec:
 The root remains:
 
 ```text
-SHA-256(UTF8("HCV1:" + type-tag + ":" + byte-count + ":" + payload-hex))
+SHA-256(UTF8("HCV0:" + type-tag + ":" + byte-count + ":" + payload-hex))
 ```
 
-`:block/references` are derived traversal metadata. The HCV1 payload commits the
+`:block/references` are derived traversal metadata. The HCV0 payload commits the
 child roots according to the value type; an adapter must not treat unverified
 reference rows as independent semantic truth.
 
@@ -125,7 +125,7 @@ provider bytes
   -> verify codec and hash algorithm
   -> recompute root
   -> compare with requested root
-  -> only then decode HCV1
+  -> only then decode HCV0
 ```
 
 A cache may retain verified decoded values, but cache keys remain exact roots.
@@ -310,14 +310,14 @@ The PostgreSQL adapter maps directly onto the current ledger:
 | --- | --- |
 | block root | `Cell.hash` |
 | codec version | `Cell.codec_version` |
-| HCV1 type tag | `Cell.type_tag` |
+| HCV0 type tag | `Cell.type_tag` |
 | payload bytes | `Cell.payload` |
 | payload byte count | `Cell.byte_size` |
 | ordered child references | `CellRef` |
 | get block | `cell-by-hash` plus `cell-ref-entries` |
 | verify block | `cell-valid` / `codec/verify`, followed by portable re-verification at trust boundaries |
 | put block | `cell-put` followed by validated `cell-ref-put` calls |
-| graph export/import | HCP1 snapshot pack and import functions |
+| graph export/import | HCP0 snapshot pack and import functions |
 
 The authoritative database continues to reject updates and deletes of committed
 cells. No new block table is required.
@@ -475,10 +475,10 @@ hosting service and update API genuinely provide it.
 
 ## Non-goals of this slice
 
-- changing HCV1 or HCP1;
+- changing HCV0 or HCP0;
 - moving the VM into PostgreSQL or object storage;
 - replacing current account, contract or chain heads;
-- introducing HPT1;
+- introducing HPT0;
 - implementing garbage collection;
 - defining Hestia authority policy; or
 - making the global Ignatius ledger branchable.

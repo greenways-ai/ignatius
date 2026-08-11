@@ -48,7 +48,7 @@
 
 (defn.pg ^{:- [:bytea]}
   optional-field
-  "Converts a canonical HCV1 nil field to SQL null."
+  "Converts a canonical HCV0 nil field to SQL null."
   {:added "0.11"}
   [:bytea i-record-root :text i-name]
   (let [(:bytea v-root) (-/field i-record-root i-name)]
@@ -108,7 +108,7 @@
 
 (defn.pg ^{:- [:bytea]}
   workspace-commit-value
-  "Constructs the canonical HCV1 workspace commit candidate value."
+  "Constructs the canonical HCV0 workspace commit candidate value."
   {:added "0.11"}
   [:bytea i-workspace-id-root
    :bytea i-workspace-root

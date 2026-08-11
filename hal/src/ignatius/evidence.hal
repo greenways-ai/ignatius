@@ -10,7 +10,7 @@
 
 (defn signing-payload
   [domain root signer key-id sequence]
-  (str "IGE1:" domain ":" root ":" signer ":" key-id ":" sequence))
+  (str "IGE0:" domain ":" root ":" signer ":" key-id ":" sequence))
 
 (defn initial-state
   []

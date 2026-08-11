@@ -23,7 +23,7 @@
 
 (defn.pg ^{:- [:bytea]}
   profile-put
-  "Commits a compiler/runtime profile as an ordinary canonical HCV1 map."
+  "Commits a compiler/runtime profile as an ordinary canonical HCV0 map."
   {:added "0.8"}
   [:bytea i-name-root :bytea i-version-root
    :bytea i-bindings-root :bytea i-operations-root]

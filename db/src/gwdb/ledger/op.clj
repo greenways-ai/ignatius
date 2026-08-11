@@ -16,7 +16,7 @@
             :all {:schema ["gw_ledger"]}}})
 
 (deftype.pg Op
-  "Rebuildable descriptor for an authoritative HCV1 operation cell."
+  "Rebuildable descriptor for an authoritative HCV0 operation cell."
   {:added "0.2"}
   [:op-root        {:type :bytea :primary true}
    :op-kind        {:type :text :required true}
@@ -63,7 +63,7 @@
 
 (defn.pg ^{:- [:bytea]}
   op-payload
-  "Builds HCV1 operation payload bytes from every semantic descriptor field.
+  "Builds HCV0 operation payload bytes from every semantic descriptor field.
 
    Child operations use the ordinary ordered sequence encoding after the fixed
    descriptor header.  The JSON array is constructor transport only."

@@ -5,7 +5,7 @@
   (if (nil? root) "-" root))
 
 (defn operation-payload
-  "Frames the exact PostgreSQL HCV1 operation payload before hashing."
+  "Frames the exact PostgreSQL HCV0 operation payload before hashing."
   [kind value-root symbol-root depth index function-root parameter-root body-root child-roots]
   (str "O:1:" kind ":"
        (root-or-dash value-root) ":"

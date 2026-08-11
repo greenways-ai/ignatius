@@ -43,7 +43,7 @@
                          1 1 i-payload)))
 
 (defn.pg ^{:- [:bytea]} put-boolean
-  "Stores a semantic boolean using HCV1's 00/01 representation."
+  "Stores a semantic boolean using HCV0's 00/01 representation."
   {:added "0.1"}
   [:boolean i-value]
   (let [(:bytea v-payload) (pg/case i-value
@@ -74,7 +74,7 @@
   (return (-/put-integer (:text i-value))))
 
 (defn.pg ^{:- [:bigint]} integer-bigint
-  "Reads a bounded HCV1 integer for protocol counters and cost fields."
+  "Reads a bounded HCV0 integer for protocol counters and cost fields."
   {:added "0.2"}
   [:bytea i-root]
   (let [o-cell (cell/cell-by-hash i-root)
@@ -177,7 +177,7 @@
     (return o-result)))
 
 (defn.pg ^{:- [:bytea]} put-list
-  "Stores a list from ordered child roots through the HCV1 compound codec."
+  "Stores a list from ordered child roots through the HCV0 compound codec."
   {:added "0.1"}
   [:jsonb i-child-roots]
   (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)
@@ -194,7 +194,7 @@
                          1 10 i-payload)))
 
 (defn.pg ^{:- [:bytea]} put-vector
-  "Stores a vector from ordered child roots through the HCV1 compound codec."
+  "Stores a vector from ordered child roots through the HCV0 compound codec."
   {:added "0.1"}
   [:jsonb i-child-roots]
   (let [(:integer v-count) (pg/jsonb-array-length i-child-roots)

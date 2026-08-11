@@ -1,4 +1,4 @@
-{:recipe/format 1
+{:recipe/format "0.0.0-alpha"
  :recipe/adapter :rust-wasm
  :recipe/toolchain {:rust "1.78.0"
                     :target "wasm32-unknown-unknown"

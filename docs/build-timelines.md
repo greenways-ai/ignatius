@@ -24,7 +24,7 @@ signed transaction
 ```
 
 No new storage codec or database runtime is required for this slice. The records
-remain ordinary HCV1 maps and vectors.
+remain ordinary HCV0 maps and vectors.
 
 ## Workspace state
 
@@ -56,7 +56,7 @@ A timeline instance is a canonical `:workspace/build` value:
  :workspace/metadata {}}
 ```
 
-The indexes are ordinary HCV1 maps. HPT1 remains a later optimisation for
+The indexes are ordinary HCV0 maps. HPT0 remains a later optimisation for
 workloads that demonstrate a real flat-map bottleneck.
 
 ## Process runs
@@ -377,7 +377,7 @@ Historical roots are never rewritten.
 
 - One contract instance has one linear authoritative head.
 - Participants are fixed by initial parameters.
-- Current indexes are ordinary HCV1 maps.
+- Current indexes are ordinary HCV0 maps.
 - Step and checkpoint records are specified but not yet separate timeline events.
 - The reducer records receipt roots but does not yet derive capabilities or
   execute host effects.
@@ -385,6 +385,6 @@ Historical roots are never rewritten.
   policy.
 
 Multi-parent workspace commits and scoped refs are tracked in
-[#13](https://github.com/greenways-ai/ignatius/issues/13). HPT1 indexes,
+[#13](https://github.com/greenways-ai/ignatius/issues/13). HPT0 indexes,
 structural merge programs, portable execution and capability records remain
 separate phases so none destabilises the existing ledger.

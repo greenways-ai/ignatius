@@ -24,7 +24,7 @@ system designed to store them.
 
 The workflow layer builds on capabilities already present in Ignatius:
 
-- immutable HCV1 values and labelled `CellRef` edges;
+- immutable HCV0 values and labelled `CellRef` edges;
 - verified immutable blocks and provider-neutral block/ref contracts;
 - linearizable PostgreSQL compare-and-set refs;
 - signed account sequencing, admission, blocks and receipts;
@@ -313,5 +313,5 @@ They do not belong in canonical reducer primitives.
 5. Claim leases, heartbeats, cancellation, reassignment and checkpoint resume.
 6. Automatic creation of workspace proposals from completed output sets, reusing
    the existing review, accepted-main and release lifecycle.
-7. HPT1 indexes for large work and resource catalogs once the canonical format
+7. HPT0 indexes for large work and resource catalogs once the canonical format
    and crossover rules under issue #14 are complete.

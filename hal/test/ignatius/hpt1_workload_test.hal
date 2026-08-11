@@ -36,7 +36,7 @@
 
 (def results
   [(test/check
-    "flat HCV1 payload sizes are exact"
+    "flat HCV0 payload sizes are exact"
     payload-baseline
     [2053 8197 32774 131079 524295 2097160 8388616])
    (test/check

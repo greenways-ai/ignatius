@@ -40,7 +40,7 @@
    [:select (pg/encode
              (codec-value/encode (value/put-string "a"))
              "escape")])
-  => "HCV1:5:1:61")
+  => "HCV0:5:1:61")
 
 ^{:refer gwdb.ledger.codec-value/compare :added "0.1"}
 (fact "root comparison is canonical-byte ordering rather than hash ordering"
@@ -67,11 +67,11 @@
   => false)
 
 ^{:refer gwdb.ledger.value/put-boolean :added "0.1"}
-(fact "semantic booleans select the HCV1 00/01 payload without raw bytes"
+(fact "semantic booleans select the HCV0 00/01 payload without raw bytes"
   (!.pg
    [:select (pg/encode (codec-value/encode (value/put-boolean true)) "escape")]
    [:select (pg/encode (codec-value/encode (value/put-boolean false)) "escape")])
-  => '("HCV1:1:1:01" "HCV1:1:1:00"))
+  => '("HCV0:1:1:01" "HCV0:1:1:00"))
 
 ^{:refer gwdb.ledger.value/put-integer :added "0.1"}
 (fact "integer text is canonical decimal and is not restricted to bigint"
@@ -80,7 +80,7 @@
    [:select (pg/encode (codec-value/encode
                          (value/put-integer "123456789012345678901234567890"))
                         "escape")])
-  => '("HCV1:2:3:2d3432" "HCV1:2:30:313233343536373839303132333435363738393031323334353637383930"))
+  => '("HCV0:2:3:2d3432" "HCV0:2:30:313233343536373839303132333435363738393031323334353637383930"))
 
 ^{:refer gwdb.ledger.value/put-string :added "0.1"}
 (fact "text values use explicit UTF-8 conversion before hashing"
@@ -88,7 +88,7 @@
    [:select (pg/encode (codec-value/encode (value/put-string "é")) "escape")]
    [:select (pg/encode (codec-value/encode (value/put-symbol "x")) "escape")]
    [:select (pg/encode (codec-value/encode (value/put-keyword "x")) "escape")])
-  => '("HCV1:5:2:c3a9" "HCV1:7:1:78" "HCV1:8:1:78"))
+  => '("HCV0:5:2:c3a9" "HCV0:7:1:78" "HCV0:8:1:78"))
 
 ^{:refer gwdb.ledger.value/put-list :added "0.1"}
 (fact "list roots commit ordered children into both payload and reference index"

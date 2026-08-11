@@ -1,7 +1,7 @@
 # Ignatius
 
 Ignatius is the **authoritative PostgreSQL blockchain** for Greenways. It
-stores canonical HCV1/HCP1 state, orders and executes signed transactions,
+stores canonical HCV0/HCP0 state, orders and executes signed transactions,
 commits linear blocks, and returns receipts that bind the transaction, result,
 state and block roots.
 
@@ -43,7 +43,7 @@ The signed foundation and first workflow slice are implemented:
 
 - canonical process, artifact, checkpoint, review, attestation and evidence
   records;
-- immutable HCV1 values and labelled content-addressed edges;
+- immutable HCV0 values and labelled content-addressed edges;
 - signed account sequencing, transaction admission, block commitment and
   receipts;
 - provider-neutral immutable block storage and scoped compare-and-set refs;
@@ -324,7 +324,7 @@ See:
 
 ## Canonical records
 
-[`ignatius.record`](hal/src/ignatius/record.hal) defines versioned ordinary HCV1
+[`ignatius.record`](hal/src/ignatius/record.hal) defines versioned ordinary HCV0
 values for signed builds:
 
 ```text
@@ -356,7 +356,7 @@ See [`docs/canonical-records.md`](docs/canonical-records.md).
 [`ignatius.storage`](hal/src/ignatius/storage.hal) separates immutable blocks,
 scoped mutable refs and backend capability declarations.
 
-PostgreSQL maps HCV1 values to `Cell` and ordered `CellRef` rows, implements
+PostgreSQL maps HCV0 values to `Cell` and ordered `CellRef` rows, implements
 linearizable compare-and-set refs, verifies signed account sequences, executes
 reducers, commits the global linear block and produces transaction receipts.
 
@@ -368,7 +368,7 @@ See [`docs/storage-contracts.md`](docs/storage-contracts.md).
 
 ## Performance boundary
 
-The checked-in HCV1 flat-map evidence covers 16, 64, 256, 1,024 and 4,096-entry
+The checked-in HCV0 flat-map evidence covers 16, 64, 256, 1,024 and 4,096-entry
 maps through PostgreSQL/JDBC.
 
 Small hot maps are suitable for workflow heads and compact state. Large flat maps
@@ -379,11 +379,11 @@ Therefore:
 
 ```text
 small canonical workflow heads
-  HCV1 maps
+  HCV0 maps
 
 large work/resource catalogs
   rebuildable PostgreSQL projections now
-  HPT1 canonical indexes under issue #14
+  HPT0 canonical indexes under issue #14
 ```
 
 Evidence: [`benchmarks/hpt1-flat-map/evidence.edn`](benchmarks/hpt1-flat-map/evidence.edn)
@@ -455,7 +455,7 @@ The focused product train is:
 6. [#48 — ship Agent Workflow v0.1](https://github.com/greenways-ai/ignatius/issues/48)
 
 Parallel architecture tracks remain in the main [roadmap
-#9](https://github.com/greenways-ai/ignatius/issues/9): HPT1 indexes,
+#9](https://github.com/greenways-ai/ignatius/issues/9): HPT0 indexes,
 content-addressed Hara definitions, portable execution, structural merge,
 projection retention and explicit capabilities.
 

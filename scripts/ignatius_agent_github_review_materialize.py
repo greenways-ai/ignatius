@@ -15,7 +15,7 @@ from typing import Any
 
 from ignatius_github_common import canonical_json, parse_json, require_map, require_positive_integer, require_string
 
-PROTOCOL = "ignatius.github-review-materialization/1"
+PROTOCOL = "ignatius.github-review-materialization/0-alpha"
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_REVIEW_BODY_BYTES = 1024 * 1024
 

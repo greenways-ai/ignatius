@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-PROTOCOL = "ignatius.agent-workflow-status/1"
+PROTOCOL = "ignatius.agent-workflow-status/0-alpha"
 SAFE_ROLE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 

@@ -4,7 +4,7 @@ description: Understand the Ignatius chain, client, and application boundary.
 ---
 # Introduction
 
-Ignatius is the authoritative PostgreSQL chain for Greenways. It stores canonical HCV1/HCP1 state, orders signed transactions, executes deterministic Hara reducers, commits linear blocks, and returns exact receipts.
+Ignatius is the authoritative PostgreSQL chain for Greenways. It stores canonical HCV0/HCP0 state, orders signed transactions, executes deterministic Hara reducers, commits linear blocks, and returns exact receipts.
 
 ## Three boundaries
 

@@ -8,7 +8,7 @@ The filtered history tip is `4b3362a534e8849d5f55230fe8f0382a8c40248c`.
 Included:
 
 - the generic PostgreSQL Hara ledger;
-- HCV1/HCP1 codec and runtime semantics;
+- HCV0/HCP0 codec and runtime semantics;
 - transaction and offline outbox HAL modules;
 - generic chain contracts and tests; and
 - SHA and Noir chain extensions.

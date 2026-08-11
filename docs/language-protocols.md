@@ -36,8 +36,8 @@ required method exists and that each persistent function has the declared arity.
 The resulting implementation record is immutable; the active implementation is
 selected by a deterministic account binding derived from the protocol and type roots.
 
-Values may use a canonical explicit type wrapper. Ordinary HCV1 values dispatch
-against a stable built-in type descriptor derived from their HCV1 type tag.
+Values may use a canonical explicit type wrapper. Ordinary HCV0 values dispatch
+against a stable built-in type descriptor derived from their HCV0 type tag.
 
 ## Method invocation
 

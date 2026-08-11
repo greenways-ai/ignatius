@@ -230,7 +230,7 @@
 (defn register-commit
   "Adds one decoded commit after an injected canonical-root verifier succeeds.
 
-  verify-root must recompute or otherwise prove the HCV1 root for the supplied
+  verify-root must recompute or otherwise prove the HCV0 root for the supplied
   commit. Exact reinsertion is idempotent; a different value under one root is
   a conflict."
   [verify-root store root commit]

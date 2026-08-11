@@ -25,7 +25,7 @@
 
 (defn.pg ^{:- [:bytea]}
   function-payload
-  "Builds the fixed HCV1 function descriptor payload from committed roots."
+  "Builds the fixed HCV0 function descriptor payload from committed roots."
   {:added "0.2"}
   [:bytea i-parameters-root :bytea i-body-root
    :bytea i-closure-root :bytea i-metadata-root]

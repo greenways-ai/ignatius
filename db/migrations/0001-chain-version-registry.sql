@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS "gw_ledger"."ChainMigration" (
   "name" TEXT NOT NULL UNIQUE,
   "digest" BYTEA NOT NULL CHECK (octet_length("digest") = 32),
   "schema_version" BIGINT NOT NULL CHECK ("schema_version" > 0),
-  "protocol_version" BIGINT NOT NULL CHECK ("protocol_version" > 0),
+  "protocol_version" TEXT NOT NULL CHECK (length("protocol_version") > 0),
   "applied_at" TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 

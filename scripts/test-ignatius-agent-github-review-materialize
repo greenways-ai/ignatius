@@ -193,7 +193,7 @@ def main() -> int:
             after.st_size,
             after.st_mtime_ns,
         )
-        assert packet["protocol"] == "ignatius.github-review-materialization/1"
+        assert packet["protocol"] == "ignatius.github-review-materialization/0-alpha"
         assert packet["source"] == {
             "resource_id": f"github/{REPOSITORY}/pulls/60/reviews/{REVIEW_ID}",
             "snapshot_version": version,

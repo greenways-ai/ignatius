@@ -427,20 +427,20 @@
   (let [path
         (or output-path
             (environment-value
-             "HPT1_BENCHMARK_OUT"
+             "HPT0_BENCHMARK_OUT"
              "../benchmarks/hpt1-flat-map/evidence.edn"))
         entry-counts
         (parse-entry-counts
-         (System/getenv "HPT1_BENCHMARK_COUNTS"))
+         (System/getenv "HPT0_BENCHMARK_COUNTS"))
         warmup-count
         (Long/parseLong
          (environment-value
-          "HPT1_BENCHMARK_WARMUPS"
+          "HPT0_BENCHMARK_WARMUPS"
           (str default-warmup-count)))
         sample-count
         (Long/parseLong
          (environment-value
-          "HPT1_BENCHMARK_SAMPLES"
+          "HPT0_BENCHMARK_SAMPLES"
           (str default-sample-count)))]
     (l/rt:setup :postgres)
     (try
