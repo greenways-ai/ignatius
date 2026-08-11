@@ -62,11 +62,12 @@ CI regenerates both and rejects drift.
 
 ## PostgreSQL-target HAL source
 
-Every namespace under `src/gwdb/ledger` has a PostgreSQL-target `.hal` shadow
-beside its Foundation `.clj` migration source. The namespace names, DSL forms,
-schema names and canonical algorithms are intentionally unchanged. The only
-bootstrap difference is that HAL sources require `lang.core` rather than the
-legacy `tahto.core` façade.
+Every namespace under `src/gwdb/ledger` has an authoritative PostgreSQL-target
+`.hal` source. The adjacent Foundation `.clj` files are frozen migration
+references until the HAL cutover gates below pass; they are not a second source
+of truth. Namespace names, DSL forms, schema names and canonical algorithms
+remain unchanged. HAL sources require `lang.core` rather than the legacy
+`tahto.core` façade.
 
 The HAL project entry point is `gwdb.ledger.base`, so it closes over the entire
 chain implementation rather than only the portable client:
@@ -77,21 +78,24 @@ make db-hal-check
 make db-hal-test
 ```
 
-`db-hal-parity` is part of `make verify`. It requires a one-for-one source map
-and byte-for-byte equality after normalising the bootstrap require and the
-small closed set of HAL API translations (`defonce`, macro-only script setup,
-runtime lifecycle names and the `code.test` result bridge). During the shadow
-period, change the `.clj` form through the Foundation REPL-first workflow and
-make the corresponding evaluated `.hal` change in the same commit.
+`db-hal-parity` is part of `make verify`. While the frozen references remain,
+it requires a one-for-one source map and byte-for-byte equality after
+normalising the bootstrap require and the small closed set of HAL API
+translations (`defonce`, macro-only script setup, runtime lifecycle names and
+the `code.test` result bridge). Ledger changes are now made and evaluated in
+`.hal` first. A compatibility change to a `.clj` reference must mirror the
+already-validated HAL form and must not introduce a Clojure-only implementation.
 
 `db-hal-test` grants PostgreSQL and process access because the test runtime uses
 `std.db.postgres` for its connection and `lib.docker` to manage the disposable
 database fixture. Hara registers that provider as `[:postgres :db.client]`;
 there is no JDBC runtime or vendor selector in the HAL path. Source loading and
 complete PostgreSQL emission do not require the provider, while executing
-`!.pg` integration facts does. The `.clj` copies may be removed only after HAL
-emission matches the committed SQL and that provider-backed integration suite
-passes from the HAL entry point.
+`!.pg` integration facts does. Hestia reaches this service through that runtime
+over a normal PostgreSQL connection; it does not host or copy the ledger
+runtime. The `.clj` references may be removed only after HAL emission matches
+the committed SQL and the provider-backed integration suite passes from the
+HAL entry point.
 
 ## Focused tests
 
