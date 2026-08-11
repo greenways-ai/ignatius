@@ -2,3 +2,6 @@
 db/checkouts/
 target/
 **/target/
+site/dist/
+site/.astro/
+site/node_modules/

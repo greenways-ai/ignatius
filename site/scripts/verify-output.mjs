@@ -1,0 +1,2 @@
+import { access, readFile } from "node:fs/promises";
+const html=await readFile("dist/index.html","utf8");for(const marker of ["data-gw-documentation-header","data-gw-project-switcher","og-ignatius.jpg","Work commits"]){if(!html.includes(marker))throw new Error(`Missing ${marker}`)}for(const route of ["getting-started","concepts/canonical-records","guides/agent-workflows","reference/chain-api","project/status"])await access(`dist/${route}/index.html`);console.log("Verified Ignatius documentation output.");

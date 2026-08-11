@@ -1,0 +1,5 @@
+---
+import DocumentationHeader from "@greenways-ai/visual-language/DocumentationHeader.astro";
+const base = `${import.meta.env.BASE_URL.replace(/\/+$/, "")}/`;
+---
+<DocumentationHeader project="ignatius" title="Ignatius" homeHref={base} docsHref={`${base}getting-started/`} searchBase={base.replace(/\/$/, "")} searchLabel="Search Ignatius documentation" />

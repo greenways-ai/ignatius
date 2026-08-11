@@ -1,0 +1,4 @@
+<script is:inline>
+  (() => { const stored=localStorage.getItem("gw-theme")||"auto"; const preference=["auto","light","dark"].includes(stored)?stored:"auto"; document.documentElement.dataset.theme=preference==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):preference; document.documentElement.dataset.themePreference=preference; document.documentElement.dataset.project="ignatius"; })();
+</script>
+<script>import "@greenways-ai/visual-language/theme.js";</script>
