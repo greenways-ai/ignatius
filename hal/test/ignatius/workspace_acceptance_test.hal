@@ -1,5 +1,5 @@
 (ns ignatius.workspace-acceptance-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.storage :as storage]
             [ignatius.workspace :as workspace]
@@ -248,105 +248,105 @@
    workspace-id authority-root accept-c0))
 
 (def results
-  [(test/check "policy identity pins workspace and authority"
+  [(test-check "policy identity pins workspace and authority"
                (get policy :attestation/id)
                "main-policy/world/orbital-station/account/alice")
-   (test/check "policy pins one exact ordered reviewer set"
+   (test-check "policy pins one exact ordered reviewer set"
                (acceptance/policy-reviewer-roots policy)
                [authority-root reviewer-bob])
-   (test/check "policy uses the explicit unanimous v1 law"
+   (test-check "policy uses the explicit unanimous v1 law"
                (get-in policy
                        [:record/extensions :workspace/policy-kind])
                :unanimous-reviewers-v1)
-   (test/check "canonical policy registration succeeds"
+   (test-check "canonical policy registration succeeds"
                [(get policy-store-result :error)
                 (get policy-store-result :policy/root)]
                [nil "P1"])
-   (test/check "policy/main is create-only"
+   (test-check "policy/main is create-only"
                [(get duplicate-policy-publication :error)
                 (get duplicate-policy-publication :ref/actual-root)]
                [:storage/ref-conflict "P1"])
-   (test/check "duplicate reviewers are rejected by policy shape"
+   (test-check "duplicate reviewers are rejected by policy shape"
                (acceptance/policy-shape-error
                 workspace-id authority-root duplicate-reviewer-policy)
                :workspace/main-policy-duplicate-reviewer)
-   (test/check "acceptance pins candidate policy reviews and CAS edge"
+   (test-check "acceptance pins candidate policy reviews and CAS edge"
                [(get accept-c1 :attestation/subject-root)
                 (get accept-c1 :attestation/context-root)
                 (get accept-c1 :attestation/evidence-roots)
                 (acceptance/acceptance-expected-root accept-c1)]
                ["C1" "P1" ["R-A1" "R-B1"] "C0"])
-   (test/check "genesis may bootstrap main under exact approvals"
+   (test-check "genesis may bootstrap main under exact approvals"
                [(get main-c0-result :error)
                 (get-in main-c0-result [:ref/value :ref/root])]
                [nil "C0"])
-   (test/check "a proposed approved descendant advances main"
+   (test-check "a proposed approved descendant advances main"
                [(get main-c1-result :error)
                 (get-in main-c1-result [:ref/value :ref/root])]
                [nil "C1"])
-   (test/check "main now selects the accepted descendant"
+   (test-check "main now selects the accepted descendant"
                (acceptance/current-ref-root
                 backend-main-c1 workspace-id
                 workspace/main-ref-name "P1")
                "C1")
-   (test/check "a stale main CAS reports the accepted root"
+   (test-check "a stale main CAS reports the accepted root"
                [(get stale-main-result :error)
                 (get stale-main-result :ref/actual-root)]
                [:storage/ref-conflict "C1"])
-   (test/check "superseded approval roots cannot authorize acceptance"
+   (test-check "superseded approval roots cannot authorize acceptance"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-rejected
                  workspace-id authority-root accept-c1)
                 :error)
                :workspace/main-acceptance-review-not-current)
-   (test/check "current reject decisions cannot authorize acceptance"
+   (test-check "current reject decisions cannot authorize acceptance"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-rejected
                  workspace-id authority-root accept-c1-with-reject)
                 :error)
                :workspace/main-acceptance-review-not-approved)
-   (test/check "review evidence count must match the policy"
+   (test-check "review evidence count must match the policy"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-ready
                  workspace-id authority-root wrong-count-acceptance)
                 :error)
                :workspace/main-acceptance-review-count-mismatch)
-   (test/check "one immutable review root cannot be counted twice"
+   (test-check "one immutable review root cannot be counted twice"
                (acceptance/acceptance-shape-error
                 workspace-id authority-root duplicate-review-acceptance)
                :workspace/main-acceptance-duplicate-review-root)
-   (test/check "main bootstrap must select a genesis commit"
+   (test-check "main bootstrap must select a genesis commit"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-ready
                  workspace-id authority-root bootstrap-edit)
                 :error)
                :workspace/main-bootstrap-not-genesis)
-   (test/check "main advancement must be a commit fast-forward"
+   (test-check "main advancement must be a commit fast-forward"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-ready
                  workspace-id authority-root non-fast-forward)
                 :error)
                :workspace/non-fast-forward-main-acceptance)
-   (test/check "unpublished candidates cannot enter main"
+   (test-check "unpublished candidates cannot enter main"
                (get
                 (acceptance/validate-main-acceptance
                  commit-store policy-store review-store backend-ready
                  workspace-id authority-root unpublished-c3)
                 :error)
                :workspace/main-candidate-not-proposed)
-   (test/check "acceptance extensions cannot smuggle another policy"
+   (test-check "acceptance extensions cannot smuggle another policy"
                (acceptance/acceptance-shape-error
                 workspace-id authority-root tampered-acceptance)
                :workspace/main-acceptance-extensions-not-supported)
-   (test/check "the policy root remains independently selected"
+   (test-check "the policy root remains independently selected"
                (acceptance/current-ref-root
                 backend-main-c1 workspace-id
                 acceptance/main-policy-ref-name authority-root)
                "P1")])
 
-(test/print-results results)
+results

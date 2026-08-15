@@ -1,5 +1,5 @@
 (ns ignatius.github-issue-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.github.issue :as issue]
             [ignatius.github-workflow :as workflow]))
 
@@ -100,33 +100,33 @@
    :resource/previous-version version))
 
 (def results
-  [(test/check "opened issue emits exact resource plus work"
+  [(test-check "opened issue emits exact resource plus work"
                opened-plan
                [expected-resource expected-work])
-   (test/check "workflow facade delegates issue planning to Hara"
+   (test-check "workflow facade delegates issue planning to Hara"
                (workflow/event-plan opened-facts)
                opened-plan)
-   (test/check "duplicate dependency facts are removed in Hara"
+   (test-check "duplicate dependency facts are removed in Hara"
                (get (nth opened-plan 1) :work/dependency-ids)
                ["github/greenways-ai/ignatius/issues/43"])
-   (test/check "edited issue emits one successor resource"
+   (test-check "edited issue emits one successor resource"
                (count (issue/plan edited-facts))
                1)
-   (test/check "edited issue retains the exact CAS predecessor"
+   (test-check "edited issue retains the exact CAS predecessor"
                (get (first (issue/plan edited-facts))
                     :resource/previous-version)
                version)
-   (test/check "closed action refuses an open provider snapshot"
+   (test-check "closed action refuses an open provider snapshot"
                (issue/plan
                 (assoc edited-facts :provider/event-action :closed))
                {:error :github/issue-action-state-mismatch})
-   (test/check "opened action refuses an existing predecessor"
+   (test-check "opened action refuses an existing predecessor"
                (issue/plan
                 (assoc opened-facts :resource/previous-version version))
                {:error :github/invalid-issue-predecessor})
-   (test/check "unsupported provider action fails closed"
+   (test-check "unsupported provider action fails closed"
                (issue/plan
                 (assoc opened-facts :provider/event-action :deleted))
                {:error :github/unsupported-issue-action})])
 
-(test/print-results results)
+results

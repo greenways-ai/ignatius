@@ -1,5 +1,5 @@
 (ns ignatius.github-push-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.github.push :as push]
             [ignatius.github-workflow :as workflow]))
 
@@ -74,41 +74,41 @@
     :process/id "github/greenways-ai/ignatius/issues/44"}])
 
 (def results
-  [(test/check "push planner preserves exact commit, tree and parent identity"
+  [(test-check "push planner preserves exact commit, tree and parent identity"
                (push/plan facts)
                expected)
-   (test/check "workflow facade delegates push planning to Hara"
+   (test-check "workflow facade delegates push planning to Hara"
                (workflow/event-plan facts)
                expected)
-   (test/check "ordinary update action is derived from provider facts"
+   (test-check "ordinary update action is derived from provider facts"
                (push/action snapshot)
                :updated)
-   (test/check "force update action is derived without changing ancestry"
+   (test-check "force update action is derived without changing ancestry"
                (push/action (assoc snapshot :git/forced true))
                :force-updated)
-   (test/check "commit enrichment must match the signed after object"
+   (test-check "commit enrichment must match the signed after object"
                (push/plan
                 (assoc facts
                        :snapshot
                        (assoc snapshot :git/commit-sha before)))
                {:error :github/invalid-push-snapshot})
-   (test/check "branch deletion is provider state, not a commit version"
+   (test-check "branch deletion is provider state, not a commit version"
                (push/plan
                 (assoc facts
                        :snapshot
                        (assoc snapshot :git/deleted true)))
                {:error :github/invalid-push-selection})
-   (test/check "new branch requires the zero predecessor and no CAS version"
+   (test-check "new branch requires the zero predecessor and no CAS version"
                (push/plan
                 (assoc facts
                        :snapshot
                        (assoc snapshot :git/created true)))
                {:error :github/invalid-push-selection})
-   (test/check "full ref must agree with the normalized branch"
+   (test-check "full ref must agree with the normalized branch"
                (push/plan
                 (assoc facts
                        :snapshot
                        (assoc snapshot :git/ref "refs/tags/not-a-branch")))
                {:error :github/invalid-push-snapshot})])
 
-(test/print-results results)
+results

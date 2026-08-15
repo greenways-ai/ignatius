@@ -1,5 +1,5 @@
 (ns ignatius.record-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.record-vectors :as vectors]))
 
@@ -55,83 +55,83 @@
    vectors/vectors))
 
 (def results
-  [(test/check "writers pin the canonical record type"
+  [(test-check "writers pin the canonical record type"
                (get spoofed-workspace :record/type)
                :workspace/build)
-   (test/check "writers pin the canonical record version"
+   (test-check "writers pin the canonical record version"
                (get spoofed-workspace :record/version)
                1)
-   (test/check "namespaced writer extensions are retained"
+   (test-check "namespaced writer extensions are retained"
                (get-in spoofed-workspace
                        [:record/extensions :example/color])
                :blue)
-   (test/check "generic validation preserves unknown fields"
+   (test-check "generic validation preserves unknown fields"
                (get (get validated-future :ok) :future/field)
                "preserved")
-   (test/check "missing required fields are explicit"
+   (test-check "missing required fields are explicit"
                (get missing-workspace-id :error)
                :record/missing-required-fields)
-   (test/check "the missing field list identifies workspace identity"
+   (test-check "the missing field list identifies workspace identity"
                (get missing-workspace-id :fields)
                [:workspace/id])
-   (test/check "unknown record versions are rejected"
+   (test-check "unknown record versions are rejected"
                (get unsupported-version :error)
                :record/unsupported-version)
-   (test/check "unknown record families are rejected"
+   (test-check "unknown record families are rejected"
                (get unsupported-type :error)
                :record/unsupported-type)
-   (test/check "verified ledger fields override payload namespaces"
+   (test-check "verified ledger fields override payload namespaces"
                (get evidence-from-event :ledger/signer)
                "account/alice")
-   (test/check "contract and template evidence are retained"
+   (test-check "contract and template evidence are retained"
                [(get evidence-from-event :ledger/contract-root)
                 (get evidence-from-event :ledger/template-root)]
                ["contract-root" "template-root"])
-   (test/check "all reserved contract event fields are declared"
+   (test-check "all reserved contract event fields are declared"
                (count record/reserved-event-fields)
                6)
-   (test/check "optional root vectors have one canonical empty value"
+   (test-check "optional root vectors have one canonical empty value"
                (get empty-run :run/input-roots)
                [])
-   (test/check "optional metadata maps have one canonical empty value"
+   (test-check "optional metadata maps have one canonical empty value"
                (get empty-run :run/metadata)
                {})
-   (test/check "stable IDs and exact roots remain distinct field kinds"
+   (test-check "stable IDs and exact roots remain distinct field kinds"
                [(record/field-kind :artifact/id)
                 (record/field-kind :artifact/content-root)]
                [:stable-id :content-root])
-   (test/check "logical cycles can remain unpinned"
+   (test-check "logical cycles can remain unpinned"
                (get vectors/parent-run-reference-v1 :reference/root)
                nil)
-   (test/check "artifact production retains stable and exact run references"
+   (test-check "artifact production retains stable and exact run references"
                [(get vectors/artifact-version-v1
                      :artifact/producer-run-id)
                 (get vectors/artifact-version-v1
                      :artifact/producer-run-root)]
                ["run/lighting-17" nil])
-   (test/check "artifact ancestry is separate from derivation inputs"
+   (test-check "artifact ancestry is separate from derivation inputs"
                [(get vectors/artifact-version-v1
                      :artifact/previous-content-root)
                 (get vectors/artifact-version-v1
                      :artifact/source-roots)]
                ["scene-root-A"
                 ["scene-root-A" "texture-root" "prompt-root"]])
-   (test/check "execution provenance pins compiler and runtime identity"
+   (test-check "execution provenance pins compiler and runtime identity"
                [(get vectors/execution-provenance-v1
                      :provenance/compiler-root)
                 (get vectors/execution-provenance-v1
                      :provenance/runtime-root)]
                ["compiler-root" "runtime-root"])
-   (test/check "commit candidates support multiple parents"
+   (test-check "commit candidates support multiple parents"
                (get vectors/commit-candidate-v1
                     :commit/parent-roots)
                ["workspace-commit-alice"
                 "workspace-commit-bob"])
-   (test/check "the v1 catalog contains every published record family"
+   (test-check "the v1 catalog contains every published record family"
                (count record/schema-catalog)
                14)
-   (test/check "all checked-in conformance vectors satisfy their schema"
+   (test-check "all checked-in conformance vectors satisfy their schema"
                all-vectors-valid
                true)])
 
-(test/print-results results)
+results

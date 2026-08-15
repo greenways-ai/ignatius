@@ -1,5 +1,5 @@
 (ns ignatius.workflow-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.workflow :as workflow]))
 
@@ -286,17 +286,17 @@
    :ok))
 
 (def results
-  [(test/check "workflow state remains a canonical workspace build"
+  [(test-check "workflow state remains a canonical workspace build"
                [(get initial :record/type)
                 (record/record-valid? initial)]
                [:workspace/build true])
-   (test/check "the workflow starts with an explicit checkpoint index"
+   (test-check "the workflow starts with an explicit checkpoint index"
                (workflow/checkpoints initial)
                {})
-   (test/check "only workspace participants may register external resources"
+   (test-check "only workspace participants may register external resources"
                (get rejected-outsider :error)
                :workflow/not-participant)
-   (test/check "Git revisions use the canonical artifact-version record"
+   (test-check "Git revisions use the canonical artifact-version record"
                [(get-in (workflow/resources with-base)
                         ["git/greenways-ai/ignatius/refs/heads/main"
                          :record/type])
@@ -305,10 +305,10 @@
                          :record/extensions
                          :resource/provider])]
                [:artifact/version :git])
-   (test/check "resource updates require the exact selected external version"
+   (test-check "resource updates require the exact selected external version"
                (get rejected-stale-resource :error)
                :workflow/stale-resource-version)
-   (test/check "work items reuse the canonical process-run family"
+   (test-check "work items reuse the canonical process-run family"
                [(get-in (workflow/work-items with-work)
                         ["work/docs" :record/type])
                 (get-in (workflow/work-items with-work)
@@ -316,15 +316,15 @@
                 (record/record-valid?
                  (workflow/work-item with-work "work/docs"))]
                [:process/run :open true])
-   (test/check "work inputs pin exact registered external versions"
+   (test-check "work inputs pin exact registered external versions"
                (get-in (workflow/work-items with-work)
                        ["work/docs" :record/extensions
                         :work/input-references])
                [base-reference])
-   (test/check "dependent work cannot be claimed before its parent completes"
+   (test-check "dependent work cannot be claimed before its parent completes"
                (get rejected-premature-claim :error)
                :workflow/dependencies-not-complete)
-   (test/check "the claiming agent is pinned by ledger evidence"
+   (test-check "the claiming agent is pinned by ledger evidence"
                [(get-in (workflow/work-items claimed)
                         ["work/docs" :record/extensions
                          :work/assignee])
@@ -333,27 +333,27 @@
                          :work/claim-evidence
                          :ledger/signer])]
                ["alice" "alice"])
-   (test/check "another agent cannot start claimed work"
+   (test-check "another agent cannot start claimed work"
                (get rejected-wrong-agent-start :error)
                :workflow/not-assignee)
-   (test/check "starting work records signed execution evidence"
+   (test-check "starting work records signed execution evidence"
                [(get-in (workflow/work-items started)
                         ["work/docs" :run/status])
                 (get-in (workflow/work-items started)
                         ["work/docs" :run/started-evidence
                          :ledger/transaction-root])]
                [:running "tx-start-docs"])
-   (test/check "completion rejects resources not produced by the work item"
+   (test-check "completion rejects resources not produced by the work item"
                (get rejected-unowned-output :error)
                :workflow/output-resource-not-produced-by-work)
-   (test/check "Git output versions retain their producing work item"
+   (test-check "Git output versions retain their producing work item"
                (get-in
                 (workflow/resource-versions with-output)
                 ["git/greenways-ai/ignatius/refs/heads/agent/docs"
                  "commit-B"
                  :artifact/producer-run-id])
                "work/docs")
-   (test/check "checkpoints use the canonical process checkpoint record"
+   (test-check "checkpoints use the canonical process checkpoint record"
                [(get-in (workflow/checkpoints checkpointed)
                         ["checkpoint/docs/1" :record/type])
                 (get-in (workflow/checkpoints checkpointed)
@@ -364,7 +364,7 @@
                          :checkpoint/evidence
                          :ledger/signer])]
                [:process/checkpoint ["commit-B"] "alice"])
-   (test/check "completion pins the exact Git output and receipt"
+   (test-check "completion pins the exact Git output and receipt"
                [(get-in (workflow/work-items completed)
                         ["work/docs" :run/status])
                 (get-in (workflow/work-items completed)
@@ -372,7 +372,7 @@
                 (get-in (workflow/work-items completed)
                         ["work/docs" :run/receipt-root])]
                [:complete ["commit-B"] "receipt/docs"])
-   (test/check "completed dependencies unlock downstream agent work"
+   (test-check "completed dependencies unlock downstream agent work"
                [(workflow/ready? completed "work/review")
                 (get-in (workflow/work-items review-claimed)
                         ["work/review" :run/status])
@@ -380,7 +380,7 @@
                         ["work/review" :record/extensions
                          :work/assignee])]
                [true :claimed "bob"])
-   (test/check "workflow transitions share the signed linked timeline"
+   (test-check "workflow transitions share the signed linked timeline"
                [(get-in (workflow/summary review-claimed)
                         [:workspace/latest-entry-id])
                 (get-in review-claimed
@@ -389,4 +389,4 @@
                          :timeline/previous-entry-id])]
                ["tx-claim-review" "tx-complete-docs"])])
 
-(test/print-results results)
+results

@@ -1,5 +1,5 @@
 (ns ignatius.workspace-review-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.storage :as storage]
             [ignatius.workspace :as workspace]
@@ -180,97 +180,97 @@
     reviewer-root)))
 
 (def results
-  [(test/check "review identity pins candidate and reviewer"
+  [(test-check "review identity pins candidate and reviewer"
                (get approve :review/id)
                "review/C1/account/alice")
-   (test/check "review subject pins the immutable proposal candidate"
+   (test-check "review subject pins the immutable proposal candidate"
                [(get approve :review/subject-id)
                 (get approve :review/subject-root)]
                ["proposal/C1" "C1"])
-   (test/check "public text inputs lower to canonical decision keywords"
+   (test-check "public text inputs lower to canonical decision keywords"
                [(get approve :review/decision)
                 (get reject :review/decision)
                 (get withdraw :review/decision)]
                [:approve :reject :withdraw])
-   (test/check "review evidence pins signer and recorded-at"
+   (test-check "review evidence pins signer and recorded-at"
                [(get-in approve
                         [:review/recorded-evidence :ledger/signer])
                 (get-in approve
                         [:review/recorded-evidence :ledger/timestamp])]
                [reviewer-root 10])
-   (test/check "initial review selection succeeds"
+   (test-check "initial review selection succeeds"
                [(get initial-selection :error)
                 (get-in initial-selection [:ref/value :ref/root])]
                [nil "R1"])
-   (test/check "stale initial review reports the accepted root"
+   (test-check "stale initial review reports the accepted root"
                [(get stale-selection :error)
                 (get stale-selection :ref/actual-root)]
                [:storage/ref-conflict "R1"])
-   (test/check "exact previous review may be replaced"
+   (test-check "exact previous review may be replaced"
                [(get update-selection :error)
                 (get-in update-selection [:ref/value :ref/root])]
                [nil "R2"])
-   (test/check "a reviewer may explicitly withdraw its latest decision"
+   (test-check "a reviewer may explicitly withdraw its latest decision"
                [(get withdraw-selection :error)
                 (get-in withdraw-selection [:ref/value :ref/root])]
                [nil "R3"])
-   (test/check "the review ref selects the latest immutable decision"
+   (test-check "the review ref selects the latest immutable decision"
                (get-in final-read [:ok :ref/root])
                "R3")
-   (test/check "review refs cannot target main"
+   (test-check "review refs cannot target main"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root tampered-name)
                 :error)
                :workspace/ref-name-not-review)
-   (test/check "review policy is fixed"
+   (test-check "review policy is fixed"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root tampered-policy)
                 :error)
                :workspace/unsupported-ref-policy)
-   (test/check "review authority must be the reviewer origin"
+   (test-check "review authority must be the reviewer origin"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root tampered-authority)
                 :error)
                :workspace/ref-authorization-not-origin)
-   (test/check "review metadata is constrained in v1"
+   (test-check "review metadata is constrained in v1"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root tampered-metadata)
                 :error)
                :workspace/ref-metadata-not-supported)
-   (test/check "unknown review roots cannot be selected"
+   (test-check "unknown review roots cannot be selected"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root unknown-review-intent)
                 :error)
                :workspace/desired-review-not-found)
-   (test/check "another reviewer's decision cannot be selected"
+   (test-check "another reviewer's decision cannot be selected"
                (get
                 (review/validate-review-update
                  commit-store review-store proposal-backend
                  workspace-id candidate-root reviewer-root wrong-reviewer-intent)
                 :error)
                :workspace/invalid-desired-review)
-   (test/check "reviews require a published proposal"
+   (test-check "reviews require a published proposal"
                (get
                 (review/validate-review-update
                  commit-store review-store unpublished-backend
                  workspace-id candidate-root reviewer-root initial-intent)
                 :error)
                :workspace/review-proposal-not-published)
-   (test/check "all constrained decision texts are accepted"
+   (test-check "all constrained decision texts are accepted"
                [(review/decision-valid? "approve")
                 (review/decision-valid? "reject")
                 (review/decision-valid? "withdraw")
                 (review/decision-valid? "maybe")]
                [true true true false])])
 
-(test/print-results results)
+results

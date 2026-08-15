@@ -1,5 +1,5 @@
 (ns ignatius.workflow-query-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.workflow :as workflow]
             [ignatius.workflow-query :as query]))
@@ -183,27 +183,27 @@
   (query/scheduler-snapshot completed-a work-ids checkpoint-ids))
 
 (def results
-  [(test/check "open work without unresolved dependencies is ready"
+  [(test-check "open work without unresolved dependencies is ready"
                (query/classification with-b "work/a")
                :ready)
-   (test/check "open work with an incomplete dependency is blocked"
+   (test-check "open work with an incomplete dependency is blocked"
                [(query/classification with-b "work/b")
                 (query/unresolved-dependency-ids with-b "work/b")]
                [:blocked ["work/a"]])
-   (test/check "unknown work IDs classify as missing"
+   (test-check "unknown work IDs classify as missing"
                (query/classification with-b "work/missing")
                :missing)
-   (test/check "claim and start states have explicit scheduler classes"
+   (test-check "claim and start states have explicit scheduler classes"
                [(query/classification claimed-a "work/a")
                 (query/classification running-a "work/a")]
                [:claimed :running])
-   (test/check "completion unlocks downstream work"
+   (test-check "completion unlocks downstream work"
                [(query/classification completed-a "work/a")
                 (query/classification completed-a "work/b")
                 (query/unresolved-dependency-ids
                  completed-a "work/b")]
                [:complete :ready []])
-   (test/check "latest checkpoint follows supplied canonical order"
+   (test-check "latest checkpoint follows supplied canonical order"
                [(get
                  (query/latest-checkpoint
                   completed-a "work/a" checkpoint-ids)
@@ -214,23 +214,23 @@
                  [:work/latest-checkpoint
                   :checkpoint/state-root])]
                ["checkpoint/a/1" "state/a/1"])
-   (test/check "scheduler snapshots preserve explicit work ordering"
+   (test-check "scheduler snapshots preserve explicit work ordering"
                [(get initial-snapshot :work/ready-ids)
                 (get initial-snapshot :work/blocked-ids)
                 (get initial-snapshot :work/complete-ids)]
                [["work/a"] ["work/b"] []])
-   (test/check "completed snapshots expose compact category indexes"
+   (test-check "completed snapshots expose compact category indexes"
                [(get completed-snapshot :work/ready-ids)
                 (get completed-snapshot :work/complete-ids)
                 (get completed-snapshot :workspace/latest-entry-id)]
                [["work/b"] ["work/a"] "tx-complete-a"])
-   (test/check "assignee queries return exact work IDs"
+   (test-check "assignee queries return exact work IDs"
                [(query/work-ids-for-assignee
                  claimed-a work-ids "alice")
                 (query/work-ids-for-assignee
                  claimed-b work-ids "bob")]
                [["work/a"] ["work/b"]])
-   (test/check "summaries retain exact definition and resource references"
+   (test-check "summaries retain exact definition and resource references"
                [(get-in
                  (query/work-summary
                   completed-a "work/a" checkpoint-ids)
@@ -245,4 +245,4 @@
                  [:work/receipt-root])]
                ["definition/a" [output-reference] "receipt/a"])])
 
-(test/print-results results)
+results

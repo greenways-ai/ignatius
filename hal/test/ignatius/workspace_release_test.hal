@@ -1,5 +1,5 @@
 (ns ignatius.workspace-release-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.storage :as storage]
             [ignatius.workspace :as workspace]
@@ -164,18 +164,18 @@
     policy-root)))
 
 (def results
-  [(test/check "release identity pins workspace and version"
+  [(test-check "release identity pins workspace and version"
                (get published-release :attestation/id)
                "release/world/orbital-station/1.0.0")
-   (test/check "release subject is the immutable version ref and main root"
+   (test-check "release subject is the immutable version ref and main root"
                [(get published-release :attestation/subject-id)
                 (get published-release :attestation/subject-root)]
                ["release/1.0.0" candidate-root])
-   (test/check "release pins policy and exact acceptance evidence"
+   (test-check "release pins policy and exact acceptance evidence"
                [(get published-release :attestation/context-root)
                 (get published-release :attestation/evidence-roots)]
                [policy-root [acceptance-root]])
-   (test/check "release claim pins its create-only CAS edge"
+   (test-check "release claim pins its create-only CAS edge"
                [(get-in published-release
                         [:record/extensions :ref/expected-root])
                 (get-in published-release
@@ -183,40 +183,40 @@
                 (get-in published-release
                         [:record/extensions :ref/policy])]
                [nil candidate-root :release-publication-v1])
-   (test/check "acceptance and release root verification succeeds"
+   (test-check "acceptance and release root verification succeeds"
                [(get acceptance-registration :error)
                 (get release-registration :error)]
                [nil nil])
-   (test/check "current accepted main may be released"
+   (test-check "current accepted main may be released"
                [(get first-release :error)
                 (get-in first-release [:ref/value :ref/root])]
                [nil candidate-root])
-   (test/check "release versions are create-only"
+   (test-check "release versions are create-only"
                [(get duplicate-release :error)
                 (get duplicate-release :ref/actual-root)]
                [:storage/ref-conflict candidate-root])
-   (test/check "selected release ref retains the accepted candidate"
+   (test-check "selected release ref retains the accepted candidate"
                (get-in release-read [:ok :ref/root])
                candidate-root)
-   (test/check "release version cannot be changed after construction"
+   (test-check "release version cannot be changed after construction"
                (release/release-shape-error
                 workspace-id authority-root wrong-version)
                :workspace/release-id-not-derived)
-   (test/check "an unselected policy cannot authorize release"
+   (test-check "an unselected policy cannot authorize release"
                (get
                 (release/validate-release
                  commit-store acceptance-store backend-main
                  workspace-id authority-root wrong-policy)
                 :error)
                :workspace/release-policy-not-published)
-   (test/check "unknown acceptance evidence cannot authorize release"
+   (test-check "unknown acceptance evidence cannot authorize release"
                (get
                 (release/validate-release
                  commit-store acceptance-store backend-main
                  workspace-id authority-root wrong-acceptance)
                 :error)
                :workspace/release-acceptance-not-found)
-   (test/check "only the currently accepted main root may be released"
+   (test-check "only the currently accepted main root may be released"
                (get
                 (release/validate-release
                  commit-store acceptance-store backend-wrong-main
@@ -224,4 +224,4 @@
                 :error)
                :workspace/release-candidate-not-current-main)])
 
-(test/print-results results)
+results

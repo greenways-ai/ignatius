@@ -1,5 +1,5 @@
 (ns ignatius.workspace-proposal-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.workspace :as workspace]
             [ignatius.workspace-proposal :as proposal]))
@@ -113,89 +113,89 @@
    store-all alice-root alice-c2))
 
 (def results
-  [(test/check "proposal scope is derived from the workspace"
+  [(test-check "proposal scope is derived from the workspace"
                (get alice-c1 :ref/scope)
                "workspace/world/orbital-station")
-   (test/check "proposal name is the exact candidate root"
+   (test-check "proposal name is the exact candidate root"
                (get alice-c1 :ref/name)
                "proposal/C1")
-   (test/check "proposal publication is create-only"
+   (test-check "proposal publication is create-only"
                (get alice-c1 :ref/expected-root)
                nil)
-   (test/check "proposal authorization is the verified origin"
+   (test-check "proposal authorization is the verified origin"
                (get alice-c1 :ref/authorization-root)
                alice-root)
-   (test/check "proposal publication pins an explicit policy"
+   (test-check "proposal publication pins an explicit policy"
                (get alice-c1 :ref/policy)
                :proposal-publication-v1)
-   (test/check "proposal identity is independent of the publisher"
+   (test-check "proposal identity is independent of the publisher"
                [(get alice-c1 :ref/name)
                 (get bob-c1 :ref/name)]
                ["proposal/C1" "proposal/C1"])
-   (test/check "the signed intent still records its publisher"
+   (test-check "the signed intent still records its publisher"
                [(get alice-c1 :ref/authorization-root)
                 (get bob-c1 :ref/authorization-root)]
                [alice-root bob-root])
-   (test/check "one verified candidate is publishable"
+   (test-check "one verified candidate is publishable"
                [(get valid-c1 :error)
                 (get valid-c1 :ref/desired-root)]
                [nil "C1"])
-   (test/check "sibling candidates are independent proposals"
+   (test-check "sibling candidates are independent proposals"
                (get valid-c2 :error)
                nil)
-   (test/check "proposal publication cannot replace a ref"
+   (test-check "proposal publication cannot replace a ref"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-expected)
                 :error)
                :workspace/proposal-expected-root-not-nil)
-   (test/check "clients cannot inject another scope"
+   (test-check "clients cannot inject another scope"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-scope)
                 :error)
                :workspace/ref-scope-not-derived)
-   (test/check "proposal publication cannot target main"
+   (test-check "proposal publication cannot target main"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-name)
                 :error)
                :workspace/ref-name-not-proposal)
-   (test/check "authorization cannot differ from the origin"
+   (test-check "authorization cannot differ from the origin"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-authorization)
                 :error)
                :workspace/ref-authorization-not-origin)
-   (test/check "personal policy cannot be substituted"
+   (test-check "personal policy cannot be substituted"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-policy)
                 :error)
                :workspace/unsupported-ref-policy)
-   (test/check "proposal metadata is fixed in v1"
+   (test-check "proposal metadata is fixed in v1"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-metadata)
                 :error)
                :workspace/ref-metadata-not-supported)
-   (test/check "proposal extensions are fixed in v1"
+   (test-check "proposal extensions are fixed in v1"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root tampered-extensions)
                 :error)
                :workspace/ref-extensions-not-supported)
-   (test/check "unknown candidates cannot be published"
+   (test-check "unknown candidates cannot be published"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root unknown)
                 :error)
                :workspace/desired-commit-not-found)
-   (test/check "candidates must belong to the named workspace"
+   (test-check "candidates must belong to the named workspace"
                (get
                 (proposal/validate-proposal-publication
                  store-all alice-root wrong-workspace)
                 :error)
                :workspace/desired-commit-workspace-mismatch)])
 
-(test/print-results results)
+results

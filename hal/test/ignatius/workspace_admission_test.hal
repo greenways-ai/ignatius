@@ -1,5 +1,5 @@
 (ns ignatius.workspace-admission-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.record :as record]
             [ignatius.workspace :as workspace]
             [ignatius.workspace-admission :as admission]))
@@ -130,97 +130,97 @@
    store-all origin-root later-intent))
 
 (def results
-  [(test/check "personal scope is derived from the workspace"
+  [(test-check "personal scope is derived from the workspace"
                (get create-intent :ref/scope)
                "workspace/world/orbital-station")
-   (test/check "personal name is derived from the verified origin"
+   (test-check "personal name is derived from the verified origin"
                (get create-intent :ref/name)
                "user/account/alice")
-   (test/check "authorization is the verified origin"
+   (test-check "authorization is the verified origin"
                (get create-intent :ref/authorization-root)
                origin-root)
-   (test/check "the first authority policy is explicit"
+   (test-check "the first authority policy is explicit"
                (get create-intent :ref/policy)
                :personal-fast-forward-v1)
-   (test/check "v1 metadata and extensions have one constrained value"
+   (test-check "v1 metadata and extensions have one constrained value"
                [(get create-intent :ref/metadata)
                 (get create-intent :record/extensions)]
                [{} {}])
-   (test/check "a verified genesis may create the personal ref"
+   (test-check "a verified genesis may create the personal ref"
                [(get valid-create :error)
                 (get valid-create :ref/desired-root)]
                [nil "C0"])
-   (test/check "one-parent descendants may advance the personal ref"
+   (test-check "one-parent descendants may advance the personal ref"
                (get valid-advance :error)
                nil)
-   (test/check "later descendants remain valid fast-forwards"
+   (test-check "later descendants remain valid fast-forwards"
                (get valid-later :error)
                nil)
-   (test/check "clients cannot inject another scope"
+   (test-check "clients cannot inject another scope"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-scope)
                 :error)
                :workspace/ref-scope-not-derived)
-   (test/check "the personal policy cannot write main"
+   (test-check "the personal policy cannot write main"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-name)
                 :error)
                :workspace/ref-name-not-personal)
-   (test/check "authorization cannot differ from the signed origin"
+   (test-check "authorization cannot differ from the signed origin"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-authorization)
                 :error)
                :workspace/ref-authorization-not-origin)
-   (test/check "an unrecognized policy cannot be smuggled into the intent"
+   (test-check "an unrecognized policy cannot be smuggled into the intent"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-policy)
                 :error)
                :workspace/unsupported-ref-policy)
-   (test/check "v1 metadata cannot change the signed intent shape"
+   (test-check "v1 metadata cannot change the signed intent shape"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-metadata)
                 :error)
                :workspace/ref-metadata-not-supported)
-   (test/check "v1 extensions cannot change the signed intent shape"
+   (test-check "v1 extensions cannot change the signed intent shape"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root tampered-extensions)
                 :error)
                :workspace/ref-extensions-not-supported)
-   (test/check "desired roots must be verified commits"
+   (test-check "desired roots must be verified commits"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root unknown-desired)
                 :error)
                :workspace/desired-commit-not-found)
-   (test/check "non-nil expected roots must be verified commits"
+   (test-check "non-nil expected roots must be verified commits"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root unknown-expected)
                 :error)
                :workspace/expected-commit-not-found)
-   (test/check "desired commits must belong to the named workspace"
+   (test-check "desired commits must belong to the named workspace"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root wrong-workspace)
                 :error)
                :workspace/desired-commit-workspace-mismatch)
-   (test/check "sibling branches are not personal fast-forwards"
+   (test-check "sibling branches are not personal fast-forwards"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root non-fast-forward)
                 :error)
                :workspace/non-fast-forward-ref-update)
-   (test/check "no-op updates do not produce meaningless receipts"
+   (test-check "no-op updates do not produce meaningless receipts"
                (get
                 (admission/validate-personal-ref-update
                  store-all origin-root no-op)
                 :error)
                :workspace/noop-ref-update)])
 
-(test/print-results results)
+results

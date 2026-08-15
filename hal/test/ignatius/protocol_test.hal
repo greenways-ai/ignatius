@@ -1,28 +1,28 @@
 (ns ignatius.protocol-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.protocol :as protocol]))
 
 (def results
-  [(test/check "defprotocol lowers to the closed protocol/define intrinsic"
+  [(test-check "defprotocol lowers to the closed protocol/define intrinsic"
                (get (protocol/defprotocol-operation
                      "name-root" "methods-root")
                     :primitive-id)
                "protocol/define")
-   (test/check "extend-type retains protocol, type and implementation roots"
+   (test-check "extend-type retains protocol, type and implementation roots"
                (count
                 (get (protocol/extend-type-operation
                       "name-root" "type-root" "methods-root")
                      :arguments))
                3)
-   (test/check "protocol calls prepend dispatch identity"
+   (test-check "protocol calls prepend dispatch identity"
                (count
                 (get (protocol/protocol-invoke-operation
                       "protocol-root" "method-root"
                       [{:op :constant :value-root "receiver-root"}])
                      :arguments))
                3)
-   (test/check "defmacro remains a deterministic compiler concern"
+   (test-check "defmacro remains a deterministic compiler concern"
                (get (protocol/macro-policy) :ledger-executable)
                false)])
 
-(test/print-results results)
+results

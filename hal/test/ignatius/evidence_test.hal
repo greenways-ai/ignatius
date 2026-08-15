@@ -1,5 +1,5 @@
 (ns ignatius.evidence-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.evidence :as evidence]))
 
 (def body {:result/root "sha256:result"})
@@ -41,8 +41,7 @@
    {:idempotency-key "receipt/one" :envelope envelope}
    root-of verify-signature))
 
-(test/print-results
- [(test/check
+[(test-check
    "generic evidence verifies and advances one signer sequence"
    [(get applied :ok)
     (get (get applied :value) :evidence/status)
@@ -50,14 +49,14 @@
          "worker/environment")]
    [true :applied 1])
 
-  (test/check
+  (test-check
    "the same idempotency key and root replays without another append"
    [(get replayed :ok)
     (get (get replayed :value) :evidence/status)
     (= (get applied :state) (get replayed :state))]
    [true :replayed true])
 
-  (test/check
+  (test-check
    "sequence and signature failures do not mutate evidence state"
    [(get
      (evidence/append-evidence
@@ -79,7 +78,7 @@
    [:ignatius/evidence-sequence-conflict
     :ignatius/evidence-signature-invalid])
 
-  (test/check
+  (test-check
    "replay re-verifies the exact stored envelope and signature"
    (get
     (evidence/append-evidence
@@ -88,4 +87,4 @@
       :envelope (assoc envelope :evidence/signature "changed")}
      root-of verify-signature)
     :error)
-   :ignatius/evidence-signature-invalid)])
+   :ignatius/evidence-signature-invalid)]

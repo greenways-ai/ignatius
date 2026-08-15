@@ -1,5 +1,5 @@
 (ns ignatius.github-delivery-test
-  (:require [std.lib.test :as test]
+  (:require
             [std.work.provider.memory :as memory]
             [ignatius.github.delivery :as delivery]
             [ignatius.github-workflow :as workflow]
@@ -68,33 +68,33 @@
       true)))
 
 (def results
-  [(test/check "delivery transition queues one outbox row per planned event"
+  [(test-check "delivery transition queues one outbox row per planned event"
                (count (get first-transition :transition/outbox))
                2)
-   (test/check "delivery and ordered outbox commit at one revision"
+   (test-check "delivery and ordered outbox commit at one revision"
                (get first-transition :transition/revision)
                1)
-   (test/check "same delivery and plan replay without new rows"
+   (test-check "same delivery and plan replay without new rows"
                (get replay-transition :transition/replayed)
                true)
-   (test/check "replay retains exactly the original outbox"
+   (test-check "replay retains exactly the original outbox"
                (count (get replay-transition :transition/outbox))
                2)
-   (test/check "pending submission query is provider-neutral"
+   (test-check "pending submission query is provider-neutral"
                (count pending-before-claim)
                2)
-   (test/check "claim fences all selected submission intents"
+   (test-check "claim fences all selected submission intents"
                (get (first claimed) :outbox/claim-id)
                "claim-signer-1")
-   (test/check "accepted submission stores its canonical receipt"
+   (test-check "accepted submission stores its canonical receipt"
                (get-in acknowledged
                        [:outbox/ack :submission/receipt :transaction/root])
                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-   (test/check "acknowledged submission remains in the durable outbox"
+   (test-check "acknowledged submission remains in the durable outbox"
                (get (first all-after-ack) :outbox/status)
                :acked)
-   (test/check "same delivery identity cannot carry a different plan"
+   (test-check "same delivery identity cannot carry a different plan"
                (conflicting-replay-rejected?)
                true)])
 
-(test/print-results results)
+results

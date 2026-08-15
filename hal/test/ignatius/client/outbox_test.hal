@@ -1,5 +1,5 @@
 (ns ignatius.client.outbox-test
-  (:require [std.lib.test :as test]
+  (:require
             [ignatius.codec :as codec]
             [ignatius.client.outbox :as offline]
             [ignatius.transaction :as transaction]
@@ -9,24 +9,24 @@
   (let [entry (offline/pending-entry "1" :edit "doc" "base" "root")
         outbox (offline/enqueue [] entry)
         accepted (offline/mark-entry (first outbox) :accepted nil)]
-    [(test/check "matches PostgreSQL operation framing"
+    [(test-check "matches PostgreSQL operation framing"
             (offline/operation-payload
              "replace" "018f0000-0000-7000-8000-000000000001" nil nil
              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             "R:document-operation:1:replace:018f0000-0000-7000-8000-000000000001:-:-:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-     (test/check "builds create signing payload"
+     (test-check "builds create signing payload"
             (offline/create-signing-payload "doc" "owner" "syntax")
             "R:document-create:1:doc:owner:syntax")
-     (test/check "builds edit signing payload"
+     (test-check "builds edit signing payload"
             (offline/edit-signing-payload "doc" "revision" "operation" "owner")
             "R:document-edit:1:doc:revision:operation:owner")
-     (test/check "frames HCV0 without host-dependent formatting"
+     (test-check "frames HCV0 without host-dependent formatting"
             (codec/canonical-envelope 5 3 "616263")
             "HCV0:5:3:616263")
-     (test/check "frames ordered syntax roots"
+     (test-check "frames ordered syntax roots"
             (codec/sequence-payload ["aa" "bb"])
             "S:2:aabb")
-     (test/check "constructs syntax roots through explicit host capabilities"
+     (test-check "constructs syntax roots through explicit host capabilities"
             (get
              (codec/syntax-cell
               (fn [text] 13)
@@ -35,25 +35,25 @@
               "value" "meta")
              :root)
             "sha(HCV0:13:13:533a323a76616c75656d657461)")
-     (test/check "frames HCP0 cells and refs"
+     (test-check "frames HCP0 cells and refs"
             (codec/hcp1-pack
              [{:root "aa" :type-tag 5 :payload-hex "78" :refs []}
               {:root "bb" :type-tag 13 :payload-hex "79"
                :refs [{:position 0 :role-hex "76616c7565" :child-root "aa"}]}])
             "HCP0:2:C:aa:1:5:78:0:C:bb:1:13:79:1:R:0:76616c7565:aa:")
-     (test/check "pending status is immutable"
+     (test-check "pending status is immutable"
             [(get (first outbox) :status)
              (get accepted :status)
              (get (first outbox) :status)]
             [:pending :accepted :pending])
-     (test/check "frames transaction signing bytes"
+     (test-check "frames transaction signing bytes"
             (transaction/signing-payload "devnet" "origin" 3 "op" "form" 100 "runtime")
             "R:transaction-signing:1:8:devnet:origin:3:op:form:100:runtime")
-     (test/check "frames operation roots"
+     (test-check "frames operation roots"
             (transaction/operation-payload
              "invoke" nil nil nil nil "primitive" nil nil ["left" "right"])
             "O:1:invoke:-:-:-:-:primitive:-:-:S:2:leftright")
-     (test/check "hashes operation roots through explicit host capabilities"
+     (test-check "hashes operation roots through explicit host capabilities"
             (get
              (transaction/operation-cell
               (fn [text] 48)
@@ -62,7 +62,7 @@
               "constant" "value" nil nil nil nil nil nil [])
              :root)
             "sha(HCV0:17:48:payload)")
-     (test/check "executes a portable integer operation"
+     (test-check "executes a portable integer operation"
             (get
              (runtime/execute
               {:op :invoke
@@ -73,4 +73,4 @@
              :value)
             7)]))
 
-(test/print-results results)
+results
