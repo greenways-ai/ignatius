@@ -1,0 +1,40 @@
+{
+  "name": "Ignatius",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "1.88.0"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "enableNonRootDocker": "true"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "containerEnv": {
+    "CARGO_HOME": "/home/vscode/.cache/ignatius/cargo",
+    "LEIN_HOME": "/home/vscode/.cache/ignatius/lein",
+    "npm_config_cache": "/home/vscode/.cache/ignatius/npm"
+  },
+  "forwardPorts": [4321, 5432],
+  "portsAttributes": {
+    "4321": { "label": "Ignatius Astro site" },
+    "5432": { "label": "PostgreSQL development" }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vscjava.vscode-java-pack",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}
