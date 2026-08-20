@@ -87,7 +87,7 @@ the `code.test` result bridge). Ledger changes are now made and evaluated in
 already-validated HAL form and must not introduce a Clojure-only implementation.
 
 `db-hal-test` grants PostgreSQL and process access because the test runtime uses
-`std.db.postgres` for its connection and `lib.docker` to manage the disposable
+`db.postgres` for its connection and `lib.docker` to manage the disposable
 database fixture. Hara registers that provider as `[:postgres :db.client]`;
 there is no JDBC runtime or vendor selector in the HAL path. Source loading and
 complete PostgreSQL emission do not require the provider, while executing
