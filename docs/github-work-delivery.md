@@ -45,7 +45,7 @@ an identity conflict.
 
 ## Store contract
 
-The implementation consumes the standard `std.work.runtime.store` provider
+The implementation consumes the standard `work.base.store` provider
 operations:
 
 ```text

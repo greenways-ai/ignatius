@@ -1,6 +1,6 @@
 (ns ignatius.github-delivery-test
   (:require
-            [std.work.provider.memory :as memory]
+            [work.provider.memory :as memory]
             [ignatius.github.delivery :as delivery]
             [ignatius.github-workflow :as workflow]
             [ignatius.github.compatibility-vectors :as vectors]))

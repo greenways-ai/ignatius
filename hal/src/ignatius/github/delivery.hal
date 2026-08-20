@@ -1,5 +1,5 @@
 (ns ignatius.github.delivery
-  (:require [std.work.runtime.store :as store]))
+  (:require [work.base.store :as store]))
 
 (def protocol-version "ignatius.github.delivery/0-alpha")
 
