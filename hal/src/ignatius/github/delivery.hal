@@ -84,17 +84,15 @@
   (if (or (not (string? delivery-id))
           (= 0 (count delivery-id)))
     (throw
-     (ex-info "GitHub delivery requires a non-empty identity" {})))
+     (ex :argument {} :ex/message "GitHub delivery requires a non-empty identity")))
   (if (or (not (string? plan-root))
           (= 0 (count plan-root)))
     (throw
-     (ex-info "GitHub delivery requires an exact plan root"
-              {:provider/delivery-id delivery-id})))
+     (ex :argument {:provider/delivery-id delivery-id} :ex/message "GitHub delivery requires an exact plan root")))
   (if (or (nil? events)
           (= 0 (count events)))
     (throw
-     (ex-info "GitHub delivery requires at least one planned event"
-              {:provider/delivery-id delivery-id})))
+     (ex :argument {:provider/delivery-id delivery-id} :ex/message "GitHub delivery requires at least one planned event")))
   true)
 
 (defn enqueue-plan!
