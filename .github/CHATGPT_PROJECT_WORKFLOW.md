@@ -45,10 +45,10 @@ configuration paths fail toward all scopes so new code cannot escape execution.
 
 | Scope | Representative paths | Committed command |
 |---|---|---|
-| `architecture` | repository boundaries and chain release/migration contracts | `scripts/connector/run-code architecture` |
-| `ledger` | `db/**`, `hal/**`, ledger parity inputs | `scripts/connector/run-code ledger` |
+| `architecture` | repository and controller boundaries | `scripts/connector/run-code architecture` |
+| `ledger` | `db/**`, `hal/**`, chain migration and release contracts | `scripts/connector/run-code ledger` |
 | `adapters` | Git/GitHub agent scripts and fixtures | `scripts/connector/run-code adapters` |
-| `extensions` | `extensions/**` | `scripts/connector/run-code extensions` |
+| `extensions` | `extensions/**` with pinned dependency setup | `scripts/connector/run-code extensions` |
 | `website` | `site/**` | `scripts/connector/run-code website` |
 
 The selector's `--self-test`, shell syntax checks, and the final evidence gate
@@ -59,7 +59,7 @@ merge, release, deploy, or mutate an issue or pull request.
 
 The existing `Verify` workflow remains authoritative for dependency materialization, generated SQL/client contracts, portable HAL execution, Docker-backed ledger suites, and SHA extension proof. The domain-specific `GitHub Agent Workflow` remains an Ignatius product test, not a delivery mechanism.
 
-The connector workflow has read-only permissions. It must never reproduce the existing generated-artifact or branch-mutation behavior as a shortcut; generated parity is judged by the normal authoritative workflow.
+The connector workflow has read-only permissions. It must never reproduce the existing generated-artifact or branch-mutation behavior as a shortcut; generated parity is judged by the normal authoritative workflow. Its ledger scope therefore checks the immutable migration and chain-release contracts, while full generated HAL/SQL/client parity remains in `Verify`.
 
 ## Evidence contract
 
