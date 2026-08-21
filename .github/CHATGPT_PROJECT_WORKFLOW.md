@@ -1,8 +1,11 @@
 # ChatGPT GitHub connector programming workflow
 
-**Repository:** `greenways-ai/ignatius`  
-**Tracking issue:** `#81`  
-**Initial base:** `51c1182e30c336b40b626ca5969a899369b2e9eb`  
+**Repository:** `greenways-ai/ignatius`
+
+**Tracking issue:** `#81`
+
+**Initial base:** `51c1182e30c336b40b626ca5969a899369b2e9eb`
+
 **Status:** canonical repository-local contract for programming initiated through the ChatGPT web application
 
 This contract specializes the organisation's
