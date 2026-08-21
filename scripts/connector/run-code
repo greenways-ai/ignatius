@@ -6,17 +6,17 @@ scope="${1:?usage: scripts/connector/run-code <architecture|ledger|adapters|exte
 case "$scope" in
   architecture)
     make boundary-check
-    make migration-test
-    make chain-release-test
     ;;
   ledger)
-    make db-hal-parity
+    make migration-test
+    make chain-release-test
     ;;
   adapters)
     python3 -m compileall -q scripts
     python3 -m py_compile scripts/ignatius-git-event scripts/ignatius-github-event
     ;;
   extensions)
+    make setup
     cargo fmt --manifest-path extensions/sha/rust/Cargo.toml --all -- --check
     make extension-sha-test
     ;;
