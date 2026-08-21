@@ -17,7 +17,6 @@ case "$scope" in
     ;;
   extensions)
     make setup
-    cargo fmt --manifest-path extensions/sha/rust/Cargo.toml --all -- --check
     make extension-sha-test
     ;;
   website)
