@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+scope="${1:?usage: scripts/connector/run-code <architecture|ledger|adapters|extensions|website>}"
+
+case "$scope" in
+  architecture)
+    make boundary-check
+    ;;
+  ledger)
+    make migration-test
+    make chain-release-test
+    ;;
+  adapters)
+    python3 -m compileall -q scripts
+    python3 -m py_compile scripts/ignatius-git-event scripts/ignatius-github-event
+    ;;
+  extensions)
+    make setup
+    cargo fmt --manifest-path extensions/sha/rust/Cargo.toml --all -- --check
+    make extension-sha-test
+    ;;
+  website)
+    git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
+    git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+    git config --global --add url."https://github.com/".insteadOf "git@github.com:"
+    npm --prefix site ci
+    npm --prefix site run build
+    ;;
+  *)
+    printf 'unknown connector scope: %s\n' "$scope" >&2
+    exit 64
+    ;;
+esac
