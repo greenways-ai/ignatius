@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCOPES=(architecture ledger adapters extensions website)
+declare -A SELECTED=()
+
+reset_scopes() {
+  local scope
+  for scope in "${SCOPES[@]}"; do
+    SELECTED["$scope"]=false
+  done
+}
+
+mark() {
+  SELECTED["$1"]=true
+}
+
+mark_all() {
+  local scope
+  for scope in "${SCOPES[@]}"; do
+    mark "$scope"
+  done
+}
+
+classify_paths() {
+  local path known
+  for path in "$@"; do
+    known=false
+    case "$path" in
+      .github/workflows/connector-code-execution.yml|scripts/connector/run-code|Makefile)
+        mark_all; known=true
+        ;;
+      .github/CHATGPT_PROJECT_WORKFLOW.md|scripts/connector/detect-code-scope|AGENTS.md)
+        known=true
+        ;;
+      scripts/ignatius-chain-migrate|scripts/test-chain-migrations|scripts/build-chain-release|scripts/test-chain-release)
+        mark "architecture"; mark "ledger"; known=true
+        ;;
+      db/*|hal/*|scripts/check-ledger-hal-parity)
+        mark "ledger"; known=true
+        ;;
+      extensions/*)
+        mark "extensions"; known=true
+        ;;
+      scripts/ignatius-agent*|scripts/ignatius-git-event|scripts/ignatius-github-event|scripts/ignatius_github_*|scripts/ignatius_agent_*|test/*agent*|fixtures/*github*|fixtures/*gitlab*)
+        mark "adapters"; known=true
+        ;;
+      site/*)
+        mark "website"; known=true
+        ;;
+      project.edn|hara.recipe.edn)
+        mark "architecture"; mark "ledger"; known=true
+        ;;
+      src/*|test/*|config/*|scripts/check-architecture-boundaries)
+        mark "architecture"; known=true
+        ;;
+      .github/workflows/github-agent-workflow.yml)
+        mark "adapters"; known=true
+        ;;
+      .github/workflows/*|scripts/*|fixtures/*)
+        mark_all; known=true
+        ;;
+      docs/*|README.md|MIGRATION.md|CONTRIBUTING.md|CHANGELOG.md|LICENSE|LICENSE-*|*.md|.gitignore|.editorconfig|.github/ISSUE_TEMPLATE/*|.github/PULL_REQUEST_TEMPLATE*)
+        known=true
+        ;;
+    esac
+    if [[ "$known" != true ]]; then
+      printf 'Unclassified path %s; selecting all executable scopes.\n' "$path" >&2
+      mark_all
+    fi
+  done
+}
+
+expect_scope() {
+  local scope="$1" expected="$2"
+  if [[ "${SELECTED[$scope]}" != "$expected" ]]; then
+    printf 'Expected %s=%s, got %s\n' "$scope" "$expected" "${SELECTED[$scope]}" >&2
+    exit 1
+  fi
+}
+
+self_test() {
+  reset_scopes; classify_paths "hal/src/ignatius/workspace.hal"
+  expect_scope ledger true; expect_scope architecture false; expect_scope adapters false; expect_scope extensions false; expect_scope website false
+  reset_scopes; classify_paths "scripts/ignatius-github-event"
+  expect_scope adapters true; expect_scope ledger false
+  reset_scopes; classify_paths "extensions/sha/rust/src/lib.rs"
+  expect_scope extensions true; expect_scope architecture false
+  reset_scopes; classify_paths "site/src/pages/index.astro"
+  expect_scope website true; expect_scope adapters false
+  reset_scopes; classify_paths "src/ignatius/controller.hal"
+  expect_scope architecture true; expect_scope ledger false
+  reset_scopes; classify_paths "README.md"
+  expect_scope architecture false; expect_scope ledger false; expect_scope adapters false; expect_scope extensions false; expect_scope website false
+  reset_scopes; classify_paths "scripts/connector/run-code"
+  expect_scope architecture true; expect_scope ledger true; expect_scope adapters true; expect_scope extensions true; expect_scope website true
+  printf 'connector scope detector self-test passed\n'
+}
+
+emit_outputs() {
+  local scope value
+  for scope in "${SCOPES[@]}"; do
+    value="${SELECTED[$scope]}"
+    printf '%s=%s\n' "$scope" "$value"
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+      printf '%s=%s\n' "$scope" "$value" >> "$GITHUB_OUTPUT"
+    fi
+  done
+}
+
+resolve_base() {
+  if [[ -n "${CONNECTOR_BASE_SHA:-}" ]]; then
+    printf '%s\n' "$CONNECTOR_BASE_SHA"
+    return
+  fi
+
+  local base_ref="${CONNECTOR_BASE_REF:-main}"
+  git fetch --no-tags --prune origin "$base_ref"
+  git merge-base HEAD FETCH_HEAD
+}
+
+main() {
+  if [[ "${1:-}" == "--self-test" ]]; then
+    self_test
+    return
+  fi
+
+  local base
+  base="$(resolve_base)"
+  mapfile -t changed < <(git diff --name-only "$base...HEAD")
+  reset_scopes
+  classify_paths "${changed[@]}"
+  emit_outputs
+}
+
+reset_scopes
+main "$@"
